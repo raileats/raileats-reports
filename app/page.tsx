@@ -7,6 +7,7 @@ import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
+import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
@@ -157,7 +158,6 @@ export default function Page() {
   const parseAnyFile = async (file: File): Promise<any[]> => {
     const arrayBuffer = await file.arrayBuffer();
 
-    // Check for ZIP/XLSX header (PK\x03\x04)
     const uint = new Uint8Array(arrayBuffer.slice(0, 4));
     const isZip = uint[0] === 0x50 && uint[1] === 0x4B;
 
@@ -483,6 +483,11 @@ export default function Page() {
     generateDateWiseReportWorkbook(data);
   };
 
+  const handleExportVendorDateWiseReport = () => {
+    if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
+    generateVendorDateWiseReportWorkbook(data);
+  };
+
   const handleExportLastDayStationReport = () => {
     if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
     generateLastDayStationReportWorkbook(data, outletsMasterInfo);
@@ -575,10 +580,16 @@ export default function Page() {
                     📈 Date Wise Summary (.xlsx)
                   </button>
                   <button
+                    onClick={handleExportVendorDateWiseReport}
+                    className="px-3 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-xs font-bold text-white transition shadow-lg shadow-fuchsia-950 flex items-center gap-1.5"
+                  >
+                    📅 Vendor Date Wise (.xlsx)
+                  </button>
+                  <button
                     onClick={handleExportLastDayStationReport}
                     className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-xs font-bold text-white transition shadow-lg shadow-teal-950 flex items-center gap-1.5"
                   >
-                    🚉 Last Day Station Report (.xlsx)
+                    🚉 Last Day Station (.xlsx)
                   </button>
                 </>
               )}
