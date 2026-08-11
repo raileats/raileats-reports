@@ -2,6 +2,59 @@
 
 import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
+
+// --- Native IndexedDB Storage Engine (500MB+ Capacity, Safe across Refresh) ---
+const DB_NAME = 'RelFoodMasterDB';
+const STORE_NAME = 'master_reports';
+
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return;
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+const saveToDB = async (data: any[]): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.put(data, 'CURRENT_MASTER_DATA');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
+const loadFromDB = async (): Promise<any[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.get('CURRENT_MASTER_DATA');
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+const clearDB = async (): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.delete('CURRENT_MASTER_DATA');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
 
 // Master Final Status Calculation Rule (51 Rules Mapping)
 const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
@@ -47,38 +100,28 @@ export default function Page() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // 1. Load saved master records on mount
+  // 1. Load saved master records on mount from IndexedDB
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('RELFOOD_MASTER_DATA');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setData(parsed);
+    const fetchStoredData = async () => {
+      try {
+        const stored = await loadFromDB();
+        if (Array.isArray(stored) && stored.length > 0) {
+          setData(stored);
         }
+      } catch (err) {
+        console.error('Failed to load stored records from IndexedDB:', err);
+      } finally {
+        setIsLoaded(true);
       }
-    } catch (err) {
-      console.error('Failed to load saved records:', err);
-    } finally {
-      setIsLoaded(true);
-    }
+    };
+    fetchStoredData();
   }, []);
 
-  // 2. Save master records to storage
-  const saveRecordsToStorage = (records: any[]) => {
-    setData(records);
-    try {
-      localStorage.setItem('RELFOOD_MASTER_DATA', JSON.stringify(records));
-    } catch (err) {
-      console.warn('Storage limit warning:', err);
-    }
-  };
-
-  // 3. Clear Old Records
-  const handleClearRecords = () => {
+  // 2. Clear Old Records manually
+  const handleClearRecords = async () => {
     if (confirm('Kya aap sach me purana data delete karna chahte hain?')) {
+      await clearDB();
       setData([]);
-      localStorage.removeItem('RELFOOD_MASTER_DATA');
     }
   };
 
@@ -125,7 +168,7 @@ export default function Page() {
     return parsedData;
   };
 
-  // 4. Merge Engine with 19 Master Calculated Columns
+  // 3. Merge Engine with 19 Master Calculated Columns
   const handleProcessAndMerge = async () => {
     if (!rfFile || !irctcFile) {
       alert('Kripya RF Report aur IRCTC Report zaroor upload karein!');
@@ -208,7 +251,7 @@ export default function Page() {
         // (14) Discounted Base Price = Final Base Price - Final Total Discount
         const discountedBasePrice = Number((finalBasePrice - finalTotalDiscount).toFixed(2));
 
-        // (7) Final GST = 5% of Discounted Base Price (Updated as per requirement)
+        // (7) Final GST = 5% of Discounted Base Price
         const finalGST = Number((discountedBasePrice * 0.05).toFixed(2));
 
         // (11) Delivery Charges = Same from IRCTC report
@@ -281,31 +324,41 @@ export default function Page() {
         };
       });
 
-      saveRecordsToStorage(masterRows);
+      // Save safely into IndexedDB (Old data replaced ONLY after new calculation completes)
+      await saveToDB(masterRows);
+      setData(masterRows);
+
+      // Reset modal inputs
+      setRfFile(null);
+      setIrctcFile(null);
+      setFeedbackFile(null);
       setIsProcessing(false);
       setIsModalOpen(false);
     } catch (error: any) {
       console.error(error);
-      alert('Error parsing files: ' + error.message);
+      alert('Error processing reports: ' + error.message);
       setIsProcessing(false);
     }
   };
 
-  // 5. Export Master Data to Excel / CSV
+  // 4. Export Master Data directly to Microsoft Excel (.xlsx)
   const handleExportExcel = () => {
     if (data.length === 0) return alert('No data to export!');
-    const csv = Papa.unparse(data);
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `RELFOOD_MASTER_DATA_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Master Data');
+
+    XLSX.writeFile(workbook, `RELFOOD_MASTER_DATA_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  if (!isLoaded) return null;
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+        Loading saved master records...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
@@ -322,7 +375,7 @@ export default function Page() {
                 19 RULES ENGINE
               </span>
             </div>
-            <p className="text-xs text-slate-400">Order-level Calculations &amp; Persistent Storage</p>
+            <p className="text-xs text-slate-400">Persistent Master Storage &amp; Excel Download</p>
           </div>
         </div>
 
@@ -339,7 +392,7 @@ export default function Page() {
                 onClick={handleExportExcel}
                 className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
               >
-                📥 Download Master Data (Excel/CSV)
+                📥 Download Master Data (.xlsx)
               </button>
             </>
           )}
@@ -347,7 +400,7 @@ export default function Page() {
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-indigo-950"
           >
-            <span>☁️</span> Upload 3 Raw Reports
+            <span>☁️</span> Upload New Reports
           </button>
         </div>
       </header>
@@ -359,7 +412,7 @@ export default function Page() {
             <div className="text-5xl mb-4">📂</div>
             <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF Report, IRCTC Report &amp; Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored locally.
+              Upload RF Report, IRCTC Report &amp; Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored permanently.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
@@ -370,10 +423,10 @@ export default function Page() {
           </div>
         ) : (
           <div>
-            {/* Search & Info */}
+            {/* Search & Total Record Bar */}
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <span className="text-xs text-slate-400">
-                Total Stored Master Records: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Safe across refresh)
+                Total Stored Master Records: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Permanently saved across refresh)
               </span>
               <input
                 type="text"
@@ -411,9 +464,9 @@ export default function Page() {
                   {data
                     .filter(
                       (r) =>
-                        r['IRCTC Order ID'].includes(searchTerm) ||
-                        r['Vendor Name'].toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
+                        String(r['IRCTC Order ID'] || '').includes(searchTerm) ||
+                        String(r['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        String(r['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase())
                     )
                     .slice(0, 100)
                     .map((row, i) => (
@@ -451,7 +504,7 @@ export default function Page() {
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click &quot;Download Master Data&quot; to export all records.</p>
+            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click &quot;Download Master Data (.xlsx)&quot; to export all records.</p>
           </div>
         )}
       </main>
@@ -461,10 +514,10 @@ export default function Page() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <span>📊</span> Upload 3 Raw Reports
+              <span>📊</span> Upload New Reports
             </h2>
             <p className="text-xs text-slate-400 mb-6">
-              Teeno files select karein. System inko merge karke 19 Master Calculated columns generate karega aur local storage me store karega.
+              Teeno files select karein. New reports process hote hi purana data automatically replace ho jayega aur refresh par safe rahega.
             </p>
 
             <div className="space-y-4">
