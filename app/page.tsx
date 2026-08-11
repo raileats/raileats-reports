@@ -7,6 +7,7 @@ import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
+import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -482,6 +483,11 @@ export default function Page() {
     generateDateWiseReportWorkbook(data);
   };
 
+  const handleExportLastDayStationReport = () => {
+    if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
+    generateLastDayStationReportWorkbook(data, outletsMasterInfo);
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
@@ -567,6 +573,12 @@ export default function Page() {
                     className="px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-xs font-bold text-white transition shadow-lg shadow-orange-950 flex items-center gap-1.5"
                   >
                     📈 Date Wise Summary (.xlsx)
+                  </button>
+                  <button
+                    onClick={handleExportLastDayStationReport}
+                    className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-xs font-bold text-white transition shadow-lg shadow-teal-950 flex items-center gap-1.5"
+                  >
+                    🚉 Last Day Station Report (.xlsx)
                   </button>
                 </>
               )}
