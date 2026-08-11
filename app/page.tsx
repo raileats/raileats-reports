@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 
-// Master Final Status Calculation Rule (51 Rules Mapping)
-export const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
+// Master Final Status Calculation Rule (51 Rules Mapping) - Normal internal helper
+const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
   const rf = (rfStatusRaw || '').trim().toUpperCase();
   const irctc = (irctcStatusRaw || '').trim().toUpperCase();
 
@@ -37,7 +37,6 @@ export const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string):
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('Main Report');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
@@ -323,7 +322,7 @@ export default function Page() {
                 19 RULES ENGINE
               </span>
             </div>
-            <p className="text-xs text-slate-400">Order-level Calculations & Persistent Storage</p>
+            <p className="text-xs text-slate-400">Order-level Calculations &amp; Persistent Storage</p>
           </div>
         </div>
 
@@ -360,13 +359,13 @@ export default function Page() {
             <div className="text-5xl mb-4">📂</div>
             <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF Report, IRCTC Report & Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored locally.
+              Upload RF Report, IRCTC Report &amp; Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored locally.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
               className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition"
             >
-              Start Upload & Processing
+              Start Upload &amp; Processing
             </button>
           </div>
         ) : (
@@ -448,7 +447,7 @@ export default function Page() {
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click "Download Master Data" to export all records.</p>
+            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click &quot;Download Master Data&quot; to export all records.</p>
           </div>
         )}
       </main>
