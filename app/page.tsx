@@ -4,14 +4,14 @@ import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
-// --- Native IndexedDB Storage Engine (500MB+ Capacity, Safe across Refresh) ---
+// --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
 const STORE_NAME = 'master_reports';
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -23,24 +23,24 @@ const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
-const saveToDB = async (data: any[]): Promise<void> => {
+const saveToDB = async (key: string, data: any): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    store.put(data, 'CURRENT_MASTER_DATA');
+    store.put(data, key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 };
 
-const loadFromDB = async (): Promise<any[]> => {
+const loadFromDB = async (key: string): Promise<any> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const store = tx.objectStore(STORE_NAME);
-    const req = store.get('CURRENT_MASTER_DATA');
-    req.onsuccess = () => resolve(req.result || []);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result || null);
     req.onerror = () => reject(req.error);
   });
 };
@@ -50,7 +50,7 @@ const clearDB = async (): Promise<void> => {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    store.delete('CURRENT_MASTER_DATA');
+    store.clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -87,26 +87,46 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
   return 'Delivered';
 };
 
+// Universal helper to normalize Outlet Id (e.g., "10943.0" -> "10943")
+const cleanOutletId = (val: any): string => {
+  if (!val && val !== 0) return '';
+  return String(val).trim().replace(/\.0$/, '');
+};
+
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
+  const [penaltySummary, setPenaltySummary] = useState<Record<string, number>>({});
+  const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Upload State
+  // 5 Upload States
   const [rfFile, setRfFile] = useState<File | null>(null);
   const [irctcFile, setIrctcFile] = useState<File | null>(null);
   const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
+  const [penaltyFile, setPenaltyFile] = useState<File | null>(null);
+  const [currentMonthFile, setCurrentMonthFile] = useState<File | null>(null);
+
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // 1. Load saved master records on mount from IndexedDB
+  // 1. Load saved master records, penalty data & current month data on mount
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
-        const stored = await loadFromDB();
-        if (Array.isArray(stored) && stored.length > 0) {
-          setData(stored);
+        const storedMaster = await loadFromDB('CURRENT_MASTER_DATA');
+        const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
+        const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
+
+        if (Array.isArray(storedMaster) && storedMaster.length > 0) {
+          setData(storedMaster);
+        }
+        if (storedPenalty && typeof storedPenalty === 'object') {
+          setPenaltySummary(storedPenalty.outletTotals || {});
+        }
+        if (Array.isArray(storedCurrentMonth) && storedCurrentMonth.length > 0) {
+          setCurrentMonthRecords(storedCurrentMonth);
         }
       } catch (err) {
         console.error('Failed to load stored records from IndexedDB:', err);
@@ -117,58 +137,69 @@ export default function Page() {
     fetchStoredData();
   }, []);
 
-  // 2. Clear Old Records manually
+  // 2. Clear All Records manually
   const handleClearRecords = async () => {
-    if (confirm('Kya aap sach me purana data delete karna chahte hain?')) {
+    if (confirm('Kya aap sach me saara stored data delete karna chahte hain?')) {
       await clearDB();
       setData([]);
+      setPenaltySummary({});
+      setCurrentMonthRecords([]);
     }
   };
 
-  // Helper: Read CSV
-  const parseCSV = (file: File): Promise<any[]> => {
-    return new Promise((resolve, reject) => {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => resolve(results.data),
-        error: (err) => reject(err),
-      });
-    });
-  };
+  // Universal File Parser (Handles CSV, XLS, XLSX, HTML)
+  const parseAnyFile = async (file: File): Promise<any[]> => {
+    const fileName = file.name.toLowerCase();
 
-  // Helper: Read RF Report (HTML / XLS)
-  const parseRFReport = async (file: File): Promise<any[]> => {
-    const text = await file.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, 'text/html');
-    const table = doc.querySelector('table');
-    if (!table) return [];
-
-    const rows = Array.from(table.querySelectorAll('tr'));
-    if (rows.length < 2) return [];
-
-    const headers = Array.from(rows[0].querySelectorAll('th, td')).map((c: any) =>
-      c.innerText.trim()
-    );
-
-    const parsedData: any[] = [];
-    for (let i = 1; i < rows.length; i++) {
-      const cells = Array.from(rows[i].querySelectorAll('td')).map((c: any) =>
-        c.innerText.trim()
-      );
-      if (cells.length === headers.length) {
-        const rowObj: any = {};
-        headers.forEach((h, idx) => {
-          rowObj[h] = cells[idx];
+    if (fileName.endsWith('.csv')) {
+      return new Promise((resolve, reject) => {
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (results) => resolve(results.data),
+          error: (err) => reject(err),
         });
-        parsedData.push(rowObj);
+      });
+    }
+
+    // Try HTML / Table format first if it's RF Report
+    const text = await file.text();
+    if (text.includes('<table') || text.includes('<TABLE')) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(text, 'text/html');
+      const table = doc.querySelector('table');
+      if (table) {
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (rows.length >= 2) {
+          const headers = Array.from(rows[0].querySelectorAll('th, td')).map((c: any) =>
+            c.innerText.trim()
+          );
+          const parsedData: any[] = [];
+          for (let i = 1; i < rows.length; i++) {
+            const cells = Array.from(rows[i].querySelectorAll('td')).map((c: any) =>
+              c.innerText.trim()
+            );
+            if (cells.length === headers.length) {
+              const rowObj: any = {};
+              headers.forEach((h, idx) => {
+                rowObj[h] = cells[idx];
+              });
+              parsedData.push(rowObj);
+            }
+          }
+          if (parsedData.length > 0) return parsedData;
+        }
       }
     }
-    return parsedData;
+
+    // Binary Excel (.xls / .xlsx) parsing via SheetJS
+    const arrayBuffer = await file.arrayBuffer();
+    const wb = XLSX.read(arrayBuffer, { type: 'array' });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
   };
 
-  // 3. Merge Engine with 19 Master Calculated Columns
+  // 3. Merge & Process Engine (5 Files Pipeline)
   const handleProcessAndMerge = async () => {
     if (!rfFile || !irctcFile) {
       alert('Kripya RF Report aur IRCTC Report zaroor upload karein!');
@@ -177,39 +208,103 @@ export default function Page() {
 
     try {
       setIsProcessing(true);
+
+      // (A) Process RF Report
       setStatusText('Reading RF Report...');
-      const rfData = await parseRFReport(rfFile);
+      const rfData = await parseAnyFile(rfFile);
 
+      // (B) Process IRCTC Report
       setStatusText('Reading IRCTC Report...');
-      const irctcData = await parseCSV(irctcFile);
+      const irctcData = await parseAnyFile(irctcFile);
 
+      // (C) Process Feedback Report (Optional)
       let feedbackData: any[] = [];
       if (feedbackFile) {
         setStatusText('Reading Feedback Report...');
-        feedbackData = await parseCSV(feedbackFile);
+        feedbackData = await parseAnyFile(feedbackFile);
+      }
+
+      // (D) Process Penalty Report (Optional) -> Outlet Id wise Sum
+      const penaltyOutletMap: Record<string, number> = {};
+      const penaltyRawFilteredList: any[] = [];
+      if (penaltyFile) {
+        setStatusText('Processing Penalty Report (PENALTY, COUPON, COMPLAINT_REFUND, PARTIAL_DELIVERY)...');
+        const penaltyData = await parseAnyFile(penaltyFile);
+
+        const targetModes = ['PENALTY', 'COUPON', 'COMPLAINT_REFUND', 'PARTIAL_DELIVERY'];
+
+        penaltyData.forEach((row) => {
+          const mode = String(row['Transaction Mode'] || row['TransactionMode'] || '').trim().toUpperCase();
+          if (targetModes.includes(mode)) {
+            const outletId = cleanOutletId(row['Outlet Id'] || row['Outlet ID'] || row['OutletId'] || '');
+            const amount = parseFloat(row['Amount'] || row['Total Payable'] || 0) || 0;
+
+            if (outletId) {
+              penaltyOutletMap[outletId] = Number(((penaltyOutletMap[outletId] || 0) + amount).toFixed(2));
+            }
+
+            penaltyRawFilteredList.push({
+              outletId,
+              orderId: String(row['Order Id'] || row['Order ID'] || '').trim(),
+              mode,
+              amount,
+              vendorName: row['Vendor Name'] || '',
+              date: row['Date'] || '',
+              remarks: row['Remarks'] || '',
+            });
+          }
+        });
+
+        // Save Penalty data in IndexedDB
+        await saveToDB('OUTLET_PENALTY_DATA', {
+          outletTotals: penaltyOutletMap,
+          records: penaltyRawFilteredList,
+        });
+        setPenaltySummary(penaltyOutletMap);
+      }
+
+      // (E) Process Current Month Data (Optional)
+      let currentMonthParsedList: any[] = [];
+      if (currentMonthFile) {
+        setStatusText('Processing Current Month Data...');
+        const curMonthData = await parseAnyFile(currentMonthFile);
+
+        currentMonthParsedList = curMonthData.map((row) => ({
+          outletId: cleanOutletId(row['Outlet Id'] || row['Outlet ID'] || row['OutletId'] || ''),
+          vendorName: String(row['Vendor Name'] || '').trim(),
+          stationCode: String(row['Station Code'] || '').trim(),
+          previousBalance: parseFloat(row['Previouse Balance'] || row['Previous Balance'] || 0) || 0,
+          paidToVendors: parseFloat(row['Paid to Vendors By Relfood'] || 0) || 0,
+          receivedFromVendor: parseFloat(row['Payment Received from Vendor to Relfood'] || 0) || 0,
+          creditNoteToVendor: parseFloat(row['Credit Note to Vendor by Relfood'] || 0) || 0,
+        }));
+
+        // Save Current Month data in IndexedDB
+        await saveToDB('CURRENT_MONTH_DATA', currentMonthParsedList);
+        setCurrentMonthRecords(currentMonthParsedList);
       }
 
       setStatusText('Processing 19 Master Calculation Rules...');
 
-      // Lookup Map for IRCTC Report by Order Id
+      // Lookup Maps
       const irctcMap = new Map();
       irctcData.forEach((row) => {
-        const orderId = String(row['Order Id'] || '').trim().replace(/\.0$/, '');
+        const orderId = String(row['Order Id'] || row['Order ID'] || '').trim().replace(/\.0$/, '');
         if (orderId) irctcMap.set(orderId, row);
       });
 
-      // Lookup Map for Feedback Report by Order ID
       const fbMap = new Map();
       feedbackData.forEach((row) => {
-        const orderId = String(row['Order ID'] || row['Feedback Id'] || '').trim().replace(/\.0$/, '');
+        const orderId = String(row['Order ID'] || row['Feedback Id'] || row['Order Id'] || '').trim().replace(/\.0$/, '');
         if (orderId) fbMap.set(orderId, row);
       });
 
       // Master Calculation across RF Records
       const masterRows = rfData.map((rf) => {
-        const orderId = String(rf['IRCTC OrderId'] || '').trim().replace(/\.0$/, '');
+        const orderId = String(rf['IRCTC OrderId'] || rf['Order Id'] || '').trim().replace(/\.0$/, '');
         const irctc = irctcMap.get(orderId) || {};
         const fb = fbMap.get(orderId) || {};
+        const outletId = cleanOutletId(rf['OutletId'] || rf['Outlet ID'] || irctc['Outlet Id'] || '');
 
         // Raw statuses
         const rfRawStatus = rf['Order Status'] || '';
@@ -286,7 +381,7 @@ export default function Page() {
         return {
           'IRCTC Order ID': orderId,
           'RF Order ID': rf['Relfood OrderId'] || '',
-          'Outlet ID': rf['OutletId'] || irctc['Outlet Id'] || '',
+          'Outlet ID': outletId,
           'Vendor Name': rf['Vendor Name'] || irctc['Vendor Name'] || '',
           'Station Code': rf['Station Code'] || irctc['Delivery Station'] || '',
           'Train No': rf['Train Number'] || irctc['Train No.'] || '',
@@ -318,20 +413,23 @@ export default function Page() {
           'Margin %': marginPct,
           'Orders Count': ordersCount,
 
-          // Feedback Fields
+          // Feedback / Remarks
           'Rating': fb['Rating'] || '',
           'Remarks': fb['Remarks'] || irctc['Comments'] || '',
         };
       });
 
       // Save safely into IndexedDB (Old data replaced ONLY after new calculation completes)
-      await saveToDB(masterRows);
+      await saveToDB('CURRENT_MASTER_DATA', masterRows);
       setData(masterRows);
 
       // Reset modal inputs
       setRfFile(null);
       setIrctcFile(null);
       setFeedbackFile(null);
+      setPenaltyFile(null);
+      setCurrentMonthFile(null);
+
       setIsProcessing(false);
       setIsModalOpen(false);
     } catch (error: any) {
@@ -355,10 +453,12 @@ export default function Page() {
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
-        Loading saved master records...
+        Loading saved master records &amp; penalties...
       </div>
     );
   }
+
+  const penaltyOutletCount = Object.keys(penaltySummary).length;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
@@ -369,38 +469,50 @@ export default function Page() {
             📊
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-wide">RELFOOD MASTER DATA</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold tracking-wide">RELFOOD MASTER PORTAL</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 19 RULES ENGINE
               </span>
+              {penaltyOutletCount > 0 && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                  {penaltyOutletCount} OUTLET PENALTIES STORED
+                </span>
+              )}
+              {currentMonthRecords.length > 0 && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                  {currentMonthRecords.length} CURRENT MONTH OUTLETS
+                </span>
+              )}
             </div>
-            <p className="text-xs text-slate-400">Persistent Master Storage &amp; Excel Download</p>
+            <p className="text-xs text-slate-400">Order-level Calculations, Outlet Penalties &amp; Current Month Storage</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {data.length > 0 && (
+          {(data.length > 0 || penaltyOutletCount > 0 || currentMonthRecords.length > 0) && (
             <>
               <button
                 onClick={handleClearRecords}
                 className="px-3.5 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-700/60 text-xs font-semibold text-rose-300 transition"
               >
-                🗑️ Clear Old Records
+                🗑️ Clear All Stored Data
               </button>
-              <button
-                onClick={handleExportExcel}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
-              >
-                📥 Download Master Data (.xlsx)
-              </button>
+              {data.length > 0 && (
+                <button
+                  onClick={handleExportExcel}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
+                >
+                  📥 Download Master Data (.xlsx)
+                </button>
+              )}
             </>
           )}
           <button
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-indigo-950"
           >
-            <span>☁️</span> Upload New Reports
+            <span>☁️</span> Upload 5 Reports
           </button>
         </div>
       </header>
@@ -412,7 +524,7 @@ export default function Page() {
             <div className="text-5xl mb-4">📂</div>
             <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF Report, IRCTC Report &amp; Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored permanently.
+              Upload RF Report, IRCTC Report, Feedback Report, Penalty Report &amp; Current Month Data. Calculations &amp; Outlet summaries will be permanently preserved.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
@@ -425,12 +537,24 @@ export default function Page() {
           <div>
             {/* Search & Total Record Bar */}
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-              <span className="text-xs text-slate-400">
-                Total Stored Master Records: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Permanently saved across refresh)
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400">
+                  Total Master Orders: <strong className="text-emerald-400 font-bold">{data.length}</strong>
+                </span>
+                {penaltyOutletCount > 0 && (
+                  <span className="text-xs text-rose-400">
+                    • Outlets with Penalties: <strong>{penaltyOutletCount}</strong>
+                  </span>
+                )}
+                {currentMonthRecords.length > 0 && (
+                  <span className="text-xs text-cyan-400">
+                    • Current Month Outlets: <strong>{currentMonthRecords.length}</strong>
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
-                placeholder="Search by Order ID, Vendor, Station..."
+                placeholder="Search by Order ID, Vendor, Station, Outlet ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-72"
@@ -465,6 +589,7 @@ export default function Page() {
                     .filter(
                       (r) =>
                         String(r['IRCTC Order ID'] || '').includes(searchTerm) ||
+                        String(r['Outlet ID'] || '').includes(searchTerm) ||
                         String(r['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                         String(r['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase())
                     )
@@ -509,51 +634,86 @@ export default function Page() {
         )}
       </main>
 
-      {/* Upload Modal */}
+      {/* Upload Modal (All 5 Reports) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <span>📊</span> Upload New Reports
+            <h2 className="text-xl font-bold mb-3 flex items-center gap-2">
+              <span>📊</span> Upload Reports (5 Files System)
             </h2>
-            <p className="text-xs text-slate-400 mb-6">
-              Teeno files select karein. New reports process hote hi purana data automatically replace ho jayega aur refresh par safe rahega.
+            <p className="text-xs text-slate-400 mb-5">
+              Files select karein. New reports process hote hi purana data replace ho jayega aur permanently save rahega.
             </p>
 
-            <div className="space-y-4">
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {/* 1. RF Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-emerald-400 block mb-1">
-                  1. RF Report (.xls / HTML) *
+                  1. RF Report (.xls / .html / .csv) *
                 </label>
                 <input
                   type="file"
                   accept=".xls,.xlsx,.html,.csv"
                   onChange={(e) => setRfFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white cursor-pointer"
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white cursor-pointer"
                 />
               </div>
 
+              {/* 2. IRCTC Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-blue-400 block mb-1">
                   2. IRCTC Report (.csv) *
                 </label>
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   onChange={(e) => setIrctcFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white cursor-pointer"
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white cursor-pointer"
                 />
               </div>
 
+              {/* 3. Feedback Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-amber-400 block mb-1">
                   3. Feedback Report (.csv) (Optional)
                 </label>
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   onChange={(e) => setFeedbackFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-amber-600 file:text-white cursor-pointer"
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-amber-600 file:text-white cursor-pointer"
+                />
+              </div>
+
+              {/* 4. Penalty Report */}
+              <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-900/60">
+                <label className="text-xs font-semibold text-rose-400 block mb-1">
+                  4. Penalty / Vendor-MIS Report (.xls / .xlsx / .csv) (Optional)
+                </label>
+                <span className="text-[11px] text-rose-300/70 block mb-1.5">
+                  (Filters: PENALTY, COUPON, COMPLAINT_REFUND, PARTIAL_DELIVERY &amp; sums Outlet Id wise)
+                </span>
+                <input
+                  type="file"
+                  accept=".xls,.xlsx,.csv"
+                  onChange={(e) => setPenaltyFile(e.target.files?.[0] || null)}
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-rose-600 file:text-white cursor-pointer"
+                />
+              </div>
+
+              {/* 5. Current Month Data */}
+              <div className="p-3 bg-cyan-950/30 rounded-xl border border-cyan-900/60">
+                <label className="text-xs font-semibold text-cyan-400 block mb-1">
+                  5. Current Month Data (.csv / .xls / .xlsx) (Optional)
+                </label>
+                <span className="text-[11px] text-cyan-300/70 block mb-1.5">
+                  (Stores Previous Balance, Payments, Credit Notes Outlet Id wise for RDS)
+                </span>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={(e) => setCurrentMonthFile(e.target.files?.[0] || null)}
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-cyan-600 file:text-white cursor-pointer"
                 />
               </div>
             </div>
@@ -564,7 +724,7 @@ export default function Page() {
               </div>
             )}
 
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-5 flex justify-end gap-3">
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
@@ -576,7 +736,7 @@ export default function Page() {
                 disabled={isProcessing || !rfFile || !irctcFile}
                 className="px-5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 shadow-lg"
               >
-                {isProcessing ? 'Processing...' : 'Process & Store Master Data'}
+                {isProcessing ? 'Processing...' : 'Process & Store All Reports'}
               </button>
             </div>
           </div>
