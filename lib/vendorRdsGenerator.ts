@@ -48,7 +48,7 @@ export interface CurrentMonthRow {
 }
 
 export interface OutletMasterInfo {
-  outletId: string;
+  outletId?: string;
   state?: string;
   gst?: string;
   irctcStatus?: string;
@@ -56,7 +56,7 @@ export interface OutletMasterInfo {
   station?: string;
 }
 
-// Dynamic Invoice Number Helper (e.g., RF26-27-AUG0001)
+// Dynamic Invoice Generator helper (e.g. RF26-27-AUG0001)
 export const getInvoicePrefix = (sampleDateStr?: string): string => {
   let dateObj = new Date();
   if (sampleDateStr) {
@@ -84,7 +84,7 @@ export const getInvoicePrefix = (sampleDateStr?: string): string => {
 };
 
 /**
- * 41 Columns Vendor RDS Generation Engine
+ * 41 Columns Vendor RDS Aggregation Engine
  */
 export const generateVendorRdsData = (
   masterOrders: MasterOrderRow[],
@@ -92,7 +92,7 @@ export const generateVendorRdsData = (
   currentMonthList: CurrentMonthRow[] = [],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {}
 ): any[] => {
-  // 1. Group Master Orders Outlet ID wise (Delivered only for financial settlement)
+  // 1. Group Master Orders Outlet ID wise
   const outletOrderMap: Record<string, MasterOrderRow[]> = {};
   let sampleDate = '';
 
@@ -116,10 +116,10 @@ export const generateVendorRdsData = (
     if (oid) curMonthMap[oid] = c;
   });
 
-  // 2. Collect Union of ALL Outlets (Master + Current Month)
+  // 2. Union of All Outlets (Taaki 0-order outlets with previous balance miss na ho)
   const allOutletIds = new Set<string>([
     ...Object.keys(outletOrderMap),
-    ...Object.keys(curMonthMap)
+    ...Object.keys(curMonthMap),
   ]);
 
   if (allOutletIds.size === 0) return [];
@@ -159,6 +159,7 @@ export const generateVendorRdsData = (
     let marginSumDelivered = 0;
     let deliveredCount = 0;
 
+    // Financial calculations Delivered orders par sum honge
     orders.forEach((ord) => {
       const status = String(ord['Final Status'] || '').trim().toLowerCase();
       if (status === 'delivered') {
@@ -281,10 +282,10 @@ export const generateVendorRdsData = (
     });
   });
 
-  // 3. Sort A to Z by "Vendor with Station Code"
+  // 3. Alphabetical Sort by Station + Vendor
   aggregatedList.sort((a, b) => a._sortKey.localeCompare(b._sortKey));
 
-  // 4. Sequential Invoices & exact 41 columns output
+  // 4. Exact 41 Columns Ordered Output
   return aggregatedList.map((row, index) => {
     const invoiceSeq = String(index + 1).padStart(4, '0');
     return {
@@ -334,18 +335,18 @@ export const generateVendorRdsData = (
 };
 
 /**
- * Direct Excel Workbook Creator / Exporter
+ * Direct Export matching app/page.tsx signature
  */
-export const exportVendorRdsExcel = (
+export const generateVendorRDSWorkbook = (
   masterOrders: MasterOrderRow[],
-  penaltySummary: Record<string, number>,
-  currentMonthList: CurrentMonthRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo>,
+  penaltySummary: Record<string, number> = {},
+  currentMonthRecords: CurrentMonthRow[] = [],
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
   fileNamePrefix: string = 'VENDOR_RDS_REPORT'
 ) => {
-  const rdsRows = generateVendorRdsData(masterOrders, penaltySummary, currentMonthList, outletsMasterInfo);
+  const rdsRows = generateVendorRdsData(masterOrders, penaltySummary, currentMonthRecords, outletsMasterInfo);
   if (rdsRows.length === 0) {
-    alert('Export karne ke liye data uplabdh nahi hai.');
+    alert('Koi data available nahi hai export karne ke liye.');
     return;
   }
 
