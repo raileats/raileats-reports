@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
+import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -464,6 +465,11 @@ export default function Page() {
     generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
   };
 
+  const handleExportStationReport = () => {
+    if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
+    generateStationReportWorkbook(data, outletsMasterInfo);
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
@@ -530,7 +536,13 @@ export default function Page() {
                     onClick={handleExportVendorRDS}
                     className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-bold text-white transition shadow-lg shadow-violet-950 flex items-center gap-1.5"
                   >
-                    📋 Generate Vendor RDS (.xlsx)
+                    📋 Vendor RDS (.xlsx)
+                  </button>
+                  <button
+                    onClick={handleExportStationReport}
+                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white transition shadow-lg shadow-amber-950 flex items-center gap-1.5"
+                  >
+                    🚉 Station Report (.xlsx)
                   </button>
                 </>
               )}
