@@ -82,7 +82,7 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
   return 'Delivered';
 };
 
-// Universal helper to normalize Outlet Id (e.g., "10943.0" -> "10943")
+// Universal helper to normalize Outlet Id (e.g. "10943.0" -> "10943")
 const cleanOutletId = (val: any): string => {
   if (!val && val !== 0) return '';
   return String(val).trim().replace(/\.0$/, '');
