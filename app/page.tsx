@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 
-// Master Final Status Calculation Rule (51 Rules Mapping) - Normal internal helper
+// Master Final Status Calculation Rule (51 Rules Mapping)
 const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
   const rf = (rfStatusRaw || '').trim().toUpperCase();
   const irctc = (irctcStatusRaw || '').trim().toUpperCase();
@@ -196,9 +196,6 @@ export default function Page() {
         // (6) Final RF Commission = Final Total Commission - Final IRCTC Commission
         const finalRFCommission = Number((finalTotalCommission - finalIRCTCComm).toFixed(2));
 
-        // (7) Final GST = 5% of Final Base Price
-        const finalGST = Number((finalBasePrice * 0.05).toFixed(2));
-
         // (8) Final Total Discount = Same from RF Report Discount
         const finalTotalDiscount = Number(rfDiscount.toFixed(2));
 
@@ -208,17 +205,20 @@ export default function Page() {
         // (10) Final RF Discount = 50% of Final Total Discount
         const finalRFDiscount = Number((finalTotalDiscount * 0.5).toFixed(2));
 
+        // (14) Discounted Base Price = Final Base Price - Final Total Discount
+        const discountedBasePrice = Number((finalBasePrice - finalTotalDiscount).toFixed(2));
+
+        // (7) Final GST = 5% of Discounted Base Price (Updated as per requirement)
+        const finalGST = Number((discountedBasePrice * 0.05).toFixed(2));
+
         // (11) Delivery Charges = Same from IRCTC report
         const deliveryCharges = Number(irctcDeliveryCharge.toFixed(2));
 
-        // (12) Final Selling Price = Final Base Price + Final GST + Delivery Charges - Final Total Discount
-        const finalSellingPrice = Number((finalBasePrice + finalGST + deliveryCharges - finalTotalDiscount).toFixed(2));
+        // (12) Final Selling Price = Discounted Base Price + Final GST + Delivery Charges
+        const finalSellingPrice = Number((discountedBasePrice + finalGST + deliveryCharges).toFixed(2));
 
         // (13) Final Order Total = Final Base Price + Final GST + Delivery Charges
         const finalOrderTotal = Number((finalBasePrice + finalGST + deliveryCharges).toFixed(2));
-
-        // (14) Discounted Base Price = Final Base Price - Final Total Discount
-        const discountedBasePrice = Number((finalBasePrice - finalTotalDiscount).toFixed(2));
 
         // Payment Type
         const paymentType = String(rf['Payment Type'] || irctc['Transaction Type'] || '').trim().toUpperCase();
@@ -261,14 +261,14 @@ export default function Page() {
           'Final Total Commission': finalTotalCommission,
           'Final IRCTC Commission': finalIRCTCComm,
           'Final RF Commission': finalRFCommission,
-          'Final GST': finalGST,
           'Final Total Discount': finalTotalDiscount,
           'Final Vendor Discount': finalVendorDiscount,
           'Final RF Discount': finalRFDiscount,
+          'Discounted Base Price': discountedBasePrice,
+          'Final GST': finalGST,
           'Delivery Charges': deliveryCharges,
           'Final Selling Price': finalSellingPrice,
           'Final Order Total': finalOrderTotal,
-          'Discounted Base Price': discountedBasePrice,
           'PPD': ppd,
           'COD': cod,
           'Meals': meals,
@@ -396,6 +396,8 @@ export default function Page() {
                     <th className="p-3 font-semibold">Final Status</th>
                     <th className="p-3 font-semibold text-right">Vendor Price (₹)</th>
                     <th className="p-3 font-semibold text-right">Base Price (₹)</th>
+                    <th className="p-3 font-semibold text-right">Disc. Base (₹)</th>
+                    <th className="p-3 font-semibold text-right">Final GST (5%) (₹)</th>
                     <th className="p-3 font-semibold text-right">IRCTC Comm (₹)</th>
                     <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
                     <th className="p-3 font-semibold text-right">Selling Price (₹)</th>
@@ -435,6 +437,8 @@ export default function Page() {
                         </td>
                         <td className="p-3 text-right">₹{row['Final Vendor Price']}</td>
                         <td className="p-3 text-right font-medium text-slate-200">₹{row['Final Base Price']}</td>
+                        <td className="p-3 text-right text-indigo-300">₹{row['Discounted Base Price']}</td>
+                        <td className="p-3 text-right text-cyan-400 font-medium">₹{row['Final GST']}</td>
                         <td className="p-3 text-right text-indigo-400">₹{row['Final IRCTC Commission']}</td>
                         <td className="p-3 text-right text-emerald-400 font-bold">₹{row['Final RF Commission']}</td>
                         <td className="p-3 text-right text-amber-400 font-medium">₹{row['Final Selling Price']}</td>
