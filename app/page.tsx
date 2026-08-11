@@ -95,7 +95,7 @@ export default function Home() {
       <header className="max-w-6xl mx-auto flex justify-between items-center pb-6 border-b border-slate-800 mb-8">
         <div className="flex items-center gap-3">
           <FileSpreadsheet className="w-8 h-8 text-emerald-400" />
-          <h1 className="text-2xl font-bold tracking-tight">RailEats Reports Engine</h1>
+          <h1 className="text-2xl font-bold tracking-tight">RELFOOD Reports Engine</h1>
         </div>
         <div className="text-sm text-slate-400">Production Dashboard</div>
       </header>
@@ -147,7 +147,7 @@ export default function Home() {
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-xl space-y-4">
             <div className="flex justify-between items-center border-b border-slate-700 pb-4">
               <h2 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
-                <FileText className="w-5 h-5" /> Calculated Report Preview ({data.length} Outlets)
+                <FileText className="w-5 h-5" /> RELFOOD Settlement Summary ({data.length} Outlets)
               </h2>
 
               <button
