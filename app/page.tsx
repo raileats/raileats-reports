@@ -5,6 +5,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
+import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -470,6 +471,11 @@ export default function Page() {
     generateStationReportWorkbook(data, outletsMasterInfo);
   };
 
+  const handleExportVendorReport = () => {
+    if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
+    generateVendorReportWorkbook(data, outletsMasterInfo);
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
@@ -511,7 +517,7 @@ export default function Page() {
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400">Order-level Calculations, Outlet Master (GST/State), Penalties &amp; RDS Data</p>
+            <p className="text-xs text-slate-400">Order Calculations, Outlet Master (GST/State), Penalties, Station &amp; Vendor Reports</p>
           </div>
         </div>
 
@@ -528,21 +534,27 @@ export default function Page() {
                 <>
                   <button
                     onClick={handleExportExcel}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
+                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
                   >
                     📥 Master Data (.xlsx)
                   </button>
                   <button
                     onClick={handleExportVendorRDS}
-                    className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-bold text-white transition shadow-lg shadow-violet-950 flex items-center gap-1.5"
+                    className="px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-bold text-white transition shadow-lg shadow-violet-950 flex items-center gap-1.5"
                   >
                     📋 Vendor RDS (.xlsx)
                   </button>
                   <button
                     onClick={handleExportStationReport}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white transition shadow-lg shadow-amber-950 flex items-center gap-1.5"
+                    className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white transition shadow-lg shadow-amber-950 flex items-center gap-1.5"
                   >
                     🚉 Station Report (.xlsx)
+                  </button>
+                  <button
+                    onClick={handleExportVendorReport}
+                    className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white transition shadow-lg shadow-rose-950 flex items-center gap-1.5"
+                  >
+                    🏪 Vendor Report (.xlsx)
                   </button>
                 </>
               )}
