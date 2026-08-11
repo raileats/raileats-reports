@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
+import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -303,7 +304,6 @@ export default function Page() {
           );
 
           if (outletId && !outletsMap[outletId]) {
-            // Find GST column dynamically
             let gstVal = '';
             for (const k of Object.keys(row)) {
               if (k.toUpperCase().includes('GST')) {
@@ -350,76 +350,39 @@ export default function Page() {
         const outletId = cleanOutletId(rf['OutletId'] || rf['Outlet ID'] || irctc['Outlet Id'] || '');
         const outletInfo = outletsMap[outletId] || outletsMasterInfo[outletId] || {};
 
-        // Raw statuses
         const rfRawStatus = rf['Order Status'] || '';
         const irctcRawStatus = irctc['Order Status'] || '';
 
-        // (1) Final Status (51 Rules)
         const finalStatus = computeFinalStatus(rfRawStatus, irctcRawStatus);
-
-        // (2) Final Vendor Price
         const finalVendorPrice = parseFloat(rf['Vendor Price'] || 0) || 0;
 
-        // Raw financial inputs
         const rfSellingAmount = parseFloat(rf['Selling Amount'] || 0) || 0;
         const rfDiscount = parseFloat(rf['Discount'] || 0) || 0;
         const rfGst = parseFloat(rf['GST'] || 0) || 0;
         const irctcDeliveryCharge = parseFloat(irctc['Delivery Charge'] || 0) || 0;
 
-        // (3) Final Base Price = RF Selling Amount + Discount - GST - IRCTC Delivery Charges
         const finalBasePrice = Number((rfSellingAmount + rfDiscount - rfGst - irctcDeliveryCharge).toFixed(2));
-
-        // (4) Final Total Commission = Final Base Price - Final Vendor Price
         const finalTotalCommission = Number((finalBasePrice - finalVendorPrice).toFixed(2));
-
-        // (5) Final IRCTC Comm = 15% of Final Base Price
         const finalIRCTCComm = Number((finalBasePrice * 0.15).toFixed(2));
-
-        // (6) Final RF Commission = Final Total Commission - Final IRCTC Commission
         const finalRFCommission = Number((finalTotalCommission - finalIRCTCComm).toFixed(2));
-
-        // (8) Final Total Discount = Same from RF Report Discount
         const finalTotalDiscount = Number(rfDiscount.toFixed(2));
-
-        // (9) Final Vendor Discount = 50% of Final Total Discount
         const finalVendorDiscount = Number((finalTotalDiscount * 0.5).toFixed(2));
-
-        // (10) Final RF Discount = 50% of Final Total Discount
         const finalRFDiscount = Number((finalTotalDiscount * 0.5).toFixed(2));
-
-        // (14) Discounted Base Price = Final Base Price - Final Total Discount
         const discountedBasePrice = Number((finalBasePrice - finalTotalDiscount).toFixed(2));
-
-        // (7) Final GST = 5% of Discounted Base Price
         const finalGST = Number((discountedBasePrice * 0.05).toFixed(2));
-
-        // (11) Delivery Charges = Same from IRCTC report
         const deliveryCharges = Number(irctcDeliveryCharge.toFixed(2));
-
-        // (12) Final Selling Price = Discounted Base Price + Final GST + Delivery Charges
         const finalSellingPrice = Number((discountedBasePrice + finalGST + deliveryCharges).toFixed(2));
-
-        // (13) Final Order Total = Final Base Price + Final GST + Delivery Charges
         const finalOrderTotal = Number((finalBasePrice + finalGST + deliveryCharges).toFixed(2));
 
-        // Payment Type
         const paymentType = String(rf['Payment Type'] || irctc['Transaction Type'] || '').trim().toUpperCase();
-
-        // (15) PPD = Final Selling Price if PRE_PAID else 0
         const isPrepaid = paymentType.includes('PRE_PAID') || paymentType.includes('PREPAID') || paymentType.includes('ONLINE');
         const ppd = isPrepaid ? finalSellingPrice : 0;
 
-        // (16) COD = Final Selling Price if CASH_ON_DELIVERY else 0
         const isCOD = paymentType.includes('CASH') || paymentType.includes('COD');
         const cod = isCOD ? finalSellingPrice : 0;
 
-        // (17) Meals = Same from IRCTC
         const meals = parseInt(irctc['Meal Count'] || '1', 10) || 1;
-
-        // (18) Check Margin % = ((Final Base Price - Vendor Price) / Final Base Price) * 100
         const marginPct = finalBasePrice > 0 ? Number((((finalBasePrice - finalVendorPrice) / finalBasePrice) * 100).toFixed(2)) : 0;
-
-        // (19) Orders Count = 1 if Delivered else 0
         const ordersCount = finalStatus === 'Delivered' ? 1 : 0;
 
         return {
@@ -496,6 +459,11 @@ export default function Page() {
     XLSX.writeFile(workbook, `RELFOOD_MASTER_DATA_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
+  const handleExportVendorRDS = () => {
+    if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
+    generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
@@ -551,12 +519,20 @@ export default function Page() {
                 🗑️ Clear All Stored Data
               </button>
               {data.length > 0 && (
-                <button
-                  onClick={handleExportExcel}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
-                >
-                  📥 Download Master Data (.xlsx)
-                </button>
+                <>
+                  <button
+                    onClick={handleExportExcel}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
+                  >
+                    📥 Master Data (.xlsx)
+                  </button>
+                  <button
+                    onClick={handleExportVendorRDS}
+                    className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-bold text-white transition shadow-lg shadow-violet-950 flex items-center gap-1.5"
+                  >
+                    📋 Generate Vendor RDS (.xlsx)
+                  </button>
+                </>
               )}
             </>
           )}
@@ -689,7 +665,7 @@ export default function Page() {
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click &quot;Download Master Data (.xlsx)&quot; to export all records.</p>
+            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click &quot;Master Data (.xlsx)&quot; to export all records.</p>
           </div>
         )}
       </main>
@@ -713,106 +689,101 @@ export default function Page() {
                 </label>
                 <input
                   type="file"
-                  accept=".xls,.xlsx,.html,.csv"
+                  accept=".csv,.xls,.xlsx,.html"
                   onChange={(e) => setRfFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
                 />
               </div>
 
               {/* 2. IRCTC Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
-                <label className="text-xs font-semibold text-blue-400 block mb-1">
+                <label className="text-xs font-semibold text-emerald-400 block mb-1">
                   2. IRCTC Report (.csv / .xls / .xlsx) *
                 </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setIrctcFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
                 />
               </div>
 
               {/* 3. Feedback Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
-                <label className="text-xs font-semibold text-amber-400 block mb-1">
-                  3. Feedback Report (.csv / .xls / .xlsx) (Optional)
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  3. Feedback Report (Optional)
                 </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setFeedbackFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-amber-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600 cursor-pointer"
                 />
               </div>
 
               {/* 4. Penalty Report */}
-              <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-900/60">
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-rose-400 block mb-1">
-                  4. Penalty / Vendor-MIS Report (.xls / .xlsx / .csv) (Optional)
+                  4. Penalty &amp; Deduction Report (Optional)
                 </label>
-                <span className="text-[11px] text-rose-300/70 block mb-1.5">
-                  (Filters: PENALTY, COUPON, COMPLAINT_REFUND, PARTIAL_DELIVERY &amp; sums Outlet Id wise)
-                </span>
                 <input
                   type="file"
-                  accept=".xls,.xlsx,.csv"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setPenaltyFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-rose-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-rose-700 file:text-white hover:file:bg-rose-600 cursor-pointer"
                 />
               </div>
 
               {/* 5. Current Month Data */}
-              <div className="p-3 bg-cyan-950/30 rounded-xl border border-cyan-900/60">
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-cyan-400 block mb-1">
-                  5. Current Month Data (.csv / .xls / .xlsx) (Optional)
+                  5. Current Month Data (Previous Balance, Paid by Relfood) (Optional)
                 </label>
-                <span className="text-[11px] text-cyan-300/70 block mb-1.5">
-                  (Stores Previous Balance, Payments, Credit Notes Outlet Id wise for RDS)
-                </span>
                 <input
                   type="file"
                   accept=".csv,.xls,.xlsx"
                   onChange={(e) => setCurrentMonthFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-cyan-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-700 file:text-white hover:file:bg-cyan-600 cursor-pointer"
                 />
               </div>
 
-              {/* 6. Outlets Report */}
-              <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-800/60">
+              {/* 6. Outlets Master Report */}
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-amber-400 block mb-1">
-                  6. Outlets Report (.csv / .xls / .xlsx) (Optional)
+                  6. Outlets Master (GST, State &amp; IRCTC Status) (Optional)
                 </label>
-                <span className="text-[11px] text-amber-300/70 block mb-1.5">
-                  (Stores Aggregator Outlet ID, GST, State, &amp; IRCTC Status — duplicates me top row save hoti hai)
-                </span>
                 <input
                   type="file"
                   accept=".csv,.xls,.xlsx"
                   onChange={(e) => setOutletsFile(e.target.files?.[0] || null)}
-                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-amber-600 file:text-white cursor-pointer"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-700 file:text-white hover:file:bg-amber-600 cursor-pointer"
                 />
               </div>
             </div>
 
+            {/* Processing State text */}
             {isProcessing && (
-              <div className="mt-4 p-3 rounded-lg bg-indigo-950/60 border border-indigo-700/50 text-indigo-300 text-xs animate-pulse text-center">
-                ⏳ {statusText}
+              <div className="mt-4 p-3 bg-indigo-950/60 border border-indigo-700/60 rounded-xl flex items-center gap-3">
+                <div className="animate-spin w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full" />
+                <span className="text-xs font-medium text-indigo-300">{statusText}</span>
               </div>
             )}
 
-            <div className="mt-5 flex justify-end gap-3">
+            {/* Actions */}
+            <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                disabled={isProcessing}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition"
               >
                 Cancel
               </button>
               <button
                 onClick={handleProcessAndMerge}
-                disabled={isProcessing || !rfFile || !irctcFile}
-                className="px-5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 shadow-lg"
+                disabled={isProcessing}
+                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-bold text-white transition flex items-center gap-2 shadow-lg shadow-indigo-950"
               >
-                {isProcessing ? 'Processing...' : 'Process & Store All Reports'}
+                {isProcessing ? 'Processing...' : 'Merge & Process All'}
               </button>
             </div>
           </div>
