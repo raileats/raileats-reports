@@ -1,22 +1,98 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
+
+// Master Final Status Calculation Rule
+export const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
+  const rf = (rfStatusRaw || '').trim().toUpperCase();
+  const irctc = (irctcStatusRaw || '').trim().toUpperCase();
+
+  // If IRCTC explicitly says Cancelled, Master is Cancelled
+  if (irctc === 'ORDER_CANCELLED' || irctc === 'CANCELLED') {
+    return 'CANCELLED';
+  }
+
+  // If IRCTC says Delivered
+  if (irctc === 'ORDER_DELIVERED' || irctc === 'DELIVERED') {
+    if (rf === 'ORDER_DELIVERED' || rf === 'DELIVERED') return 'DELIVERED';
+    if (rf === 'ORDER_CANCELLED' || rf === 'CANCELLED') return 'CANCELLED_AFTER_DELIVERY';
+    if (rf === 'ORDER_UNDELIVERED') return 'UNDELIVERED';
+    return 'DELIVERED';
+  }
+
+  // If IRCTC says Undelivered
+  if (irctc === 'ORDER_UNDELIVERED' || rf === 'ORDER_UNDELIVERED') {
+    return 'UNDELIVERED';
+  }
+
+  // If RF says Cancelled
+  if (rf === 'ORDER_CANCELLED' || rf === 'CANCELLED') {
+    return 'CANCELLED';
+  }
+
+  // If Confirmed / Placed / Preparing
+  if (irctc === 'ORDER_CONFIRMED' || rf === 'ORDER_CONFIRMED') {
+    return 'CONFIRMED';
+  }
+
+  if (irctc === 'ORDER_PLACED' || rf === 'ORDER_PLACED') {
+    return 'PLACED';
+  }
+
+  return irctc || rf || 'UNKNOWN';
+};
 
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('Vendor RDS');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Upload Modal State
+  // Upload State
   const [rfFile, setRfFile] = useState<File | null>(null);
   const [irctcFile, setIrctcFile] = useState<File | null>(null);
   const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // Helper: Read CSV
+  // Load saved records from storage on mount (Persist on refresh)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('RELFOOD_MASTER_RECORDS');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setData(parsed);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load saved records:', err);
+    } finally {
+      setIsLoaded(true);
+    }
+  }, []);
+
+  // Save records to storage
+  const saveRecordsToStorage = (records: any[]) => {
+    setData(records);
+    try {
+      localStorage.setItem('RELFOOD_MASTER_RECORDS', JSON.stringify(records));
+    } catch (err) {
+      console.warn('Storage limit exceeded or failed to save to localStorage', err);
+    }
+  };
+
+  // Delete / Clear Old Records
+  const handleClearRecords = () => {
+    if (confirm('Kya aap sach me purana data delete karna chahte hain? Iske baad aap naya data upload kar sakenge.')) {
+      setData([]);
+      localStorage.removeItem('RELFOOD_MASTER_RECORDS');
+    }
+  };
+
+  // Helper to read CSV
   const parseCSV = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
@@ -28,7 +104,7 @@ export default function Page() {
     });
   };
 
-  // Helper: Read RF Report (HTML / XLS)
+  // Helper to read RF Report (HTML / XLS)
   const parseRFReport = async (file: File): Promise<any[]> => {
     const text = await file.text();
     const parser = new DOMParser();
@@ -80,7 +156,7 @@ export default function Page() {
         feedbackData = await parseCSV(feedbackFile);
       }
 
-      setStatusText('Merging 15,000+ orders & calculating reports...');
+      setStatusText('Merging reports & evaluating Final Status...');
 
       // Lookup Map for RF Report by IRCTC Order ID
       const rfMap = new Map();
@@ -96,11 +172,15 @@ export default function Page() {
         if (orderId) fbMap.set(orderId, row);
       });
 
-      // Master Records Merging
+      // Master Records Merging with Final Status Evaluation
       const masterRows = irctcData.map((irctc) => {
         const orderId = String(irctc['Order Id'] || '').trim();
         const rf = rfMap.get(orderId) || {};
         const fb = fbMap.get(orderId) || {};
+
+        const rfRawStatus = rf['Order Status'] || '';
+        const irctcRawStatus = irctc['Order Status'] || '';
+        const finalStatus = computeFinalStatus(rfRawStatus, irctcRawStatus);
 
         const basePrice = parseFloat(irctc['Total Base Price'] || rf['Total Base Price'] || 0);
         const gst = parseFloat(irctc['Total Gst'] || rf['GST'] || 0);
@@ -126,7 +206,12 @@ export default function Page() {
           bookingDate: irctc['Date of Booking'] || rf['Booking Date'] || '',
           deliveryDate: irctc['Delivery Date'] || rf['Delivery Date'] || '',
           deliveryTime: rf['Delivery Time'] || '',
-          orderStatus: irctc['Order Status'] || rf['Order Status'] || 'Delivered',
+
+          // Statuses
+          rfRawStatus,
+          irctcRawStatus,
+          finalStatus,
+
           paymentType: irctc['Transaction Type'] || rf['Payment Type'] || '',
           
           // Financials
@@ -148,7 +233,7 @@ export default function Page() {
         };
       });
 
-      setData(masterRows);
+      saveRecordsToStorage(masterRows);
       setIsProcessing(false);
       setIsModalOpen(false);
     } catch (error: any) {
@@ -182,6 +267,8 @@ export default function Page() {
           vendorName: key,
           vendorCode: row.vendorCode,
           orders: 0,
+          deliveredOrders: 0,
+          cancelledOrders: 0,
           basePrice: 0,
           gst: 0,
           sellingAmount: 0,
@@ -192,13 +279,18 @@ export default function Page() {
         };
       }
       groups[key].orders += 1;
-      groups[key].basePrice += row.basePrice;
-      groups[key].gst += row.gst;
-      groups[key].sellingAmount += row.sellingAmount;
-      groups[key].vendorPrice += row.vendorPrice;
-      groups[key].rfComm += row.rfComm;
-      groups[key].irctcComm += row.irctcComm;
-      groups[key].netPayable += (row.vendorPrice - row.rfComm);
+      if (row.finalStatus === 'DELIVERED') {
+        groups[key].deliveredOrders += 1;
+        groups[key].basePrice += row.basePrice;
+        groups[key].gst += row.gst;
+        groups[key].sellingAmount += row.sellingAmount;
+        groups[key].vendorPrice += row.vendorPrice;
+        groups[key].rfComm += row.rfComm;
+        groups[key].irctcComm += row.irctcComm;
+        groups[key].netPayable += (row.vendorPrice - row.rfComm);
+      } else if (row.finalStatus === 'CANCELLED') {
+        groups[key].cancelledOrders += 1;
+      }
     });
     return Object.values(groups);
   }, [data]);
@@ -212,19 +304,19 @@ export default function Page() {
           stationCode: key,
           stationZone: row.stationZone,
           orders: 0,
+          delivered: 0,
           sellingAmount: 0,
           rfComm: 0
         };
       }
       groups[key].orders += 1;
-      groups[key].sellingAmount += row.sellingAmount;
-      groups[key].rfComm += row.rfComm;
+      if (row.finalStatus === 'DELIVERED') {
+        groups[key].delivered += 1;
+        groups[key].sellingAmount += row.sellingAmount;
+        groups[key].rfComm += row.rfComm;
+      }
     });
     return Object.values(groups);
-  }, [data]);
-
-  const complaintsList = useMemo(() => {
-    return data.filter((row) => row.feedbackRemarks || (row.rating && Number(row.rating) <= 3) || row.feedbackType !== 'None');
   }, [data]);
 
   const tabs = [
@@ -239,6 +331,8 @@ export default function Page() {
     'Complaints'
   ];
 
+  if (!isLoaded) return null;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
       {/* Top Navbar */}
@@ -251,21 +345,29 @@ export default function Page() {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold tracking-wide">RELFOOD</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                ENGINE v2.0
+                MASTER ENGINE
               </span>
             </div>
-            <p className="text-xs text-slate-400">IRCTC Settlement, Remittance & Multi-Report Generator</p>
+            <p className="text-xs text-slate-400">Persistent Storage & Final Status Settlement Engine</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {data.length > 0 && (
-            <button
-              onClick={handleExportCSV}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition"
-            >
-              📥 Export CSV
-            </button>
+            <>
+              <button
+                onClick={handleClearRecords}
+                className="px-3.5 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-700/60 text-xs font-semibold text-rose-300 transition"
+              >
+                🗑️ Clear Old Records
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition"
+              >
+                📥 Export CSV
+              </button>
+            </>
           )}
           <button
             onClick={() => setIsModalOpen(true)}
@@ -298,9 +400,9 @@ export default function Page() {
         {data.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-16 rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 text-center">
             <div className="text-5xl mb-4">☁️</div>
-            <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Uploaded Yet</h3>
+            <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Saved in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload raw reports (RF XLS, IRCTC CSV, Feedback CSV). The system will automatically calculate AC to BJ formulas and generate all 9 reports.
+              Upload RF XLS, IRCTC CSV & Feedback CSV. The records will stay permanently saved on your portal until you click "Clear Old Records".
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
@@ -312,9 +414,9 @@ export default function Page() {
         ) : (
           <div>
             {/* Search and Summary */}
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <span className="text-xs text-slate-400">
-                Showing <strong className="text-emerald-400">{data.length}</strong> loaded orders
+                Total Saved Orders: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Persistent on refresh)
               </span>
               <input
                 type="text"
@@ -334,7 +436,8 @@ export default function Page() {
                       <>
                         <th className="p-3 font-semibold">Vendor Name</th>
                         <th className="p-3 font-semibold">Vendor Code</th>
-                        <th className="p-3 font-semibold text-right">Orders</th>
+                        <th className="p-3 font-semibold text-right">Total Orders</th>
+                        <th className="p-3 font-semibold text-right">Delivered</th>
                         <th className="p-3 font-semibold text-right">Base Price (₹)</th>
                         <th className="p-3 font-semibold text-right">GST (₹)</th>
                         <th className="p-3 font-semibold text-right">Selling Amt (₹)</th>
@@ -347,29 +450,32 @@ export default function Page() {
                         <th className="p-3 font-semibold">Station Code</th>
                         <th className="p-3 font-semibold">Station Zone</th>
                         <th className="p-3 font-semibold text-right">Total Orders</th>
+                        <th className="p-3 font-semibold text-right">Delivered</th>
                         <th className="p-3 font-semibold text-right">Total Selling (₹)</th>
                         <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
                       </>
                     )}
-                    {activeTab === 'Complaints' && (
+                    {activeTab === 'Main Report' && (
                       <>
                         <th className="p-3 font-semibold">Order ID</th>
+                        <th className="p-3 font-semibold">Delivery Date</th>
                         <th className="p-3 font-semibold">Vendor</th>
-                        <th className="p-3 font-semibold">Rating</th>
-                        <th className="p-3 font-semibold">Type</th>
-                        <th className="p-3 font-semibold">Remarks</th>
+                        <th className="p-3 font-semibold">Station</th>
+                        <th className="p-3 font-semibold">RF Status</th>
+                        <th className="p-3 font-semibold">IRCTC Status</th>
+                        <th className="p-3 font-semibold">Final Status</th>
+                        <th className="p-3 font-semibold text-right">Selling (₹)</th>
                       </>
                     )}
-                    {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Complaints' && (
+                    {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Main Report' && (
                       <>
                         <th className="p-3 font-semibold">Order ID</th>
                         <th className="p-3 font-semibold">Date</th>
                         <th className="p-3 font-semibold">Vendor</th>
                         <th className="p-3 font-semibold">Station</th>
-                        <th className="p-3 font-semibold">Train No</th>
+                        <th className="p-3 font-semibold">Final Status</th>
                         <th className="p-3 font-semibold text-right">Selling (₹)</th>
                         <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
-                        <th className="p-3 font-semibold">Status</th>
                       </>
                     )}
                   </tr>
@@ -383,6 +489,7 @@ export default function Page() {
                           <td className="p-3 font-medium text-white">{row.vendorName}</td>
                           <td className="p-3 text-slate-400">{row.vendorCode}</td>
                           <td className="p-3 text-right">{row.orders}</td>
+                          <td className="p-3 text-right text-emerald-400 font-bold">{row.deliveredOrders}</td>
                           <td className="p-3 text-right">₹{row.basePrice.toFixed(2)}</td>
                           <td className="p-3 text-right">₹{row.gst.toFixed(2)}</td>
                           <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
@@ -399,25 +506,42 @@ export default function Page() {
                           <td className="p-3 font-bold text-white">{row.stationCode}</td>
                           <td className="p-3 text-slate-400">{row.stationZone || 'N/A'}</td>
                           <td className="p-3 text-right">{row.orders}</td>
+                          <td className="p-3 text-right text-emerald-400 font-bold">{row.delivered}</td>
                           <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
                           <td className="p-3 text-right text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
                         </tr>
                       ))}
 
-                  {activeTab === 'Complaints' &&
-                    complaintsList
-                      .filter((c) => c.orderId.includes(searchTerm) || c.vendorName.toLowerCase().includes(searchTerm.toLowerCase()))
+                  {activeTab === 'Main Report' &&
+                    data
+                      .filter((r) => r.orderId.includes(searchTerm) || r.vendorName.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .slice(0, 100)
                       .map((row, i) => (
                         <tr key={i} className="hover:bg-slate-800/40 text-slate-300">
                           <td className="p-3 font-medium text-white">{row.orderId}</td>
+                          <td className="p-3 text-slate-400">{row.deliveryDate}</td>
                           <td className="p-3">{row.vendorName}</td>
-                          <td className="p-3 text-amber-400 font-bold">{row.rating ? `${row.rating} ★` : '-'}</td>
-                          <td className="p-3 text-rose-400">{row.feedbackType}</td>
-                          <td className="p-3 text-slate-400">{row.feedbackRemarks || '-'}</td>
+                          <td className="p-3">{row.stationCode}</td>
+                          <td className="p-3 text-slate-400">{row.rfRawStatus}</td>
+                          <td className="p-3 text-slate-400">{row.irctcRawStatus}</td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                row.finalStatus === 'DELIVERED'
+                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                  : row.finalStatus === 'CANCELLED'
+                                  ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                                  : 'bg-amber-950 text-amber-400 border border-amber-800'
+                              }`}
+                            >
+                              {row.finalStatus}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
                         </tr>
                       ))}
 
-                  {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Complaints' &&
+                  {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Main Report' &&
                     data
                       .slice(0, 100)
                       .map((row, i) => (
@@ -426,14 +550,9 @@ export default function Page() {
                           <td className="p-3 text-slate-400">{row.deliveryDate}</td>
                           <td className="p-3">{row.vendorName}</td>
                           <td className="p-3">{row.stationCode}</td>
-                          <td className="p-3">{row.trainNo}</td>
+                          <td className="p-3 font-semibold text-emerald-400">{row.finalStatus}</td>
                           <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
                           <td className="p-3 text-right text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">
-                              {row.orderStatus}
-                            </span>
-                          </td>
                         </tr>
                       ))}
                 </tbody>
@@ -451,7 +570,7 @@ export default function Page() {
               <span>📊</span> Upload 3 Raw Reports
             </h2>
             <p className="text-xs text-slate-400 mb-6">
-              Teeno raw files select karein. System in teeno ko Order ID se auto-merge karke saari reports taiyar karega.
+              Teeno raw files select karein. Data merge hone ke baad browser me permanently save rahega jab tak aap clear na karein.
             </p>
 
             <div className="space-y-4">
@@ -510,7 +629,7 @@ export default function Page() {
                 disabled={isProcessing || !rfFile || !irctcFile}
                 className="px-5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 shadow-lg"
               >
-                {isProcessing ? 'Processing...' : 'Merge & Generate Reports'}
+                {isProcessing ? 'Processing...' : 'Merge & Save Records'}
               </button>
             </div>
           </div>
