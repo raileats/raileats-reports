@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
-import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
+import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
 
 // --- Native IndexedDB Storage Engine (Safe across Refresh & Large Data) ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -477,9 +477,9 @@ export default function Page() {
     generateVendorReportWorkbook(data, outletsMasterInfo);
   };
 
-  const handleExportVendorDateWise = () => {
+  const handleExportDateWiseSummary = () => {
     if (data.length === 0) return alert('Pehle Master Reports upload & process karein!');
-    generateVendorDateWiseReportWorkbook(data, outletsMasterInfo);
+    generateDateWiseReportWorkbook(data);
   };
 
   if (!isLoaded) {
@@ -563,10 +563,10 @@ export default function Page() {
                     🏪 Vendor Report (.xlsx)
                   </button>
                   <button
-                    onClick={handleExportVendorDateWise}
-                    className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white transition shadow-lg shadow-blue-950 flex items-center gap-1.5"
+                    onClick={handleExportDateWiseSummary}
+                    className="px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-xs font-bold text-white transition shadow-lg shadow-orange-950 flex items-center gap-1.5"
                   >
-                    📅 Date Wise Report (.xlsx)
+                    📈 Date Wise Summary (.xlsx)
                   </button>
                 </>
               )}
@@ -717,96 +717,109 @@ export default function Page() {
               Files select karein. Sabhi calculated metrics aur summaries permanently save ho jayengi.
             </p>
 
-            <div className="space-y-3 text-xs max-h-[60vh] overflow-y-auto pr-2">
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
               {/* 1. RF Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700">
-                <label className="font-semibold block mb-1 text-slate-200">1. RF Report (CSV/Excel) *</label>
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-emerald-400 block mb-1">
+                  1. RF Report (.xls / .html / .csv) *
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx,.html"
                   onChange={(e) => setRfFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
                 />
               </div>
 
               {/* 2. IRCTC Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700">
-                <label className="font-semibold block mb-1 text-slate-200">2. IRCTC Report (CSV/Excel/HTML) *</label>
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-emerald-400 block mb-1">
+                  2. IRCTC Report (.csv / .xls / .xlsx) *
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls,.html"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setIrctcFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
                 />
               </div>
 
               {/* 3. Feedback Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700">
-                <label className="font-semibold block mb-1 text-slate-200">3. Feedback Report (Optional)</label>
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  3. Feedback Report (Optional)
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setFeedbackFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-slate-700 file:text-white hover:file:bg-slate-600"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600 cursor-pointer"
                 />
               </div>
 
               {/* 4. Penalty Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-rose-900/40">
-                <label className="font-semibold block mb-1 text-rose-300">4. Penalty Report (Optional - Filtered by 4 Modes)</label>
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-rose-400 block mb-1">
+                  4. Penalty &amp; Deduction Report (Optional)
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setPenaltyFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-rose-700 file:text-white hover:file:bg-rose-600"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-rose-700 file:text-white hover:file:bg-rose-600 cursor-pointer"
                 />
               </div>
 
-              {/* 5. Current Month Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-cyan-900/40">
-                <label className="font-semibold block mb-1 text-cyan-300">5. Current Month Data (Optional - Balances &amp; Adjustments)</label>
+              {/* 5. Current Month Data */}
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-cyan-400 block mb-1">
+                  5. Current Month Data (Previous Balance, Paid by Relfood) (Optional)
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setCurrentMonthFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-cyan-700 file:text-white hover:file:bg-cyan-600"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-700 file:text-white hover:file:bg-cyan-600 cursor-pointer"
                 />
               </div>
 
               {/* 6. Outlets Master Report */}
-              <div className="p-3 bg-slate-800/50 rounded-xl border border-amber-900/40">
-                <label className="font-semibold block mb-1 text-amber-300">6. Outlets Master Report (Optional - GST, State &amp; IRCTC Status)</label>
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
+                <label className="text-xs font-semibold text-amber-400 block mb-1">
+                  6. Outlets Master (GST, State &amp; IRCTC Status) (Optional)
+                </label>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xls,.xlsx"
                   onChange={(e) => setOutletsFile(e.target.files?.[0] || null)}
-                  className="w-full text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-amber-700 file:text-white hover:file:bg-amber-600"
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-700 file:text-white hover:file:bg-amber-600 cursor-pointer"
                 />
               </div>
             </div>
 
+            {/* Processing State text */}
             {isProcessing && (
-              <div className="mt-4 p-3 bg-indigo-950/60 border border-indigo-700/60 rounded-xl text-center text-xs text-indigo-300 animate-pulse">
-                ⏳ {statusText}
+              <div className="mt-4 p-3 bg-indigo-950/60 border border-indigo-700/60 rounded-xl flex items-center gap-3">
+                <div className="animate-spin w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full" />
+                <span className="text-xs font-medium text-indigo-300">{statusText}</span>
               </div>
             )}
 
-            <div className="flex justify-end gap-2 mt-5">
+            {/* Actions */}
+            <div className="mt-6 flex justify-end gap-3">
               <button
-                type="button"
-                disabled={isProcessing}
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300"
+                disabled={isProcessing}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition"
               >
                 Cancel
               </button>
               <button
-                type="button"
-                disabled={isProcessing}
                 onClick={handleProcessAndMerge}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-lg shadow-indigo-950 disabled:opacity-50"
+                disabled={isProcessing}
+                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-bold text-white transition flex items-center gap-2 shadow-lg shadow-indigo-950"
               >
-                {isProcessing ? 'Processing...' : 'Process & Store in Database'}
+                {isProcessing ? 'Processing...' : 'Merge & Process All'}
               </button>
             </div>
           </div>
