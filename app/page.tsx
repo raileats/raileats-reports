@@ -3,50 +3,41 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 
-// Master Final Status Calculation Rule
+// Master Final Status Calculation Rule (51 Rules Mapping)
 export const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string => {
   const rf = (rfStatusRaw || '').trim().toUpperCase();
   const irctc = (irctcStatusRaw || '').trim().toUpperCase();
 
-  // If IRCTC explicitly says Cancelled, Master is Cancelled
-  if (irctc === 'ORDER_CANCELLED' || irctc === 'CANCELLED') {
-    return 'CANCELLED';
+  // 1. Undelivered Checks
+  if (rf.includes('UNDELIVERED') || irctc.includes('UNDELIVERED')) {
+    return 'Not Delivered';
   }
 
-  // If IRCTC says Delivered
-  if (irctc === 'ORDER_DELIVERED' || irctc === 'DELIVERED') {
-    if (rf === 'ORDER_DELIVERED' || rf === 'DELIVERED') return 'DELIVERED';
-    if (rf === 'ORDER_CANCELLED' || rf === 'CANCELLED') return 'CANCELLED_AFTER_DELIVERY';
-    if (rf === 'ORDER_UNDELIVERED') return 'UNDELIVERED';
-    return 'DELIVERED';
+  // 2. Cancelled Checks
+  if (rf.includes('CANCEL') || irctc.includes('CANCEL')) {
+    return 'Cancelled';
   }
 
-  // If IRCTC says Undelivered
-  if (irctc === 'ORDER_UNDELIVERED' || rf === 'ORDER_UNDELIVERED') {
-    return 'UNDELIVERED';
+  // 3. Delivered / Confirmed / Placed / Pending Checks
+  if (
+    rf.includes('DELIVER') ||
+    rf.includes('CONFIRM') ||
+    rf.includes('PLACED') ||
+    irctc.includes('DELIVER') ||
+    irctc.includes('CONFIRM') ||
+    irctc.includes('PLACED') ||
+    irctc.includes('PENDING')
+  ) {
+    return 'Delivered';
   }
 
-  // If RF says Cancelled
-  if (rf === 'ORDER_CANCELLED' || rf === 'CANCELLED') {
-    return 'CANCELLED';
-  }
-
-  // If Confirmed / Placed / Preparing
-  if (irctc === 'ORDER_CONFIRMED' || rf === 'ORDER_CONFIRMED') {
-    return 'CONFIRMED';
-  }
-
-  if (irctc === 'ORDER_PLACED' || rf === 'ORDER_PLACED') {
-    return 'PLACED';
-  }
-
-  return irctc || rf || 'UNKNOWN';
+  return 'Delivered';
 };
 
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('Vendor RDS');
+  const [activeTab, setActiveTab] = useState<string>('Main Report');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
@@ -57,10 +48,10 @@ export default function Page() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // Load saved records from storage on mount (Persist on refresh)
+  // 1. Load saved master records on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('RELFOOD_MASTER_RECORDS');
+      const saved = localStorage.getItem('RELFOOD_MASTER_DATA');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -74,25 +65,25 @@ export default function Page() {
     }
   }, []);
 
-  // Save records to storage
+  // 2. Save master records to storage
   const saveRecordsToStorage = (records: any[]) => {
     setData(records);
     try {
-      localStorage.setItem('RELFOOD_MASTER_RECORDS', JSON.stringify(records));
+      localStorage.setItem('RELFOOD_MASTER_DATA', JSON.stringify(records));
     } catch (err) {
-      console.warn('Storage limit exceeded or failed to save to localStorage', err);
+      console.warn('Storage limit warning:', err);
     }
   };
 
-  // Delete / Clear Old Records
+  // 3. Clear Old Records
   const handleClearRecords = () => {
-    if (confirm('Kya aap sach me purana data delete karna chahte hain? Iske baad aap naya data upload kar sakenge.')) {
+    if (confirm('Kya aap sach me purana data delete karna chahte hain?')) {
       setData([]);
-      localStorage.removeItem('RELFOOD_MASTER_RECORDS');
+      localStorage.removeItem('RELFOOD_MASTER_DATA');
     }
   };
 
-  // Helper to read CSV
+  // Helper: Read CSV
   const parseCSV = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
@@ -104,7 +95,7 @@ export default function Page() {
     });
   };
 
-  // Helper to read RF Report (HTML / XLS)
+  // Helper: Read RF Report (HTML / XLS)
   const parseRFReport = async (file: File): Promise<any[]> => {
     const text = await file.text();
     const parser = new DOMParser();
@@ -135,10 +126,10 @@ export default function Page() {
     return parsedData;
   };
 
-  // 3-Files Process & Auto Merge Engine
+  // 4. Merge Engine with 19 Master Calculated Columns
   const handleProcessAndMerge = async () => {
     if (!rfFile || !irctcFile) {
-      alert('Kripya RF Report aur IRCTC Report zaroor select karein!');
+      alert('Kripya RF Report aur IRCTC Report zaroor upload karein!');
       return;
     }
 
@@ -156,80 +147,138 @@ export default function Page() {
         feedbackData = await parseCSV(feedbackFile);
       }
 
-      setStatusText('Merging reports & evaluating Final Status...');
+      setStatusText('Processing 19 Master Calculation Rules...');
 
-      // Lookup Map for RF Report by IRCTC Order ID
-      const rfMap = new Map();
-      rfData.forEach((row) => {
-        const orderId = String(row['IRCTC OrderId'] || '').trim();
-        if (orderId) rfMap.set(orderId, row);
+      // Lookup Map for IRCTC Report by Order Id
+      const irctcMap = new Map();
+      irctcData.forEach((row) => {
+        const orderId = String(row['Order Id'] || '').trim().replace(/\.0$/, '');
+        if (orderId) irctcMap.set(orderId, row);
       });
 
       // Lookup Map for Feedback Report by Order ID
       const fbMap = new Map();
       feedbackData.forEach((row) => {
-        const orderId = String(row['Order ID'] || '').trim();
+        const orderId = String(row['Order ID'] || row['Feedback Id'] || '').trim().replace(/\.0$/, '');
         if (orderId) fbMap.set(orderId, row);
       });
 
-      // Master Records Merging with Final Status Evaluation
-      const masterRows = irctcData.map((irctc) => {
-        const orderId = String(irctc['Order Id'] || '').trim();
-        const rf = rfMap.get(orderId) || {};
+      // Master Calculation across RF Records
+      const masterRows = rfData.map((rf) => {
+        const orderId = String(rf['IRCTC OrderId'] || '').trim().replace(/\.0$/, '');
+        const irctc = irctcMap.get(orderId) || {};
         const fb = fbMap.get(orderId) || {};
 
+        // Raw statuses
         const rfRawStatus = rf['Order Status'] || '';
         const irctcRawStatus = irctc['Order Status'] || '';
+
+        // (1) Final Status (51 Rules)
         const finalStatus = computeFinalStatus(rfRawStatus, irctcRawStatus);
 
-        const basePrice = parseFloat(irctc['Total Base Price'] || rf['Total Base Price'] || 0);
-        const gst = parseFloat(irctc['Total Gst'] || rf['GST'] || 0);
-        const deliveryCharge = parseFloat(irctc['Delivery Charge'] || 0);
-        const discount = parseFloat(irctc['discount'] || rf['Discount'] || 0);
-        const sellingAmount = parseFloat(rf['Selling Amount'] || irctc['Amount Payable'] || 0);
-        const vendorPrice = parseFloat(rf['Vendor Price'] || 0);
+        // (2) Final Vendor Price
+        const finalVendorPrice = parseFloat(rf['Vendor Price'] || 0) || 0;
 
-        const rfComm = parseFloat(rf['Relfood Commission'] || 0);
-        const irctcComm = parseFloat(rf['IRCTC Commission'] || 0);
-        const totalComm = parseFloat(rf['Total Commission RF + IRCTC'] || (rfComm + irctcComm));
+        // Raw financial inputs
+        const rfSellingAmount = parseFloat(rf['Selling Amount'] || 0) || 0;
+        const rfDiscount = parseFloat(rf['Discount'] || 0) || 0;
+        const rfGst = parseFloat(rf['GST'] || 0) || 0;
+        const irctcDeliveryCharge = parseFloat(irctc['Delivery Charge'] || 0) || 0;
+
+        // (3) Final Base Price = RF Selling Amount + Discount - GST - IRCTC Delivery Charges
+        const finalBasePrice = Number((rfSellingAmount + rfDiscount - rfGst - irctcDeliveryCharge).toFixed(2));
+
+        // (4) Final Total Commission = Final Base Price - Final Vendor Price
+        const finalTotalCommission = Number((finalBasePrice - finalVendorPrice).toFixed(2));
+
+        // (5) Final IRCTC Comm = 15% of Final Base Price
+        const finalIRCTCComm = Number((finalBasePrice * 0.15).toFixed(2));
+
+        // (6) Final RF Commission = Final Total Commission - Final IRCTC Commission
+        const finalRFCommission = Number((finalTotalCommission - finalIRCTCComm).toFixed(2));
+
+        // (7) Final GST = 5% of Final Base Price
+        const finalGST = Number((finalBasePrice * 0.05).toFixed(2));
+
+        // (8) Final Total Discount = Same from RF Report Discount
+        const finalTotalDiscount = Number(rfDiscount.toFixed(2));
+
+        // (9) Final Vendor Discount = 50% of Final Total Discount
+        const finalVendorDiscount = Number((finalTotalDiscount * 0.5).toFixed(2));
+
+        // (10) Final RF Discount = 50% of Final Total Discount
+        const finalRFDiscount = Number((finalTotalDiscount * 0.5).toFixed(2));
+
+        // (11) Delivery Charges = Same from IRCTC report
+        const deliveryCharges = Number(irctcDeliveryCharge.toFixed(2));
+
+        // (12) Final Selling Price = Final Base Price + Final GST + Delivery Charges - Final Total Discount
+        const finalSellingPrice = Number((finalBasePrice + finalGST + deliveryCharges - finalTotalDiscount).toFixed(2));
+
+        // (13) Final Order Total = Final Base Price + Final GST + Delivery Charges
+        const finalOrderTotal = Number((finalBasePrice + finalGST + deliveryCharges).toFixed(2));
+
+        // (14) Discounted Base Price = Final Base Price - Final Total Discount
+        const discountedBasePrice = Number((finalBasePrice - finalTotalDiscount).toFixed(2));
+
+        // Payment Type
+        const paymentType = String(rf['Payment Type'] || irctc['Transaction Type'] || '').trim().toUpperCase();
+
+        // (15) PPD = Final Selling Price if PRE_PAID else 0
+        const isPrepaid = paymentType.includes('PRE_PAID') || paymentType.includes('PREPAID') || paymentType.includes('ONLINE');
+        const ppd = isPrepaid ? finalSellingPrice : 0;
+
+        // (16) COD = Final Selling Price if CASH_ON_DELIVERY else 0
+        const isCOD = paymentType.includes('CASH') || paymentType.includes('COD');
+        const cod = isCOD ? finalSellingPrice : 0;
+
+        // (17) Meals = Same from IRCTC
+        const meals = parseInt(irctc['Meal Count'] || '1', 10) || 1;
+
+        // (18) Check Margin % = ((Final Base Price - Vendor Price) / Final Base Price) * 100
+        const marginPct = finalBasePrice > 0 ? Number((((finalBasePrice - finalVendorPrice) / finalBasePrice) * 100).toFixed(2)) : 0;
+
+        // (19) Orders Count = 1 if Delivered else 0
+        const ordersCount = finalStatus === 'Delivered' ? 1 : 0;
 
         return {
-          orderId,
-          rfOrderId: rf['Relfood OrderId'] || '',
-          vendorCode: irctc['Vendor Id'] || irctc['Outlet Id'] || '',
-          vendorName: irctc['Vendor Name'] || rf['Vendor Name'] || 'Unknown Vendor',
-          outletName: irctc['Outlet Name'] || '',
-          stationCode: rf['Station Code'] || irctc['Delivery Station'] || '',
-          stationZone: rf['Station Zone'] || '',
-          trainNo: irctc['Train No.'] || rf['Train Number'] || '',
-          pnr: irctc['PNR No.'] || '',
-          bookingDate: irctc['Date of Booking'] || rf['Booking Date'] || '',
-          deliveryDate: irctc['Delivery Date'] || rf['Delivery Date'] || '',
-          deliveryTime: rf['Delivery Time'] || '',
+          'IRCTC Order ID': orderId,
+          'RF Order ID': rf['Relfood OrderId'] || '',
+          'Outlet ID': rf['OutletId'] || irctc['Outlet Id'] || '',
+          'Vendor Name': rf['Vendor Name'] || irctc['Vendor Name'] || '',
+          'Station Code': rf['Station Code'] || irctc['Delivery Station'] || '',
+          'Train No': rf['Train Number'] || irctc['Train No.'] || '',
+          'Booking Date': rf['Booking Date'] || irctc['Date of Booking'] || '',
+          'Delivery Date': rf['Delivery Date'] || irctc['Delivery Date'] || '',
+          'Delivery Time': rf['Delivery Time'] || '',
+          'Payment Type': paymentType,
 
-          // Statuses
-          rfRawStatus,
-          irctcRawStatus,
-          finalStatus,
+          // 19 Master Calculated Columns
+          'RF Status': rfRawStatus,
+          'IRCTC Status': irctcRawStatus,
+          'Final Status': finalStatus,
+          'Final Vendor Price': finalVendorPrice,
+          'Final Base Price': finalBasePrice,
+          'Final Total Commission': finalTotalCommission,
+          'Final IRCTC Commission': finalIRCTCComm,
+          'Final RF Commission': finalRFCommission,
+          'Final GST': finalGST,
+          'Final Total Discount': finalTotalDiscount,
+          'Final Vendor Discount': finalVendorDiscount,
+          'Final RF Discount': finalRFDiscount,
+          'Delivery Charges': deliveryCharges,
+          'Final Selling Price': finalSellingPrice,
+          'Final Order Total': finalOrderTotal,
+          'Discounted Base Price': discountedBasePrice,
+          'PPD': ppd,
+          'COD': cod,
+          'Meals': meals,
+          'Margin %': marginPct,
+          'Orders Count': ordersCount,
 
-          paymentType: irctc['Transaction Type'] || rf['Payment Type'] || '',
-          
-          // Financials
-          basePrice,
-          gst,
-          deliveryCharge,
-          discount,
-          sellingAmount,
-          vendorPrice,
-          rfComm,
-          irctcComm,
-          totalComm,
-
-          // Feedback & Complaints
-          rating: fb['Rating'] || '',
-          feedbackRemarks: fb['Remarks'] || irctc['Comments'] || '',
-          feedbackType: fb['Type'] || irctc['Feedback Type'] || 'None',
-          complaintStatus: irctc['Complaint Order status'] || ''
+          // Feedback Fields
+          'Rating': fb['Rating'] || '',
+          'Remarks': fb['Remarks'] || irctc['Comments'] || '',
         };
       });
 
@@ -243,112 +292,38 @@ export default function Page() {
     }
   };
 
-  // Export to CSV Function
-  const handleExportCSV = () => {
+  // 5. Export Master Data to Excel / CSV
+  const handleExportExcel = () => {
     if (data.length === 0) return alert('No data to export!');
     const csv = Papa.unparse(data);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `${activeTab.replace(/\s+/g, '_')}_Report.csv`);
+    link.setAttribute('download', `RELFOOD_MASTER_DATA_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Grouped Calculations for Tabs
-  const vendorRDSGrouped = useMemo(() => {
-    const groups: { [key: string]: any } = {};
-    data.forEach((row) => {
-      const key = row.vendorName;
-      if (!groups[key]) {
-        groups[key] = {
-          vendorName: key,
-          vendorCode: row.vendorCode,
-          orders: 0,
-          deliveredOrders: 0,
-          cancelledOrders: 0,
-          basePrice: 0,
-          gst: 0,
-          sellingAmount: 0,
-          vendorPrice: 0,
-          rfComm: 0,
-          irctcComm: 0,
-          netPayable: 0
-        };
-      }
-      groups[key].orders += 1;
-      if (row.finalStatus === 'DELIVERED') {
-        groups[key].deliveredOrders += 1;
-        groups[key].basePrice += row.basePrice;
-        groups[key].gst += row.gst;
-        groups[key].sellingAmount += row.sellingAmount;
-        groups[key].vendorPrice += row.vendorPrice;
-        groups[key].rfComm += row.rfComm;
-        groups[key].irctcComm += row.irctcComm;
-        groups[key].netPayable += (row.vendorPrice - row.rfComm);
-      } else if (row.finalStatus === 'CANCELLED') {
-        groups[key].cancelledOrders += 1;
-      }
-    });
-    return Object.values(groups);
-  }, [data]);
-
-  const stationGrouped = useMemo(() => {
-    const groups: { [key: string]: any } = {};
-    data.forEach((row) => {
-      const key = row.stationCode || 'N/A';
-      if (!groups[key]) {
-        groups[key] = {
-          stationCode: key,
-          stationZone: row.stationZone,
-          orders: 0,
-          delivered: 0,
-          sellingAmount: 0,
-          rfComm: 0
-        };
-      }
-      groups[key].orders += 1;
-      if (row.finalStatus === 'DELIVERED') {
-        groups[key].delivered += 1;
-        groups[key].sellingAmount += row.sellingAmount;
-        groups[key].rfComm += row.rfComm;
-      }
-    });
-    return Object.values(groups);
-  }, [data]);
-
-  const tabs = [
-    'Vendor RDS',
-    'VendorReport',
-    'Vendor Date Wise',
-    'StationReport',
-    'DeliveryDateReport',
-    'DateStationReport',
-    'Main Report',
-    'StnDatewiseReport',
-    'Complaints'
-  ];
-
   if (!isLoaded) return null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
-      {/* Top Navbar */}
+      {/* Top Header */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-slate-800">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xl">
-            📄
+            📊
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-wide">RELFOOD</h1>
+              <h1 className="text-xl font-bold tracking-wide">RELFOOD MASTER DATA</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                MASTER ENGINE
+                19 RULES ENGINE
               </span>
             </div>
-            <p className="text-xs text-slate-400">Persistent Storage & Final Status Settlement Engine</p>
+            <p className="text-xs text-slate-400">Order-level Calculations & Persistent Storage</p>
           </div>
         </div>
 
@@ -362,202 +337,118 @@ export default function Page() {
                 🗑️ Clear Old Records
               </button>
               <button
-                onClick={handleExportCSV}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition"
+                onClick={handleExportExcel}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
               >
-                📥 Export CSV
+                📥 Download Master Data (Excel/CSV)
               </button>
             </>
           )}
           <button
             onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-emerald-950"
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-indigo-950"
           >
             <span>☁️</span> Upload 3 Raw Reports
           </button>
         </div>
       </header>
 
-      {/* Tabs Navigation */}
-      <div className="flex items-center gap-2 overflow-x-auto py-4 scrollbar-none border-b border-slate-800/80">
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-              activeTab === tab
-                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20 font-bold'
-                : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Main View Area */}
+      {/* Main Content Area */}
       <main className="mt-6">
         {data.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-16 rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 text-center">
-            <div className="text-5xl mb-4">☁️</div>
-            <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Saved in Portal</h3>
+            <div className="text-5xl mb-4">📂</div>
+            <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF XLS, IRCTC CSV & Feedback CSV. The records will stay permanently saved on your portal until you click "Clear Old Records".
+              Upload RF Report, IRCTC Report & Feedback Report. The 19 Master Calculated Rules will automatically process and stay stored locally.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition"
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition"
             >
-              Start Multi-Report Upload
+              Start Upload & Processing
             </button>
           </div>
         ) : (
           <div>
-            {/* Search and Summary */}
+            {/* Search & Info */}
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <span className="text-xs text-slate-400">
-                Total Saved Orders: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Persistent on refresh)
+                Total Stored Master Records: <strong className="text-emerald-400 font-bold">{data.length}</strong> (Safe across refresh)
               </span>
               <input
                 type="text"
-                placeholder="Search vendor, order id, station..."
+                placeholder="Search by Order ID, Vendor, Station..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 w-64"
+                className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-72"
               />
             </div>
 
-            {/* Table Container */}
-            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-400">
-                    {activeTab === 'Vendor RDS' && (
-                      <>
-                        <th className="p-3 font-semibold">Vendor Name</th>
-                        <th className="p-3 font-semibold">Vendor Code</th>
-                        <th className="p-3 font-semibold text-right">Total Orders</th>
-                        <th className="p-3 font-semibold text-right">Delivered</th>
-                        <th className="p-3 font-semibold text-right">Base Price (₹)</th>
-                        <th className="p-3 font-semibold text-right">GST (₹)</th>
-                        <th className="p-3 font-semibold text-right">Selling Amt (₹)</th>
-                        <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
-                        <th className="p-3 font-semibold text-right">Net Payable (₹)</th>
-                      </>
-                    )}
-                    {activeTab === 'StationReport' && (
-                      <>
-                        <th className="p-3 font-semibold">Station Code</th>
-                        <th className="p-3 font-semibold">Station Zone</th>
-                        <th className="p-3 font-semibold text-right">Total Orders</th>
-                        <th className="p-3 font-semibold text-right">Delivered</th>
-                        <th className="p-3 font-semibold text-right">Total Selling (₹)</th>
-                        <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
-                      </>
-                    )}
-                    {activeTab === 'Main Report' && (
-                      <>
-                        <th className="p-3 font-semibold">Order ID</th>
-                        <th className="p-3 font-semibold">Delivery Date</th>
-                        <th className="p-3 font-semibold">Vendor</th>
-                        <th className="p-3 font-semibold">Station</th>
-                        <th className="p-3 font-semibold">RF Status</th>
-                        <th className="p-3 font-semibold">IRCTC Status</th>
-                        <th className="p-3 font-semibold">Final Status</th>
-                        <th className="p-3 font-semibold text-right">Selling (₹)</th>
-                      </>
-                    )}
-                    {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Main Report' && (
-                      <>
-                        <th className="p-3 font-semibold">Order ID</th>
-                        <th className="p-3 font-semibold">Date</th>
-                        <th className="p-3 font-semibold">Vendor</th>
-                        <th className="p-3 font-semibold">Station</th>
-                        <th className="p-3 font-semibold">Final Status</th>
-                        <th className="p-3 font-semibold text-right">Selling (₹)</th>
-                        <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
-                      </>
-                    )}
+            {/* Master Data Table */}
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl max-h-[70vh]">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                  <tr>
+                    <th className="p-3 font-semibold">Order ID</th>
+                    <th className="p-3 font-semibold">Outlet ID</th>
+                    <th className="p-3 font-semibold">Vendor Name</th>
+                    <th className="p-3 font-semibold">Station</th>
+                    <th className="p-3 font-semibold">Final Status</th>
+                    <th className="p-3 font-semibold text-right">Vendor Price (₹)</th>
+                    <th className="p-3 font-semibold text-right">Base Price (₹)</th>
+                    <th className="p-3 font-semibold text-right">IRCTC Comm (₹)</th>
+                    <th className="p-3 font-semibold text-right">RF Comm (₹)</th>
+                    <th className="p-3 font-semibold text-right">Selling Price (₹)</th>
+                    <th className="p-3 font-semibold text-right">PPD (₹)</th>
+                    <th className="p-3 font-semibold text-right">COD (₹)</th>
+                    <th className="p-3 font-semibold text-right">Margin %</th>
+                    <th className="p-3 font-semibold text-center">Count</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {activeTab === 'Vendor RDS' &&
-                    vendorRDSGrouped
-                      .filter((v) => v.vendorName.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40 text-slate-300">
-                          <td className="p-3 font-medium text-white">{row.vendorName}</td>
-                          <td className="p-3 text-slate-400">{row.vendorCode}</td>
-                          <td className="p-3 text-right">{row.orders}</td>
-                          <td className="p-3 text-right text-emerald-400 font-bold">{row.deliveredOrders}</td>
-                          <td className="p-3 text-right">₹{row.basePrice.toFixed(2)}</td>
-                          <td className="p-3 text-right">₹{row.gst.toFixed(2)}</td>
-                          <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
-                          <td className="p-3 text-right text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-amber-400">₹{row.netPayable.toFixed(2)}</td>
-                        </tr>
-                      ))}
-
-                  {activeTab === 'StationReport' &&
-                    stationGrouped
-                      .filter((s) => s.stationCode.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40 text-slate-300">
-                          <td className="p-3 font-bold text-white">{row.stationCode}</td>
-                          <td className="p-3 text-slate-400">{row.stationZone || 'N/A'}</td>
-                          <td className="p-3 text-right">{row.orders}</td>
-                          <td className="p-3 text-right text-emerald-400 font-bold">{row.delivered}</td>
-                          <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
-                          <td className="p-3 text-right text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                        </tr>
-                      ))}
-
-                  {activeTab === 'Main Report' &&
-                    data
-                      .filter((r) => r.orderId.includes(searchTerm) || r.vendorName.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .slice(0, 100)
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40 text-slate-300">
-                          <td className="p-3 font-medium text-white">{row.orderId}</td>
-                          <td className="p-3 text-slate-400">{row.deliveryDate}</td>
-                          <td className="p-3">{row.vendorName}</td>
-                          <td className="p-3">{row.stationCode}</td>
-                          <td className="p-3 text-slate-400">{row.rfRawStatus}</td>
-                          <td className="p-3 text-slate-400">{row.irctcRawStatus}</td>
-                          <td className="p-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                row.finalStatus === 'DELIVERED'
-                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                                  : row.finalStatus === 'CANCELLED'
-                                  ? 'bg-rose-950 text-rose-400 border border-rose-800'
-                                  : 'bg-amber-950 text-amber-400 border border-amber-800'
-                              }`}
-                            >
-                              {row.finalStatus}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
-                        </tr>
-                      ))}
-
-                  {activeTab !== 'Vendor RDS' && activeTab !== 'StationReport' && activeTab !== 'Main Report' &&
-                    data
-                      .slice(0, 100)
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40 text-slate-300">
-                          <td className="p-3 font-medium text-white">{row.orderId}</td>
-                          <td className="p-3 text-slate-400">{row.deliveryDate}</td>
-                          <td className="p-3">{row.vendorName}</td>
-                          <td className="p-3">{row.stationCode}</td>
-                          <td className="p-3 font-semibold text-emerald-400">{row.finalStatus}</td>
-                          <td className="p-3 text-right">₹{row.sellingAmount.toFixed(2)}</td>
-                          <td className="p-3 text-right text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                        </tr>
-                      ))}
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                  {data
+                    .filter(
+                      (r) =>
+                        r['IRCTC Order ID'].includes(searchTerm) ||
+                        r['Vendor Name'].toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
+                    )
+                    .slice(0, 100)
+                    .map((row, i) => (
+                      <tr key={i} className="hover:bg-slate-800/40">
+                        <td className="p-3 font-medium text-white">{row['IRCTC Order ID']}</td>
+                        <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
+                        <td className="p-3 font-medium">{row['Vendor Name']}</td>
+                        <td className="p-3">{row['Station Code']}</td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              row['Final Status'] === 'Delivered'
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                : row['Final Status'] === 'Cancelled'
+                                ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                                : 'bg-amber-950 text-amber-400 border border-amber-800'
+                            }`}
+                          >
+                            {row['Final Status']}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">₹{row['Final Vendor Price']}</td>
+                        <td className="p-3 text-right font-medium text-slate-200">₹{row['Final Base Price']}</td>
+                        <td className="p-3 text-right text-indigo-400">₹{row['Final IRCTC Commission']}</td>
+                        <td className="p-3 text-right text-emerald-400 font-bold">₹{row['Final RF Commission']}</td>
+                        <td className="p-3 text-right text-amber-400 font-medium">₹{row['Final Selling Price']}</td>
+                        <td className="p-3 text-right text-blue-400">₹{row['PPD']}</td>
+                        <td className="p-3 text-right text-purple-400">₹{row['COD']}</td>
+                        <td className="p-3 text-right font-bold text-teal-400">{row['Margin %']}%</td>
+                        <td className="p-3 text-center">{row['Orders Count']}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
+            <p className="text-[11px] text-slate-500 mt-2">* Showing first 100 preview rows. Click "Download Master Data" to export all records.</p>
           </div>
         )}
       </main>
@@ -570,7 +461,7 @@ export default function Page() {
               <span>📊</span> Upload 3 Raw Reports
             </h2>
             <p className="text-xs text-slate-400 mb-6">
-              Teeno raw files select karein. Data merge hone ke baad browser me permanently save rahega jab tak aap clear na karein.
+              Teeno files select karein. System inko merge karke 19 Master Calculated columns generate karega aur local storage me store karega.
             </p>
 
             <div className="space-y-4">
@@ -629,7 +520,7 @@ export default function Page() {
                 disabled={isProcessing || !rfFile || !irctcFile}
                 className="px-5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 shadow-lg"
               >
-                {isProcessing ? 'Processing...' : 'Merge & Save Records'}
+                {isProcessing ? 'Processing...' : 'Process & Store Master Data'}
               </button>
             </div>
           </div>
