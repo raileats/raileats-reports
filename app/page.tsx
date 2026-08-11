@@ -1,69 +1,198 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState } from 'react';
+import { FileSpreadsheet, Download, FileText, UploadCloud } from 'lucide-react';
+import Papa from 'papaparse';
+
+interface VendorRdsSummary {
+  vendorCode: string;
+  vendorName: string;
+  stationCode: string;
+  vendorPrice: number;
+  basePrice: number;
+  grossComm: number;
+  penalty: number;
+  totalGrossCommWithPenalty: number;
+  igst: number;
+  netPayment: number;
+}
 
 export default function Home() {
+  const [reportType, setReportType] = useState('vendor_rds');
+  const [data, setData] = useState<VendorRdsSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const calculateVendorRDS = (rows: any[]): VendorRdsSummary[] => {
+    const summaryMap: { [key: string]: VendorRdsSummary } = {};
+
+    rows.forEach((row) => {
+      const vendorCode = row['Vendor Code'] || row['vendor_code'] || row['Outlet ID'] || 'UNKNOWN';
+      const vendorName = row['Vendor Name'] || row['vendor_name'] || row['Outlet Name'] || 'Unknown Vendor';
+      const stationCode = row['Station Code'] || row['station_code'] || row['Station'] || '-';
+      
+      const vendorPrice = parseFloat(row['Vendor Price'] || row['vendor_price'] || '0') || 0;
+      const basePrice = parseFloat(row['Base Price'] || row['base_price'] || '0') || 0;
+      const penalty = parseFloat(row['Penalty'] || row['penalty'] || '0') || 0;
+      const grossComm = parseFloat(row['Gross Commission'] || row['gross_comm'] || '0') || 0;
+
+      if (!summaryMap[vendorCode]) {
+        summaryMap[vendorCode] = {
+          vendorCode,
+          vendorName,
+          stationCode,
+          vendorPrice: 0,
+          basePrice: 0,
+          grossComm: 0,
+          penalty: 0,
+          totalGrossCommWithPenalty: 0,
+          igst: 0,
+          netPayment: 0,
+        };
+      }
+
+      summaryMap[vendorCode].vendorPrice += vendorPrice;
+      summaryMap[vendorCode].basePrice += basePrice;
+      summaryMap[vendorCode].grossComm += grossComm;
+      summaryMap[vendorCode].penalty += penalty;
+    });
+
+    return Object.values(summaryMap).map((v) => {
+      const totalComm = v.grossComm + v.penalty;
+      const igst = totalComm * 0.18;
+      const netPayment = v.vendorPrice - (totalComm + igst);
+      return {
+        ...v,
+        totalGrossCommWithPenalty: totalComm,
+        igst,
+        netPayment,
+      };
+    });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsLoading(true);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results: any) => {
+        const calculated = calculateVendorRDS(results.data);
+        setData(calculated);
+        setIsLoading(false);
+      },
+      error: () => setIsLoading(false),
+    });
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen bg-slate-900 text-slate-100 p-8">
+      <header className="max-w-6xl mx-auto flex justify-between items-center pb-6 border-b border-slate-800 mb-8">
+        <div className="flex items-center gap-3">
+          <FileSpreadsheet className="w-8 h-8 text-emerald-400" />
+          <h1 className="text-2xl font-bold tracking-tight">RailEats Reports Engine</h1>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="text-sm text-slate-400">Production Dashboard</div>
+      </header>
+
+      <div className="max-w-6xl mx-auto space-y-8">
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-xl grid md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              1. Select Report Type
+            </label>
+            <select
+              value={reportType}
+              onChange={(e) => setReportType(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="vendor_rds">Vendor RDS (Settlement & Remittance)</option>
+              <option value="vendor_report">Vendor Summary Report</option>
+              <option value="station_report">Station Wise Report</option>
+              <option value="date_report">Delivery Date Report</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              2. Upload Data CSV File
+            </label>
+            <div className="relative border-2 border-dashed border-slate-700 rounded-lg p-3 hover:border-emerald-500 transition-colors text-center cursor-pointer bg-slate-900">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div className="flex items-center justify-center gap-2 text-slate-400">
+                <UploadCloud className="w-5 h-5 text-emerald-400" />
+                <span className="text-sm">Click or Drag & Drop Data CSV</span>
+              </div>
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+
+        {isLoading && (
+          <div className="text-center py-12 text-slate-400">
+            Processing Data & Applying Excel Formulas...
+          </div>
+        )}
+
+        {!isLoading && data.length > 0 && (
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-700 pb-4">
+              <h2 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
+                <FileText className="w-5 h-5" /> Calculated Report Preview ({data.length} Outlets)
+              </h2>
+
+              <button
+                onClick={handlePrint}
+                className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-colors cursor-pointer"
+              >
+                <Download className="w-4 h-4" /> Save / Print PDF Report
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-900 uppercase text-slate-400 font-medium">
+                  <tr>
+                    <th className="p-3">Vendor Code</th>
+                    <th className="p-3">Vendor Name</th>
+                    <th className="p-3">Station</th>
+                    <th className="p-3">Vendor Price</th>
+                    <th className="p-3">Base Price</th>
+                    <th className="p-3">Gross Comm</th>
+                    <th className="p-3">GST (18%)</th>
+                    <th className="p-3 text-emerald-400 font-bold">Net Payable</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-700">
+                  {data.map((row, idx) => (
+                    <tr key={idx} className="hover:bg-slate-700/50">
+                      <td className="p-3 font-mono text-slate-400">{row.vendorCode}</td>
+                      <td className="p-3 font-medium text-slate-200">{row.vendorName}</td>
+                      <td className="p-3">{row.stationCode}</td>
+                      <td className="p-3">₹{row.vendorPrice.toFixed(2)}</td>
+                      <td className="p-3">₹{row.basePrice.toFixed(2)}</td>
+                      <td className="p-3">₹{row.totalGrossCommWithPenalty.toFixed(2)}</td>
+                      <td className="p-3">₹{row.igst.toFixed(2)}</td>
+                      <td className="p-3 font-bold text-emerald-400">
+                        ₹{row.netPayment.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
