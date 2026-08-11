@@ -56,8 +56,8 @@ export interface OutletMasterInfo {
   station?: string;
 }
 
-// Dynamic Invoice Number FY & Month Helper (e.g., RF26-27-AUG0001)
-const getInvoicePrefix = (sampleDateStr?: string): string => {
+// Dynamic Invoice Number Helper (e.g., RF26-27-AUG0001)
+export const getInvoicePrefix = (sampleDateStr?: string): string => {
   let dateObj = new Date();
   if (sampleDateStr) {
     const parsed = new Date(sampleDateStr);
@@ -69,9 +69,8 @@ const getInvoicePrefix = (sampleDateStr?: string): string => {
   const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   const monthStr = monthNames[dateObj.getMonth()];
   const fullYear = dateObj.getFullYear();
-  const month = dateObj.getMonth() + 1; // 1-12
+  const month = dateObj.getMonth() + 1;
 
-  // Indian Financial Year: April (4) to March (3)
   let startYearShort = fullYear % 100;
   let endYearShort = (fullYear + 1) % 100;
 
@@ -85,59 +84,61 @@ const getInvoicePrefix = (sampleDateStr?: string): string => {
 };
 
 /**
- * 41 Columns Vendor RDS Generation Logic
+ * 41 Columns Vendor RDS Generation Engine
  */
 export const generateVendorRdsData = (
   masterOrders: MasterOrderRow[],
-  penaltySummary: Record<string, number>,
-  currentMonthList: CurrentMonthRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo>
+  penaltySummary: Record<string, number> = {},
+  currentMonthList: CurrentMonthRow[] = [],
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {}
 ): any[] => {
-  if (!masterOrders || masterOrders.length === 0) return [];
-
-  // 1. Group Master Orders Outlet ID wise
+  // 1. Group Master Orders Outlet ID wise (Delivered only for financial settlement)
   const outletOrderMap: Record<string, MasterOrderRow[]> = {};
+  let sampleDate = '';
+
   masterOrders.forEach((row) => {
     const outletId = String(row['Outlet ID'] || '').trim().replace(/\.0$/, '');
     if (!outletId) return;
+
+    if (!sampleDate && (row['Delivery Date'] || row['Booking Date'])) {
+      sampleDate = row['Delivery Date'] || row['Booking Date'] || '';
+    }
+
     if (!outletOrderMap[outletId]) {
       outletOrderMap[outletId] = [];
     }
     outletOrderMap[outletId].push(row);
   });
 
-  // Current Month Lookup Map
   const curMonthMap: Record<string, CurrentMonthRow> = {};
   currentMonthList.forEach((c) => {
     const oid = String(c.outletId || '').trim().replace(/\.0$/, '');
     if (oid) curMonthMap[oid] = c;
   });
 
-  // Find sample delivery date for Invoice prefix
-  let sampleDate = '';
-  for (const o of masterOrders) {
-    if (o['Delivery Date'] || o['Booking Date']) {
-      sampleDate = o['Delivery Date'] || o['Booking Date'] || '';
-      break;
-    }
-  }
-  const invoicePrefix = getInvoicePrefix(sampleDate);
+  // 2. Collect Union of ALL Outlets (Master + Current Month)
+  const allOutletIds = new Set<string>([
+    ...Object.keys(outletOrderMap),
+    ...Object.keys(curMonthMap)
+  ]);
 
-  // 2. Aggregate each Outlet's Data
+  if (allOutletIds.size === 0) return [];
+
+  const invoicePrefix = getInvoicePrefix(sampleDate);
   const aggregatedList: any[] = [];
 
-  Object.entries(outletOrderMap).forEach(([outletId, orders]) => {
-    const firstRow = orders[0];
+  allOutletIds.forEach((outletId) => {
+    const orders = outletOrderMap[outletId] || [];
     const outletInfo = outletsMasterInfo[outletId] || {};
     const curMonthInfo = curMonthMap[outletId] || {};
+    const firstRow = orders[0] || {};
 
-    const vendorName = String(firstRow['Vendor Name'] || outletInfo.outletName || '').trim();
-    const stationCode = String(firstRow['Station Code'] || outletInfo.station || '').trim();
+    const vendorName = String(firstRow['Vendor Name'] || curMonthInfo.vendorName || outletInfo.outletName || '').trim();
+    const stationCode = String(firstRow['Station Code'] || curMonthInfo.stationCode || outletInfo.station || '').trim();
     const vendorWithStation = `${stationCode} ${vendorName}`.trim();
     const state = String(outletInfo.state || firstRow['State'] || '').trim();
     const gstNo = String(outletInfo.gst || firstRow['GST No'] || '').trim();
 
-    // Master Order Sums
     let finalVendorPriceSum = 0;
     let finalBasePriceSum = 0;
     let finalRFCommissionSum = 0;
@@ -155,38 +156,34 @@ export const generateVendorRdsData = (
     let ordersCountSum = 0;
     let mealsSum = 0;
     let discountedBasePriceSum = 0;
-
-    // For Margin % Average (Delivered orders only)
     let marginSumDelivered = 0;
     let deliveredCount = 0;
 
     orders.forEach((ord) => {
-      finalVendorPriceSum += Number(ord['Final Vendor Price'] || 0);
-      finalBasePriceSum += Number(ord['Final Base Price'] || 0);
-      finalRFCommissionSum += Number(ord['Final RF Commission'] || 0);
-      finalIRCTCCommissionSum += Number(ord['Final IRCTC Commission'] || 0);
-      finalGSTSum += Number(ord['Final GST'] || 0);
-      finalOrderTotalSum += Number(ord['Final Order Total'] || 0);
-      finalTotalCommissionSum += Number(ord['Final Total Commission'] || 0);
-      deliveryChargesSum += Number(ord['Delivery Charges'] || 0);
-      finalSellingPriceSum += Number(ord['Final Selling Price'] || 0);
-      finalTotalDiscountSum += Number(ord['Final Total Discount'] || 0);
-      finalVendorDiscountSum += Number(ord['Final Vendor Discount'] || 0);
-      finalRFDiscountSum += Number(ord['Final RF Discount'] || 0);
-      ppdSum += Number(ord['PPD'] || 0);
-      codSum += Number(ord['COD'] || 0);
-      ordersCountSum += Number(ord['Orders Count'] || 0);
-      mealsSum += Number(ord['Meals'] || 0);
-      discountedBasePriceSum += Number(ord['Discounted Base Price'] || 0);
-
       const status = String(ord['Final Status'] || '').trim().toLowerCase();
       if (status === 'delivered') {
+        finalVendorPriceSum += Number(ord['Final Vendor Price'] || 0);
+        finalBasePriceSum += Number(ord['Final Base Price'] || 0);
+        finalRFCommissionSum += Number(ord['Final RF Commission'] || 0);
+        finalIRCTCCommissionSum += Number(ord['Final IRCTC Commission'] || 0);
+        finalGSTSum += Number(ord['Final GST'] || 0);
+        finalOrderTotalSum += Number(ord['Final Order Total'] || 0);
+        finalTotalCommissionSum += Number(ord['Final Total Commission'] || 0);
+        deliveryChargesSum += Number(ord['Delivery Charges'] || 0);
+        finalSellingPriceSum += Number(ord['Final Selling Price'] || 0);
+        finalTotalDiscountSum += Number(ord['Final Total Discount'] || 0);
+        finalVendorDiscountSum += Number(ord['Final Vendor Discount'] || 0);
+        finalRFDiscountSum += Number(ord['Final RF Discount'] || 0);
+        ppdSum += Number(ord['PPD'] || 0);
+        codSum += Number(ord['COD'] || 0);
+        ordersCountSum += Number(ord['Orders Count'] || 1);
+        mealsSum += Number(ord['Meals'] || 0);
+        discountedBasePriceSum += Number(ord['Discounted Base Price'] || 0);
         marginSumDelivered += Number(ord['Margin %'] || 0);
         deliveredCount += 1;
       }
     });
 
-    // Clean Numbers to 2 Decimals
     const finalVendorPrice = Number(finalVendorPriceSum.toFixed(2));
     const finalBasePrice = Number(finalBasePriceSum.toFixed(2));
     const finalRFCommission = Number(finalRFCommissionSum.toFixed(2));
@@ -203,39 +200,25 @@ export const generateVendorRdsData = (
     const cod = Number(codSum.toFixed(2));
     const discountedBasePrice = Number(discountedBasePriceSum.toFixed(2));
 
-    // Average Margin %
     const avgMarginPct = deliveredCount > 0 ? Number((marginSumDelivered / deliveredCount).toFixed(2)) : 0;
-
-    // Penalty & Current Month Data
     const penalty = Number((penaltySummary[outletId] || 0).toFixed(2));
     const paidToVendors = Number((curMonthInfo.paidToVendors || 0).toFixed(2));
     const previousBalance = Number((curMonthInfo.previousBalance || 0).toFixed(2));
     const paymentReceivedFromVendor = Number((curMonthInfo.receivedFromVendor || 0).toFixed(2));
     const creditNoteToVendor = Number((curMonthInfo.creditNoteToVendor || 0).toFixed(2));
 
-    // Gross Commission = Final Total Commission + Penalty
     const grossCommission = Number((finalTotalCommission + penalty).toFixed(2));
-
-    // GST Calculation: Intra-state (ANDHRA PRADESH) -> CGST 9% + SGST 9%, Inter-state -> IGST 18%
     const isAndhra = state.toUpperCase().includes('ANDHRA');
     const igst = isAndhra ? 0 : Number((grossCommission * 0.18).toFixed(2));
     const cgst = isAndhra ? Number((grossCommission * 0.09).toFixed(2)) : 0;
     const sgst = isAndhra ? Number((grossCommission * 0.09).toFixed(2)) : 0;
     const totalTaxes = Number((igst + cgst + sgst).toFixed(2));
 
-    // Total This Month = Gross Commission + (IGST + CGST + SGST)
     const totalThisMonth = Number((grossCommission + totalTaxes).toFixed(2));
-
-    // ADD = Final GST + Total This Month + Paid to Vendors By Relfood + RF Delivery Charges + Previouse Balance
     const add = Number((finalGST + totalThisMonth + paidToVendors + deliveryCharges + previousBalance).toFixed(2));
-
-    // Less = Payment Received from Vendor to Relfood + Credit Note to Vendor by Relfood + Final RF Discount + PPD
     const less = Number((paymentReceivedFromVendor + creditNoteToVendor + finalRFDiscount + ppd).toFixed(2));
-
-    // Net Payment = ADD - Less
     const netPayment = Number((add - less).toFixed(2));
 
-    // As per Reverse = Vendor Price + Payment Received from Vendor to Relfood + Credit Note to Vendor by Relfood - Penalty - (IGST+CGST+SGST) - Paid to Vendors By Relfood - Previouse Balance - Final Vendor Discount - COD
     const asPerReverse = Number(
       (
         finalVendorPrice +
@@ -250,7 +233,6 @@ export const generateVendorRdsData = (
       ).toFixed(2)
     );
 
-    // Diff = Net Payment + As per Reverse
     const diff = Number((netPayment + asPerReverse).toFixed(2));
 
     aggregatedList.push({
@@ -261,7 +243,6 @@ export const generateVendorRdsData = (
       'Vendor with Station Code': vendorWithStation,
       _sortKey: vendorWithStation.toLowerCase(),
 
-      // Calculations
       'Final Vendor Price': finalVendorPrice,
       'Final Base Price': finalBasePrice,
       'Final RF Commission': finalRFCommission,
@@ -303,18 +284,16 @@ export const generateVendorRdsData = (
   // 3. Sort A to Z by "Vendor with Station Code"
   aggregatedList.sort((a, b) => a._sortKey.localeCompare(b._sortKey));
 
-  // 4. Assign sequential Invoice Numbers (RF26-27-AUG0001, RF26-27-AUG0002...) & build exact 41 columns
+  // 4. Sequential Invoices & exact 41 columns output
   return aggregatedList.map((row, index) => {
     const invoiceSeq = String(index + 1).padStart(4, '0');
-    const invoiceNumber = `${invoicePrefix}${invoiceSeq}`;
-
     return {
       'Outlet ID': row['Outlet ID'],
       'Vendor Name': row['Vendor Name'],
       'Station Code': row['Station Code'],
       'GST Number': row['GST Number'],
       'Vendor with Station Code': row['Vendor with Station Code'],
-      'Invoice Number': invoiceNumber,
+      'Invoice Number': `${invoicePrefix}${invoiceSeq}`,
       'Final Vendor Price': row['Final Vendor Price'],
       'Final Base Price': row['Final Base Price'],
       'Final RF Commission': row['Final RF Commission'],
@@ -355,7 +334,7 @@ export const generateVendorRdsData = (
 };
 
 /**
- * Direct Excel Exporter for Vendor RDS
+ * Direct Excel Workbook Creator / Exporter
  */
 export const exportVendorRdsExcel = (
   masterOrders: MasterOrderRow[],
@@ -366,7 +345,7 @@ export const exportVendorRdsExcel = (
 ) => {
   const rdsRows = generateVendorRdsData(masterOrders, penaltySummary, currentMonthList, outletsMasterInfo);
   if (rdsRows.length === 0) {
-    alert('Export karne ke liye koi data nahi hai!');
+    alert('Export karne ke liye data uplabdh nahi hai.');
     return;
   }
 
