@@ -11,7 +11,7 @@ const STORE_NAME = 'master_reports';
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
-    const req = indexedDB.open(DB_NAME, 2);
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -61,17 +61,12 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
   const rf = (rfStatusRaw || '').trim().toUpperCase();
   const irctc = (irctcStatusRaw || '').trim().toUpperCase();
 
-  // 1. Undelivered Checks
   if (rf.includes('UNDELIVERED') || irctc.includes('UNDELIVERED')) {
     return 'Not Delivered';
   }
-
-  // 2. Cancelled Checks
   if (rf.includes('CANCEL') || irctc.includes('CANCEL')) {
     return 'Cancelled';
   }
-
-  // 3. Delivered / Confirmed / Placed / Pending Checks
   if (
     rf.includes('DELIVER') ||
     rf.includes('CONFIRM') ||
@@ -83,7 +78,6 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
   ) {
     return 'Delivered';
   }
-
   return 'Delivered';
 };
 
@@ -97,27 +91,30 @@ export default function Page() {
   const [data, setData] = useState<any[]>([]);
   const [penaltySummary, setPenaltySummary] = useState<Record<string, number>>({});
   const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
+  const [outletsMasterInfo, setOutletsMasterInfo] = useState<Record<string, any>>({});
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // 5 Upload States
+  // 6 Upload States
   const [rfFile, setRfFile] = useState<File | null>(null);
   const [irctcFile, setIrctcFile] = useState<File | null>(null);
   const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
   const [penaltyFile, setPenaltyFile] = useState<File | null>(null);
   const [currentMonthFile, setCurrentMonthFile] = useState<File | null>(null);
+  const [outletsFile, setOutletsFile] = useState<File | null>(null);
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // 1. Load saved master records, penalty data & current month data on mount
+  // 1. Load saved master records on mount
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
         const storedMaster = await loadFromDB('CURRENT_MASTER_DATA');
         const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
         const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
+        const storedOutletsInfo = await loadFromDB('OUTLET_MASTER_INFO');
 
         if (Array.isArray(storedMaster) && storedMaster.length > 0) {
           setData(storedMaster);
@@ -127,6 +124,9 @@ export default function Page() {
         }
         if (Array.isArray(storedCurrentMonth) && storedCurrentMonth.length > 0) {
           setCurrentMonthRecords(storedCurrentMonth);
+        }
+        if (storedOutletsInfo && typeof storedOutletsInfo === 'object') {
+          setOutletsMasterInfo(storedOutletsInfo);
         }
       } catch (err) {
         console.error('Failed to load stored records from IndexedDB:', err);
@@ -144,26 +144,29 @@ export default function Page() {
       setData([]);
       setPenaltySummary({});
       setCurrentMonthRecords([]);
+      setOutletsMasterInfo({});
     }
   };
 
-  // Universal File Parser (Handles CSV, XLS, XLSX, HTML)
+  // Universal File Parser (Handles CSV, XLS, XLSX, HTML binary/text)
   const parseAnyFile = async (file: File): Promise<any[]> => {
-    const fileName = file.name.toLowerCase();
+    const arrayBuffer = await file.arrayBuffer();
 
-    if (fileName.endsWith('.csv')) {
-      return new Promise((resolve, reject) => {
-        Papa.parse(file, {
-          header: true,
-          skipEmptyLines: true,
-          complete: (results) => resolve(results.data),
-          error: (err) => reject(err),
-        });
-      });
+    // Check for ZIP/XLSX header (PK\x03\x04)
+    const uint = new Uint8Array(arrayBuffer.slice(0, 4));
+    const isZip = uint[0] === 0x50 && uint[1] === 0x4B;
+
+    if (isZip || file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+      try {
+        const wb = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheetName = wb.SheetNames[0];
+        return XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
+      } catch (err) {
+        console.warn('XLSX parse fallback:', err);
+      }
     }
 
-    // Try HTML / Table format first if it's RF Report
-    const text = await file.text();
+    const text = new TextDecoder('utf-8').decode(arrayBuffer);
     if (text.includes('<table') || text.includes('<TABLE')) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(text, 'text/html');
@@ -192,14 +195,17 @@ export default function Page() {
       }
     }
 
-    // Binary Excel (.xls / .xlsx) parsing via SheetJS
-    const arrayBuffer = await file.arrayBuffer();
-    const wb = XLSX.read(arrayBuffer, { type: 'array' });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    return XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => resolve(results.data),
+        error: () => resolve([]),
+      });
+    });
   };
 
-  // 3. Merge & Process Engine (5 Files Pipeline)
+  // 3. Merge & Process Engine (6 Files Pipeline)
   const handleProcessAndMerge = async () => {
     if (!rfFile || !irctcFile) {
       alert('Kripya RF Report aur IRCTC Report zaroor upload karein!');
@@ -230,7 +236,6 @@ export default function Page() {
       if (penaltyFile) {
         setStatusText('Processing Penalty Report (PENALTY, COUPON, COMPLAINT_REFUND, PARTIAL_DELIVERY)...');
         const penaltyData = await parseAnyFile(penaltyFile);
-
         const targetModes = ['PENALTY', 'COUPON', 'COMPLAINT_REFUND', 'PARTIAL_DELIVERY'];
 
         penaltyData.forEach((row) => {
@@ -255,7 +260,6 @@ export default function Page() {
           }
         });
 
-        // Save Penalty data in IndexedDB
         await saveToDB('OUTLET_PENALTY_DATA', {
           outletTotals: penaltyOutletMap,
           records: penaltyRawFilteredList,
@@ -279,9 +283,48 @@ export default function Page() {
           creditNoteToVendor: parseFloat(row['Credit Note to Vendor by Relfood'] || 0) || 0,
         }));
 
-        // Save Current Month data in IndexedDB
         await saveToDB('CURRENT_MONTH_DATA', currentMonthParsedList);
         setCurrentMonthRecords(currentMonthParsedList);
+      }
+
+      // (F) Process Outlets Report (Optional) -> Keep Top (First) Row on Duplicate
+      const outletsMap: Record<string, any> = {};
+      if (outletsFile) {
+        setStatusText('Processing Outlets Report (GST, State & IRCTC Status)...');
+        const outletsRawData = await parseAnyFile(outletsFile);
+
+        outletsRawData.forEach((row) => {
+          const outletId = cleanOutletId(
+            row['Aggregator Outlet ID'] ||
+            row['Aggregator Outlet Id'] ||
+            row['Outlet Id'] ||
+            row['Outlet ID'] ||
+            ''
+          );
+
+          if (outletId && !outletsMap[outletId]) {
+            // Find GST column dynamically
+            let gstVal = '';
+            for (const k of Object.keys(row)) {
+              if (k.toUpperCase().includes('GST')) {
+                gstVal = String(row[k] || '').trim();
+                if (gstVal) break;
+              }
+            }
+
+            outletsMap[outletId] = {
+              outletId,
+              state: String(row['State'] || row['STATE'] || '').trim(),
+              gst: gstVal,
+              irctcStatus: String(row['Status'] || row['STATUS'] || '').trim(),
+              outletName: String(row['Outlet Name'] || '').trim(),
+              station: String(row['Station'] || row['Station Name'] || '').trim(),
+            };
+          }
+        });
+
+        await saveToDB('OUTLET_MASTER_INFO', outletsMap);
+        setOutletsMasterInfo(outletsMap);
       }
 
       setStatusText('Processing 19 Master Calculation Rules...');
@@ -305,6 +348,7 @@ export default function Page() {
         const irctc = irctcMap.get(orderId) || {};
         const fb = fbMap.get(orderId) || {};
         const outletId = cleanOutletId(rf['OutletId'] || rf['Outlet ID'] || irctc['Outlet Id'] || '');
+        const outletInfo = outletsMap[outletId] || outletsMasterInfo[outletId] || {};
 
         // Raw statuses
         const rfRawStatus = rf['Order Status'] || '';
@@ -384,10 +428,12 @@ export default function Page() {
           'Outlet ID': outletId,
           'Vendor Name': rf['Vendor Name'] || irctc['Vendor Name'] || '',
           'Station Code': rf['Station Code'] || irctc['Delivery Station'] || '',
+          'State': outletInfo.state || '',
+          'GST No': outletInfo.gst || '',
+          'Outlet IRCTC Status': outletInfo.irctcStatus || '',
           'Train No': rf['Train Number'] || irctc['Train No.'] || '',
           'Booking Date': rf['Booking Date'] || irctc['Date of Booking'] || '',
           'Delivery Date': rf['Delivery Date'] || irctc['Delivery Date'] || '',
-          'Delivery Time': rf['Delivery Time'] || '',
           'Payment Type': paymentType,
 
           // 19 Master Calculated Columns
@@ -419,7 +465,7 @@ export default function Page() {
         };
       });
 
-      // Save safely into IndexedDB (Old data replaced ONLY after new calculation completes)
+      // Save safely into IndexedDB
       await saveToDB('CURRENT_MASTER_DATA', masterRows);
       setData(masterRows);
 
@@ -429,6 +475,7 @@ export default function Page() {
       setFeedbackFile(null);
       setPenaltyFile(null);
       setCurrentMonthFile(null);
+      setOutletsFile(null);
 
       setIsProcessing(false);
       setIsModalOpen(false);
@@ -439,7 +486,6 @@ export default function Page() {
     }
   };
 
-  // 4. Export Master Data directly to Microsoft Excel (.xlsx)
   const handleExportExcel = () => {
     if (data.length === 0) return alert('No data to export!');
 
@@ -453,12 +499,13 @@ export default function Page() {
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
-        Loading saved master records &amp; penalties...
+        Loading saved master records &amp; database...
       </div>
     );
   }
 
   const penaltyOutletCount = Object.keys(penaltySummary).length;
+  const outletsInfoCount = Object.keys(outletsMasterInfo).length;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
@@ -470,27 +517,32 @@ export default function Page() {
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold tracking-wide">RELFOOD MASTER PORTAL</h1>
+              <h1 className="text-xl font-bold tracking-wide">RELFOOD MASTER &amp; RDS PORTAL</h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 19 RULES ENGINE
               </span>
+              {outletsInfoCount > 0 && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  {outletsInfoCount} OUTLETS MASTER
+                </span>
+              )}
               {penaltyOutletCount > 0 && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                  {penaltyOutletCount} OUTLET PENALTIES STORED
+                  {penaltyOutletCount} PENALTIES STORED
                 </span>
               )}
               {currentMonthRecords.length > 0 && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                  {currentMonthRecords.length} CURRENT MONTH OUTLETS
+                  {currentMonthRecords.length} CURRENT MONTH STORED
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400">Order-level Calculations, Outlet Penalties &amp; Current Month Storage</p>
+            <p className="text-xs text-slate-400">Order-level Calculations, Outlet Master (GST/State), Penalties &amp; RDS Data</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {(data.length > 0 || penaltyOutletCount > 0 || currentMonthRecords.length > 0) && (
+          {(data.length > 0 || penaltyOutletCount > 0 || currentMonthRecords.length > 0 || outletsInfoCount > 0) && (
             <>
               <button
                 onClick={handleClearRecords}
@@ -512,7 +564,7 @@ export default function Page() {
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-indigo-950"
           >
-            <span>☁️</span> Upload 5 Reports
+            <span>☁️</span> Upload 6 Reports
           </button>
         </div>
       </header>
@@ -524,7 +576,7 @@ export default function Page() {
             <div className="text-5xl mb-4">📂</div>
             <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF Report, IRCTC Report, Feedback Report, Penalty Report &amp; Current Month Data. Calculations &amp; Outlet summaries will be permanently preserved.
+              Upload RF Report, IRCTC Report, Feedback, Penalty, Current Month &amp; Outlets Master. Calculations &amp; Outlet summaries will be permanently preserved.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
@@ -535,12 +587,17 @@ export default function Page() {
           </div>
         ) : (
           <div>
-            {/* Search & Total Record Bar */}
+            {/* Search & Records Count Bar */}
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-xs text-slate-400">
                   Total Master Orders: <strong className="text-emerald-400 font-bold">{data.length}</strong>
                 </span>
+                {outletsInfoCount > 0 && (
+                  <span className="text-xs text-amber-400">
+                    • Outlets Master: <strong>{outletsInfoCount}</strong>
+                  </span>
+                )}
                 {penaltyOutletCount > 0 && (
                   <span className="text-xs text-rose-400">
                     • Outlets with Penalties: <strong>{penaltyOutletCount}</strong>
@@ -554,7 +611,7 @@ export default function Page() {
               </div>
               <input
                 type="text"
-                placeholder="Search by Order ID, Vendor, Station, Outlet ID..."
+                placeholder="Search by Order ID, Vendor, Station, Outlet ID, State..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-72"
@@ -569,7 +626,8 @@ export default function Page() {
                     <th className="p-3 font-semibold">Order ID</th>
                     <th className="p-3 font-semibold">Outlet ID</th>
                     <th className="p-3 font-semibold">Vendor Name</th>
-                    <th className="p-3 font-semibold">Station</th>
+                    <th className="p-3 font-semibold">State</th>
+                    <th className="p-3 font-semibold">GST No</th>
                     <th className="p-3 font-semibold">Final Status</th>
                     <th className="p-3 font-semibold text-right">Vendor Price (₹)</th>
                     <th className="p-3 font-semibold text-right">Base Price (₹)</th>
@@ -591,6 +649,7 @@ export default function Page() {
                         String(r['IRCTC Order ID'] || '').includes(searchTerm) ||
                         String(r['Outlet ID'] || '').includes(searchTerm) ||
                         String(r['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        String(r['State'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                         String(r['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase())
                     )
                     .slice(0, 100)
@@ -599,7 +658,8 @@ export default function Page() {
                         <td className="p-3 font-medium text-white">{row['IRCTC Order ID']}</td>
                         <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
                         <td className="p-3 font-medium">{row['Vendor Name']}</td>
-                        <td className="p-3">{row['Station Code']}</td>
+                        <td className="p-3 text-amber-300/90">{row['State'] || '-'}</td>
+                        <td className="p-3 text-slate-400 font-mono text-[11px]">{row['GST No'] || '-'}</td>
                         <td className="p-3">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -634,15 +694,15 @@ export default function Page() {
         )}
       </main>
 
-      {/* Upload Modal (All 5 Reports) */}
+      {/* Upload Modal (All 6 Reports) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
             <h2 className="text-xl font-bold mb-3 flex items-center gap-2">
-              <span>📊</span> Upload Reports (5 Files System)
+              <span>📊</span> Upload Reports (6 Files System)
             </h2>
-            <p className="text-xs text-slate-400 mb-5">
-              Files select karein. New reports process hote hi purana data replace ho jayega aur permanently save rahega.
+            <p className="text-xs text-slate-400 mb-4">
+              Files select karein. Sabhi calculated metrics aur summaries permanently save ho jayengi.
             </p>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
@@ -662,7 +722,7 @@ export default function Page() {
               {/* 2. IRCTC Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-blue-400 block mb-1">
-                  2. IRCTC Report (.csv) *
+                  2. IRCTC Report (.csv / .xls / .xlsx) *
                 </label>
                 <input
                   type="file"
@@ -675,7 +735,7 @@ export default function Page() {
               {/* 3. Feedback Report */}
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-amber-400 block mb-1">
-                  3. Feedback Report (.csv) (Optional)
+                  3. Feedback Report (.csv / .xls / .xlsx) (Optional)
                 </label>
                 <input
                   type="file"
@@ -714,6 +774,22 @@ export default function Page() {
                   accept=".csv,.xls,.xlsx"
                   onChange={(e) => setCurrentMonthFile(e.target.files?.[0] || null)}
                   className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-cyan-600 file:text-white cursor-pointer"
+                />
+              </div>
+
+              {/* 6. Outlets Report */}
+              <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-800/60">
+                <label className="text-xs font-semibold text-amber-400 block mb-1">
+                  6. Outlets Report (.csv / .xls / .xlsx) (Optional)
+                </label>
+                <span className="text-[11px] text-amber-300/70 block mb-1.5">
+                  (Stores Aggregator Outlet ID, GST, State, &amp; IRCTC Status — duplicates me top row save hoti hai)
+                </span>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={(e) => setOutletsFile(e.target.files?.[0] || null)}
+                  className="text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-amber-600 file:text-white cursor-pointer"
                 />
               </div>
             </div>
