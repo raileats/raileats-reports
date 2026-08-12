@@ -5,7 +5,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { generateMainReportWorkbook } from '@/lib/mainReportGenerator'; // ✅ Added import
+import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
 import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
@@ -89,6 +89,57 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
 const cleanOutletId = (val: any): string => {
   if (!val && val !== 0) return '';
   return String(val).trim().replace(/\.0$/, '');
+};
+
+const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
+
+interface MetricStats {
+  orders: number;
+  deliveredOrders: number;
+  meals: number;
+  value: number;
+  prepaidValue: number;
+  discount: number;
+  revenue: number;
+  complaints: number;
+  feedback: number;
+  undelivered: number;
+  outletsSet: Set<string>;
+}
+
+const createEmptyStats = (): MetricStats => ({
+  orders: 0,
+  deliveredOrders: 0,
+  meals: 0,
+  value: 0,
+  prepaidValue: 0,
+  discount: 0,
+  revenue: 0,
+  complaints: 0,
+  feedback: 0,
+  undelivered: 0,
+  outletsSet: new Set<string>(),
+});
+
+const getSourceChannel = (row: any): string => {
+  const channel = String(row['Source'] || row['Channel'] || row['Booking Channel'] || '').toUpperCase();
+  const orderId = String(row['IRCTC Order ID'] || row['Order ID'] || '').toUpperCase();
+
+  if (channel.includes('MMT') || channel.includes('MAKEMYTRIP')) return 'MakeMyTrip';
+  if (channel.includes('APP') || channel.includes('REL_APP')) return 'REL_Food_App';
+  if (channel.includes('WEB') || channel.includes('WEBSITE')) return 'RELFood_WEBSITE';
+  return 'RELFood_IRCTC';
+};
+
+const formatFullDisplayDate = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 };
 
 type ReportType =
@@ -444,6 +495,105 @@ export default function Page() {
     }
   };
 
+  // --- Main Report Matrix Engine ---
+  const mainReportBlocks = useMemo(() => {
+    if (!data || data.length === 0) return [];
+
+    const dateMap: Record<string, any[]> = {};
+    data.forEach((row) => {
+      const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
+      const dateKey = String(rawDate).split(' ')[0].split('T')[0];
+      if (!dateMap[dateKey]) dateMap[dateKey] = [];
+      dateMap[dateKey].push(row);
+    });
+
+    const sortedDates = Object.keys(dateMap).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+    const mtdBySource: Record<string, MetricStats> = {};
+    SOURCES.forEach((s) => (mtdBySource[s] = createEmptyStats()));
+    const mtdGrandTotal = createEmptyStats();
+
+    return sortedDates.map((dateKey) => {
+      const rows = dateMap[dateKey];
+      const dayStats: Record<string, MetricStats> = {};
+      SOURCES.forEach((s) => (dayStats[s] = createEmptyStats()));
+      const dayTotal = createEmptyStats();
+
+      rows.forEach((r) => {
+        const src = getSourceChannel(r);
+        const isDelivered = r['Final Status'] === 'Delivered';
+        const isUndelivered = r['Final Status'] === 'Not Delivered' || String(r['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
+        const sellingPrice = parseFloat(r['Final Selling Price'] || r['Selling Price'] || 0) || 0;
+        const discount = parseFloat(r['Final Total Discount'] || r['Total Discount'] || 0) || 0;
+        const rfComm = parseFloat(r['Final RF Commission'] || r['RF Comm'] || 0) || 0;
+        const prepaid = parseFloat(r['PPD'] || r['Prepaid'] || 0) || 0;
+        const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
+        const outletId = String(r['Outlet ID'] || '').trim();
+
+        const sStat = dayStats[src] || dayStats['RELFood_IRCTC'];
+        sStat.orders += 1;
+        if (isDelivered) sStat.deliveredOrders += 1;
+        if (isUndelivered) sStat.undelivered += 1;
+        sStat.meals += mealCount;
+        sStat.value += sellingPrice;
+        sStat.prepaidValue += prepaid;
+        sStat.discount += discount;
+        sStat.revenue += rfComm;
+        if (r['Rating'] && parseFloat(r['Rating']) > 0) sStat.feedback += 1;
+        if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) sStat.complaints += 1;
+        if (outletId) sStat.outletsSet.add(outletId);
+      });
+
+      SOURCES.forEach((s) => {
+        const st = dayStats[s];
+        dayTotal.orders += st.orders;
+        dayTotal.deliveredOrders += st.deliveredOrders;
+        dayTotal.meals += st.meals;
+        dayTotal.value += st.value;
+        dayTotal.prepaidValue += st.prepaidValue;
+        dayTotal.discount += st.discount;
+        dayTotal.revenue += st.revenue;
+        dayTotal.complaints += st.complaints;
+        dayTotal.feedback += st.feedback;
+        dayTotal.undelivered += st.undelivered;
+        st.outletsSet.forEach((o) => dayTotal.outletsSet.add(o));
+
+        const m = mtdBySource[s];
+        m.orders += st.orders;
+        m.deliveredOrders += st.deliveredOrders;
+        m.meals += st.meals;
+        m.value += st.value;
+        m.prepaidValue += st.prepaidValue;
+        m.discount += st.discount;
+        m.revenue += st.revenue;
+        m.complaints += st.complaints;
+        m.feedback += st.feedback;
+        m.undelivered += st.undelivered;
+      });
+
+      mtdGrandTotal.orders += dayTotal.orders;
+      mtdGrandTotal.deliveredOrders += dayTotal.deliveredOrders;
+      mtdGrandTotal.meals += dayTotal.meals;
+      mtdGrandTotal.value += dayTotal.value;
+      mtdGrandTotal.prepaidValue += dayTotal.prepaidValue;
+      mtdGrandTotal.discount += dayTotal.discount;
+      mtdGrandTotal.revenue += dayTotal.revenue;
+      mtdGrandTotal.complaints += dayTotal.complaints;
+      mtdGrandTotal.feedback += dayTotal.feedback;
+      mtdGrandTotal.undelivered += dayTotal.undelivered;
+
+      return {
+        dateLabel: formatFullDisplayDate(dateKey),
+        rawDate: dateKey,
+        dayTotal: { ...dayTotal },
+        dayStats: JSON.parse(JSON.stringify(dayStats)),
+        mtdTotal: { ...mtdGrandTotal },
+        mtdBySource: JSON.parse(JSON.stringify(mtdBySource)),
+        outletsCount: dayTotal.outletsSet.size,
+      };
+    });
+  }, [data]);
+
   // --- Aggregate Views Generator ---
   const stationSummary = useMemo(() => {
     const map: Record<string, any> = {};
@@ -538,7 +688,7 @@ export default function Page() {
       case 'MASTER':
         exportMasterExcel();
         break;
-      case 'MAIN_REPORT': // ✅ Integrated generator
+      case 'MAIN_REPORT':
         generateMainReportWorkbook(data);
         break;
       case 'VENDOR_RDS':
@@ -576,7 +726,7 @@ export default function Page() {
     }
   };
 
-  // --- Styled Universal PDF Generator ---
+  // --- PDF Generator ---
   const exportCurrentPDF = () => {
     if (!data.length && Object.keys(outletsMasterInfo).length === 0) {
       return alert('No Data available to generate PDF!');
@@ -585,8 +735,7 @@ export default function Page() {
     const doc = new jsPDF('landscape', 'pt', 'a4');
     const today = new Date().toLocaleDateString('en-IN');
 
-    // PDF Header Styling
-    doc.setFillColor(15, 23, 42); // Slate 900
+    doc.setFillColor(15, 23, 42);
     doc.rect(0, 0, doc.internal.pageSize.getWidth(), 50, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(14);
@@ -699,6 +848,82 @@ export default function Page() {
     doc.save(`RELFOOD_${selectedReport}_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
+  const renderMainReportRow = (label: string, ftd: MetricStats, mtd: MetricStats, isTotal: boolean = false) => {
+    const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
+    const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(0)}%` : '0%';
+    const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
+    const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
+    const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
+    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
+
+    return (
+      <tr className={`border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
+        <td className={`p-1 border border-gray-400 text-[11px] text-center whitespace-nowrap ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+          {label}
+        </td>
+
+        {/* ORDERS */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{ftd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{mtd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{orderAsp}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{delPct}</td>
+
+        {/* MEALS */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{ftd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{mtd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{mealAsp}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{mpo}</td>
+
+        {/* VALUE */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-semibold text-gray-900">{Math.round(ftd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-semibold text-gray-900">{Math.round(mtd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+
+        {/* PREPAID */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{prepaidPct}</td>
+
+        {/* DISCOUNT */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(ftd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(mtd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{discountPct}</td>
+
+        {/* REVENUE */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-bold text-emerald-700">{Math.round(ftd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center font-bold text-emerald-700">{Math.round(mtd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{revenuePct}</td>
+
+        {/* Complaints */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{ftd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{mtd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{complaintPct}</td>
+
+        {/* Feedback */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{ftd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{mtd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{feedbackPct}</td>
+
+        {/* IRCTC Undelivered */}
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-rose-600 font-bold">{ftd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-rose-600 font-bold">{mtd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1 border border-gray-300 text-[11px] text-center">{undeliveredPct}</td>
+      </tr>
+    );
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
@@ -759,7 +984,7 @@ export default function Page() {
                   className="bg-slate-900 border border-indigo-500/50 text-indigo-300 font-semibold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="MASTER">📁 Master Data (All 19 Columns)</option>
-                  <option value="MAIN_REPORT">📊 Main Report (Custom Layout)</option>
+                  <option value="MAIN_REPORT">📊 Main Report (Date Matrix Layout)</option>
                   <option value="VENDOR_RDS">📋 Vendor RDS Summary</option>
                   <option value="STATION_REPORT">🚉 Station Report</option>
                   <option value="VENDOR_REPORT">🏪 Vendor Report</option>
@@ -771,7 +996,7 @@ export default function Page() {
                 </select>
               </div>
 
-              {/* Download Buttons for Currently Selected Report */}
+              {/* Download Buttons */}
               <button
                 onClick={exportCurrentExcel}
                 className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
@@ -842,243 +1067,320 @@ export default function Page() {
               />
             </div>
 
-            {/* Dynamic Table Renderer According to Dropdown */}
-            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[72vh]">
-              {/* 1. MASTER VIEW & MAIN REPORT VIEW */}
-              {(selectedReport === 'MASTER' || selectedReport === 'MAIN_REPORT') && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Order ID</th>
-                      <th className="p-3 font-semibold">Outlet ID</th>
-                      <th className="p-3 font-semibold">Vendor Name</th>
-                      <th className="p-3 font-semibold">Station</th>
-                      <th className="p-3 font-semibold">State</th>
-                      <th className="p-3 font-semibold">Status</th>
-                      <th className="p-3 font-semibold text-right">Vendor Price</th>
-                      <th className="p-3 font-semibold text-right">Base Price</th>
-                      <th className="p-3 font-semibold text-right">GST (5%)</th>
-                      <th className="p-3 font-semibold text-right">RF Comm</th>
-                      <th className="p-3 font-semibold text-right">Selling Price</th>
-                      <th className="p-3 font-semibold text-right">Margin %</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {data
-                      .filter(
-                        (r) =>
-                          String(r['IRCTC Order ID'] || '').includes(searchTerm) ||
-                          String(r['Outlet ID'] || '').includes(searchTerm) ||
-                          String(r['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          String(r['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase())
-                      )
-                      .slice(0, 100)
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-medium text-white">{row['IRCTC Order ID']}</td>
-                          <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
-                          <td className="p-3 font-medium">{row['Vendor Name']}</td>
-                          <td className="p-3 text-cyan-300 font-mono">{row['Station Code']}</td>
-                          <td className="p-3 text-amber-300/90">{row['State'] || '-'}</td>
-                          <td className="p-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                row['Final Status'] === 'Delivered'
-                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                                  : row['Final Status'] === 'Cancelled'
-                                  ? 'bg-rose-950 text-rose-400 border border-rose-800'
-                                  : 'bg-amber-950 text-amber-400 border border-amber-800'
-                              }`}
-                            >
-                              {row['Final Status']}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right">₹{row['Final Vendor Price']}</td>
-                          <td className="p-3 text-right text-slate-200">₹{row['Final Base Price']}</td>
-                          <td className="p-3 text-right text-cyan-400">₹{row['Final GST']}</td>
-                          <td className="p-3 text-right text-emerald-400 font-bold">₹{row['Final RF Commission']}</td>
-                          <td className="p-3 text-right text-amber-400 font-bold">₹{row['Final Selling Price']}</td>
-                          <td className="p-3 text-right font-bold text-teal-400">{row['Margin %']}%</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
+            {/* MAIN REPORT: EXACT MATCH DATE-WISE MATRIX VIEW */}
+            {selectedReport === 'MAIN_REPORT' && (
+              <div className="space-y-6 overflow-x-auto rounded-xl border border-slate-800 bg-white p-3 shadow-2xl max-h-[72vh]">
+                {mainReportBlocks
+                  .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((blk, bIdx) => (
+                    <div key={bIdx} className="border border-gray-400 shadow-sm overflow-hidden mb-4">
+                      <table className="w-full border-collapse text-[11px]">
+                        <thead>
+                          {/* Banner 1: Red Date Header */}
+                          <tr>
+                            <th colSpan={38} className="bg-red-600 text-white font-bold py-1.5 text-center text-xs tracking-wider">
+                              {blk.dateLabel}
+                            </th>
+                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold">Outlets</th>
+                          </tr>
 
-              {/* 2. STATION / LAST DAY STATION VIEW */}
-              {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Station Code</th>
-                      <th className="p-3 font-semibold">State</th>
-                      <th className="p-3 font-semibold text-center">Total Orders</th>
-                      <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
-                      <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
-                      <th className="p-3 font-semibold text-right">Total Selling Amount</th>
-                      <th className="p-3 font-semibold text-right">Vendor Payout</th>
-                      <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
-                      <th className="p-3 font-semibold text-right text-cyan-400">GST</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {stationSummary
-                      .filter((s) => s.station.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-bold text-white font-mono">{row.station}</td>
-                          <td className="p-3 text-amber-300">{row.state || '-'}</td>
-                          <td className="p-3 text-center font-semibold">{row.totalOrders}</td>
-                          <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
-                          <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
-                          <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                          <td className="p-3 text-right text-cyan-400">₹{row.gst.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
+                          {/* Banner 2: Group Categories */}
+                          <tr className="text-white font-bold text-center text-[10px]">
+                            <th className="bg-black text-white p-1 border border-gray-400">Source</th>
+                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white">ORDERS</th>
+                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white">MEALS</th>
+                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white">VALUE</th>
+                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white">PREPAID</th>
+                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white">DISCOUNT</th>
+                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white">REVENUE</th>
+                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white">Complaints</th>
+                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white">Feedback</th>
+                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white">IRCTC Undelivered</th>
+                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-sm w-12 align-middle">
+                              {blk.outletsCount}
+                            </th>
+                          </tr>
 
-              {/* 3. VENDOR / VENDOR RDS VIEW */}
-              {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Vendor Name</th>
-                      <th className="p-3 font-semibold">Outlet ID</th>
-                      <th className="p-3 font-semibold">State</th>
-                      <th className="p-3 font-semibold text-center">Total Orders</th>
-                      <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
-                      <th className="p-3 font-semibold text-right">Total Selling Amount</th>
-                      <th className="p-3 font-semibold text-right">Vendor Payout</th>
-                      <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
-                      <th className="p-3 font-semibold text-right text-rose-400">Penalty Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {vendorSummary
-                      .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-bold text-white">{row.vendor}</td>
-                          <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
-                          <td className="p-3 text-amber-300">{row.state || '-'}</td>
-                          <td className="p-3 text-center">{row.totalOrders}</td>
-                          <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
-                          <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                          <td className="p-3 text-right text-rose-400 font-semibold">₹{row.penalty.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
+                          {/* Banner 3: Metric Sub-Headers */}
+                          <tr className="text-[9px] text-center font-bold bg-gray-100 text-gray-800">
+                            <th className="border border-gray-300 p-0.5"></th>
+                            {/* Orders */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">ASP</th><th className="border border-gray-300">Del%</th>
+                            {/* Meals */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">ASP</th><th className="border border-gray-300">MPO</th>
+                            {/* Value */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th>
+                            {/* Prepaid */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            {/* Discount */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            {/* Revenue */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            {/* Complaints */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            {/* Feedback */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            {/* Undelivered */}
+                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                          </tr>
+                        </thead>
 
-              {/* 4. DATE WISE VIEW */}
-              {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Date</th>
-                      <th className="p-3 font-semibold text-center">Total Orders</th>
-                      <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
-                      <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
-                      <th className="p-3 font-semibold text-right">Total Selling Amount</th>
-                      <th className="p-3 font-semibold text-right">Vendor Price</th>
-                      <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {dateSummary
-                      .filter((d) => d.date.includes(searchTerm))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-bold text-white">{row.date}</td>
-                          <td className="p-3 text-center">{row.totalOrders}</td>
-                          <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
-                          <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
-                          <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
+                        <tbody>
+                          {/* Total Row */}
+                          {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
 
-              {/* 5. OUTLETS MASTER VIEW */}
-              {selectedReport === 'OUTLETS_MASTER' && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Outlet ID</th>
-                      <th className="p-3 font-semibold">Outlet Name</th>
-                      <th className="p-3 font-semibold">Station</th>
-                      <th className="p-3 font-semibold">State</th>
-                      <th className="p-3 font-semibold">GST Number</th>
-                      <th className="p-3 font-semibold">IRCTC Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {Object.values(outletsMasterInfo)
-                      .filter((o) => o.outletId.includes(searchTerm) || o.outletName?.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-bold text-indigo-300 font-mono">{row.outletId}</td>
-                          <td className="p-3 font-medium text-white">{row.outletName || '-'}</td>
-                          <td className="p-3 text-cyan-300 font-mono">{row.station || '-'}</td>
-                          <td className="p-3 text-amber-300">{row.state || '-'}</td>
-                          <td className="p-3 font-mono text-slate-400">{row.gst || '-'}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">
-                              {row.irctcStatus || 'Active'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
+                          {/* Channel Source Rows */}
+                          {SOURCES.map((src) => (
+                            <React.Fragment key={src}>
+                              {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+              </div>
+            )}
 
-              {/* 6. PENALTIES VIEW */}
-              {selectedReport === 'PENALTIES' && (
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">Outlet ID</th>
-                      <th className="p-3 font-semibold">Order ID</th>
-                      <th className="p-3 font-semibold">Transaction Mode</th>
-                      <th className="p-3 font-semibold">Vendor Name</th>
-                      <th className="p-3 font-semibold">Date</th>
-                      <th className="p-3 font-semibold text-right">Amount (₹)</th>
-                      <th className="p-3 font-semibold">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {penaltyRawRecords
-                      .filter((p) => p.outletId.includes(searchTerm) || p.orderId.includes(searchTerm))
-                      .map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-bold text-rose-300 font-mono">{row.outletId}</td>
-                          <td className="p-3 text-white font-mono">{row.orderId || '-'}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-800">
-                              {row.mode}
-                            </span>
-                          </td>
-                          <td className="p-3">{row.vendorName || '-'}</td>
-                          <td className="p-3 text-slate-400">{row.date || '-'}</td>
-                          <td className="p-3 text-right font-bold text-rose-400">₹{row.amount.toFixed(2)}</td>
-                          <td className="p-3 text-slate-400 max-w-xs truncate">{row.remarks || '-'}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            {/* ALL OTHER REPORT TABLES */}
+            {selectedReport !== 'MAIN_REPORT' && (
+              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[72vh]">
+                {/* 1. MASTER VIEW */}
+                {selectedReport === 'MASTER' && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Order ID</th>
+                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold">Vendor Name</th>
+                        <th className="p-3 font-semibold">Station</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold">Status</th>
+                        <th className="p-3 font-semibold text-right">Vendor Price</th>
+                        <th className="p-3 font-semibold text-right">Base Price</th>
+                        <th className="p-3 font-semibold text-right">GST (5%)</th>
+                        <th className="p-3 font-semibold text-right">RF Comm</th>
+                        <th className="p-3 font-semibold text-right">Selling Price</th>
+                        <th className="p-3 font-semibold text-right">Margin %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {data
+                        .filter(
+                          (r) =>
+                            String(r['IRCTC Order ID'] || '').includes(searchTerm) ||
+                            String(r['Outlet ID'] || '').includes(searchTerm) ||
+                            String(r['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            String(r['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase())
+                        )
+                        .slice(0, 100)
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-medium text-white">{row['IRCTC Order ID']}</td>
+                            <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
+                            <td className="p-3 font-medium">{row['Vendor Name']}</td>
+                            <td className="p-3 text-cyan-300 font-mono">{row['Station Code']}</td>
+                            <td className="p-3 text-amber-300/90">{row['State'] || '-'}</td>
+                            <td className="p-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  row['Final Status'] === 'Delivered'
+                                    ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                    : row['Final Status'] === 'Cancelled'
+                                    ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                                    : 'bg-amber-950 text-amber-400 border border-amber-800'
+                                }`}
+                              >
+                                {row['Final Status']}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">₹{row['Final Vendor Price']}</td>
+                            <td className="p-3 text-right text-slate-200">₹{row['Final Base Price']}</td>
+                            <td className="p-3 text-right text-cyan-400">₹{row['Final GST']}</td>
+                            <td className="p-3 text-right text-emerald-400 font-bold">₹{row['Final RF Commission']}</td>
+                            <td className="p-3 text-right text-amber-400 font-bold">₹{row['Final Selling Price']}</td>
+                            <td className="p-3 text-right font-bold text-teal-400">{row['Margin %']}%</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 2. STATION / LAST DAY STATION VIEW */}
+                {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Station Code</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold text-center">Total Orders</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
+                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
+                        <th className="p-3 font-semibold text-right">Vendor Payout</th>
+                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
+                        <th className="p-3 font-semibold text-right text-cyan-400">GST</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {stationSummary
+                        .filter((s) => s.station.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-white font-mono">{row.station}</td>
+                            <td className="p-3 text-amber-300">{row.state || '-'}</td>
+                            <td className="p-3 text-center font-semibold">{row.totalOrders}</td>
+                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
+                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                            <td className="p-3 text-right text-cyan-400">₹{row.gst.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 3. VENDOR / VENDOR RDS VIEW */}
+                {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Vendor Name</th>
+                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold text-center">Total Orders</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
+                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
+                        <th className="p-3 font-semibold text-right">Vendor Payout</th>
+                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
+                        <th className="p-3 font-semibold text-right text-rose-400">Penalty Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {vendorSummary
+                        .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-white">{row.vendor}</td>
+                            <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
+                            <td className="p-3 text-amber-300">{row.state || '-'}</td>
+                            <td className="p-3 text-center">{row.totalOrders}</td>
+                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                            <td className="p-3 text-right text-rose-400 font-semibold">₹{row.penalty.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 4. DATE WISE VIEW */}
+                {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Date</th>
+                        <th className="p-3 font-semibold text-center">Total Orders</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
+                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
+                        <th className="p-3 font-semibold text-right">Vendor Price</th>
+                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {dateSummary
+                        .filter((d) => d.date.includes(searchTerm))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-white">{row.date}</td>
+                            <td className="p-3 text-center">{row.totalOrders}</td>
+                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
+                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 5. OUTLETS MASTER VIEW */}
+                {selectedReport === 'OUTLETS_MASTER' && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold">Outlet Name</th>
+                        <th className="p-3 font-semibold">Station</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold">GST Number</th>
+                        <th className="p-3 font-semibold">IRCTC Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {Object.values(outletsMasterInfo)
+                        .filter((o) => o.outletId.includes(searchTerm) || o.outletName?.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-indigo-300 font-mono">{row.outletId}</td>
+                            <td className="p-3 font-medium text-white">{row.outletName || '-'}</td>
+                            <td className="p-3 text-cyan-300 font-mono">{row.station || '-'}</td>
+                            <td className="p-3 text-amber-300">{row.state || '-'}</td>
+                            <td className="p-3 font-mono text-slate-400">{row.gst || '-'}</td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">
+                                {row.irctcStatus || 'Active'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 6. PENALTIES VIEW */}
+                {selectedReport === 'PENALTIES' && (
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold">Order ID</th>
+                        <th className="p-3 font-semibold">Transaction Mode</th>
+                        <th className="p-3 font-semibold">Vendor Name</th>
+                        <th className="p-3 font-semibold">Date</th>
+                        <th className="p-3 font-semibold text-right">Amount (₹)</th>
+                        <th className="p-3 font-semibold">Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {penaltyRawRecords
+                        .filter((p) => p.outletId.includes(searchTerm) || p.orderId.includes(searchTerm))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-rose-300 font-mono">{row.outletId}</td>
+                            <td className="p-3 text-white font-mono">{row.orderId || '-'}</td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-800">
+                                {row.mode}
+                              </span>
+                            </td>
+                            <td className="p-3">{row.vendorName || '-'}</td>
+                            <td className="p-3 text-slate-400">{row.date || '-'}</td>
+                            <td className="p-3 text-right font-bold text-rose-400">₹{row.amount.toFixed(2)}</td>
+                            <td className="p-3 text-slate-400 max-w-xs truncate">{row.remarks || '-'}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
 
             <p className="text-[11px] text-slate-500 mt-2">
               * Showing dynamic preview. Use top &quot;Excel (.xlsx)&quot; or &quot;Download PDF&quot; buttons to export the active selected report.
