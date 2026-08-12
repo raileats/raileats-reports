@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Strip all spaces & convert to standard string (e.g., 2460600201 or 2460600201.0 -> "2460600201")
+// Pure standard Order ID converter (e.g. 2460600201.0 -> "2460600201")
 const cleanOrderId = (val: any): string => {
   if (val === null || val === undefined) return '';
   let str = String(val).trim();
@@ -133,7 +133,7 @@ export const generateLastDayStationReportWorkbook = (
 
   // Master Outlets
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const stCode = String(out?.station || out?.stationCode || out?.stn_code || '').trim().toUpperCase();
+    const stCode = String(out?.station || out?.stationCode || out?.stn_code || out?.station_code || '').trim().toUpperCase();
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
     if (stCode && outId) {
       if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set<string>();
@@ -141,10 +141,15 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
-  // Master Data se Order ID -> Station Code map
+  // Master Data se Order ID -> Station Code map (Header issues handling included)
   masterData.forEach((r) => {
     const rawOrderId = getValue(r, ['Order ID', 'OrderId', 'IRCTC Order ID', 'Booking ID', 'Order No', 'OrderNumber']);
-    const stCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code']) || '').trim().toUpperCase();
+    let stCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code', 'station_code']) || '').trim().toUpperCase();
+
+    // Fallback: Agar Station Code na mile par Station Name column me hi station code ho
+    if (!stCode) {
+      stCode = String(getValue(r, ['Station Name', 'StationName']) || '').trim().toUpperCase();
+    }
 
     const cleanOrd = cleanOrderId(rawOrderId);
     if (cleanOrd && stCode) {
@@ -165,7 +170,7 @@ export const generateLastDayStationReportWorkbook = (
 
       // Match Order ID in Master/IRCTC to get Station Code
       const stCode = orderToStationMap[cleanOrd];
-      if (!stCode) return; // Agar ye order Master me nahi mila toh skip
+      if (!stCode) return;
 
       if (!feedbackStationMap[stCode]) {
         feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
@@ -216,10 +221,21 @@ export const generateLastDayStationReportWorkbook = (
   > = {};
 
   lastDayRows.forEach((r) => {
-    const stationCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code']) || 'UNKNOWN').trim().toUpperCase();
-    const stationName = String(getValue(r, ['Station Name', 'StationName', 'Station']) || stationCode).trim().toUpperCase();
-    const outletId = String(getValue(r, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
+    let stationCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code', 'station_code']) || '').trim().toUpperCase();
+    let stationName = String(getValue(r, ['Station Name', 'StationName']) || '').trim().toUpperCase();
 
+    if (!stationCode && stationName) {
+      stationCode = stationName;
+    }
+    if (!stationName && stationCode) {
+      stationName = stationCode;
+    }
+    if (!stationCode) {
+      stationCode = 'UNKNOWN';
+      stationName = 'UNKNOWN';
+    }
+
+    const outletId = String(getValue(r, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
     const finalStatus = String(getValue(r, ['Final Status', 'final_status', 'Status', 'status']) || '').trim().toLowerCase();
     const irctcStatus = String(getValue(r, ['IRCTC Status', 'irctc_status']) || '').trim().toLowerCase();
     const rfStatus = String(getValue(r, ['RF Status', 'rf_status']) || '').trim().toLowerCase();
@@ -402,7 +418,7 @@ export const generateLastDayStationReportWorkbook = (
     sumStationVendors,
   ];
 
-  // Headers
+  // Exact Standard Table Headers
   const headers = [
     'Station Code',
     'Rank',
