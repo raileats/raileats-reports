@@ -88,9 +88,12 @@ export const generateVendorReportWorkbook = (
     outletMap[outletId].totalDeliveryCharge += deliveryCharge;
   });
 
-  // 2. Map Row Data (Net Payment is placed as the LAST Column)
+  // 2. Map Row Data with Net Payment Calculation
   const reportRows = Object.values(outletMap).map((o: any) => {
-    const netPayment = Number((o.totalVendorPrice - o.penaltyAmount).toFixed(2));
+    // Formula: Vendor Price - Vendor Discount - Penalty Deductions
+    const netPayment = Number(
+      (o.totalVendorPrice - o.totalVendorDiscount - o.penaltyAmount).toFixed(2)
+    );
 
     return {
       'Outlet ID': o.outletId,
