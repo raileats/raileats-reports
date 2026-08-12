@@ -28,7 +28,7 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
   return str;
 };
 
-// Convert "D/M/YYYY" or "DD/MM/YYYY" to comparable timestamp/number
+// Convert "D/M/YYYY" or "DD/MM/YYYY" to timestamp
 const dateToTimestamp = (dateStr: string): number => {
   const parts = dateStr.split('/');
   if (parts.length === 3) {
@@ -42,7 +42,8 @@ const dateToTimestamp = (dateStr: string): number => {
 
 export const generateLastDayStationReportWorkbook = (
   masterData: any[],
-  outletsMasterInfo: Record<string, any> = {}
+  outletsMasterInfo: Record<string, any> = {},
+  feedbackData: any[] = []
 ) => {
   if (!masterData || masterData.length === 0) {
     alert('Master Data khali hai! Pehle reports process karein.');
@@ -80,7 +81,99 @@ export const generateLastDayStationReportWorkbook = (
     return;
   }
 
-  // 3. Group by Station Code
+  // Station Code to Outlet mapping helper from master outlets
+  const outletToStationMap: Record<string, string> = {};
+  const stationTotalOutletsMap: Record<string, Set<string>> = {};
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const stCode = String(out?.station || '').trim().toUpperCase();
+    const outId = String(out?.outletId || '').trim();
+    if (stCode && outId) {
+      outletToStationMap[outId] = stCode;
+      if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set();
+      stationTotalOutletsMap[stCode].add(outId);
+    }
+  });
+
+  masterData.forEach((r) => {
+    const outId = String(r['Outlet ID'] || '').trim();
+    const stCode = String(r['Station Code'] || '').trim().toUpperCase();
+    if (outId && stCode && !outletToStationMap[outId]) {
+      outletToStationMap[outId] = stCode;
+    }
+  });
+
+  // 3. Process Feedback Data (Station Code Wise on Last Delivery Date)
+  const feedbackStationMap: Record<string, { goodCount: number; badCount: number }> = {};
+  
+  if (Array.isArray(feedbackData) && feedbackData.length > 0) {
+    feedbackData.forEach((fb) => {
+      const fbDateStr = normalizeToDeliveryDate(
+        fb['Delivery Date'] ||
+        fb['Delivery date'] ||
+        fb['Order Date'] ||
+        fb['Feedback Date'] ||
+        fb['Date'] ||
+        ''
+      );
+
+      // Match last day date if date exists in row
+      if (fbDateStr && fbDateStr !== lastDeliveryDateStr) {
+        return;
+      }
+
+      let stCode = String(
+        fb['Station Code'] ||
+        fb['Station'] ||
+        fb['STATION CODE'] ||
+        fb['stn_code'] ||
+        ''
+      ).trim().toUpperCase();
+
+      const fbOutletId = String(fb['Outlet ID'] || fb['outlet_id'] || fb['Restaurant ID'] || '').trim();
+      if (!stCode && fbOutletId && outletToStationMap[fbOutletId]) {
+        stCode = outletToStationMap[fbOutletId];
+      }
+
+      if (!stCode) return;
+
+      if (!feedbackStationMap[stCode]) {
+        feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
+      }
+
+      const rating = Number(fb['Rating'] || fb['rating'] || fb['Stars'] || 0);
+      const feedbackType = String(
+        fb['Feedback Type'] ||
+        fb['Feedback'] ||
+        fb['Status'] ||
+        fb['Customer Feedback'] ||
+        fb['Remark'] ||
+        ''
+      ).trim().toLowerCase();
+
+      const isGood =
+        rating >= 4 ||
+        feedbackType.includes('good') ||
+        feedbackType.includes('positive') ||
+        feedbackType.includes('excellent') ||
+        feedbackType.includes('satisfied');
+
+      const isBad =
+        (rating > 0 && rating <= 3) ||
+        feedbackType.includes('bad') ||
+        feedbackType.includes('negative') ||
+        feedbackType.includes('poor') ||
+        feedbackType.includes('complaint') ||
+        feedbackType.includes('dissatisfied');
+
+      if (isGood) {
+        feedbackStationMap[stCode].goodCount += 1;
+      } else if (isBad) {
+        feedbackStationMap[stCode].badCount += 1;
+      }
+    });
+  }
+
+  // 4. Group Master Data by Station Code
   const stationMap: Record<
     string,
     {
@@ -104,21 +197,12 @@ export const generateLastDayStationReportWorkbook = (
       meals: number;
       deliveredOrdersCount: number;
       notDeliveredOrdersCount: number;
+      feedbackGoodCount: number;
+      feedbackBadCount: number;
       deliveredOutlets: Set<string>;
       stationAllOutlets: Set<string>;
     }
   > = {};
-
-  // First, map all known outlets from outletsMasterInfo to stations if available, to calculate Total Station Vendors accurately
-  const stationTotalOutletsMap: Record<string, Set<string>> = {};
-  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const stCode = String(out?.station || '').trim().toUpperCase();
-    const outId = String(out?.outletId || '').trim();
-    if (stCode && outId) {
-      if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set();
-      stationTotalOutletsMap[stCode].add(outId);
-    }
-  });
 
   lastDayRows.forEach((r) => {
     const stationCode = String(r['Station Code'] || 'UNKNOWN').trim().toUpperCase();
@@ -140,6 +224,7 @@ export const generateLastDayStationReportWorkbook = (
       rfStatus.includes('cancel');
 
     if (!stationMap[stationCode]) {
+      const fbCounts = feedbackStationMap[stationCode] || { goodCount: 0, badCount: 0 };
       stationMap[stationCode] = {
         stationCode,
         stationName,
@@ -161,6 +246,8 @@ export const generateLastDayStationReportWorkbook = (
         meals: 0,
         deliveredOrdersCount: 0,
         notDeliveredOrdersCount: 0,
+        feedbackGoodCount: fbCounts.goodCount,
+        feedbackBadCount: fbCounts.badCount,
         deliveredOutlets: new Set<string>(),
         stationAllOutlets: stationTotalOutletsMap[stationCode] || new Set<string>(),
       };
@@ -200,12 +287,12 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
-  // Convert to array and sort by Final Base Price descending
+  // Sort descending by Final Base Price
   const sortedStations = Object.values(stationMap).sort(
     (a, b) => b.finalBasePrice - a.finalBasePrice
   );
 
-  // Calculate Grand Totals for Top Summary Row
+  // Grand Totals Calculation
   let sumVendorPrice = 0;
   let sumFinalBasePrice = 0;
   let sumFinalTotalComm = 0;
@@ -224,6 +311,8 @@ export const generateLastDayStationReportWorkbook = (
   let sumMeals = 0;
   let sumDeliveredOrders = 0;
   let sumNotDeliveredOrders = 0;
+  let sumGoodFeedback = 0;
+  let sumBadFeedback = 0;
   let sumDeliveredOutlets = 0;
   let sumStationVendors = 0;
 
@@ -246,6 +335,8 @@ export const generateLastDayStationReportWorkbook = (
     sumMeals += st.meals;
     sumDeliveredOrders += st.deliveredOrdersCount;
     sumNotDeliveredOrders += st.notDeliveredOrdersCount;
+    sumGoodFeedback += st.feedbackGoodCount;
+    sumBadFeedback += st.feedbackBadCount;
     sumDeliveredOutlets += st.deliveredOutlets.size;
     sumStationVendors += st.stationAllOutlets.size;
   });
@@ -269,10 +360,7 @@ export const generateLastDayStationReportWorkbook = (
 
   // Row 1: Top Summary Row
   const topSummaryRow = [
-    '', // Station Code placeholder
-    '', // Rank
-    '', // Delivery Date
-    '', // Station Name
+    '', '', '', '',
     Number(sumVendorPrice.toFixed(2)),
     Number(sumFinalBasePrice.toFixed(2)),
     Number(sumFinalTotalComm.toFixed(2)),
@@ -294,6 +382,8 @@ export const generateLastDayStationReportWorkbook = (
     sumNotDeliveredOrders,
     overallNotDeliveredPct,
     overallPpdPct,
+    sumGoodFeedback,
+    sumBadFeedback,
     sumDeliveredOutlets,
     sumStationVendors,
   ];
@@ -325,6 +415,8 @@ export const generateLastDayStationReportWorkbook = (
     'Not Delivered Order',
     'Not Delivered %',
     'PPD % of Final Selling Price',
+    'Feedback Good',
+    'Feedback Bad',
     'Count of Delivered Outlets',
     'Total Station Vendors',
   ];
@@ -372,6 +464,8 @@ export const generateLastDayStationReportWorkbook = (
       st.notDeliveredOrdersCount,
       notDeliveredPct,
       ppdPct,
+      st.feedbackGoodCount,
+      st.feedbackBadCount,
       st.deliveredOutlets.size,
       st.stationAllOutlets.size,
     ];
@@ -380,35 +474,15 @@ export const generateLastDayStationReportWorkbook = (
   const fullSheetData = [topSummaryRow, headers, ...rowsData];
   const worksheet = XLSX.utils.aoa_to_sheet(fullSheetData);
 
-  // Set column widths
   worksheet['!cols'] = [
-    { wch: 14 }, // Station Code
-    { wch: 8 },  // Rank
-    { wch: 14 }, // Delivery Date
-    { wch: 22 }, // Station Name
-    { wch: 14 }, // Vendor Price
-    { wch: 15 }, // Final Base Price
-    { wch: 22 }, // Final Total Commission
-    { wch: 16 }, // Final IRCTC Comm
-    { wch: 18 }, // Final RF Commission
-    { wch: 12 }, // Final GST
-    { wch: 14 }, // Final Discount
-    { wch: 19 }, // Final Vendor Discount
-    { wch: 16 }, // Final RF Discount
-    { wch: 15 }, // Delivery Charges
-    { wch: 18 }, // Final Selling Price
-    { wch: 16 }, // Final Order Total
-    { wch: 20 }, // Discounted Base Price
-    { wch: 14 }, // PPD
-    { wch: 14 }, // COD
-    { wch: 10 }, // Meals
-    { wch: 12 }, // Check
-    { wch: 24 }, // Count of Delivered Orders
-    { wch: 20 }, // Not Delivered Order
-    { wch: 16 }, // Not Delivered %
-    { wch: 26 }, // PPD % of Final Selling Price
-    { wch: 26 }, // Count of Delivered Outlets
-    { wch: 22 }, // Total Station Vendors
+    { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 22 },
+    { wch: 14 }, { wch: 15 }, { wch: 22 }, { wch: 16 },
+    { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 19 },
+    { wch: 16 }, { wch: 15 }, { wch: 18 }, { wch: 16 },
+    { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 10 },
+    { wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 16 },
+    { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 26 },
+    { wch: 22 },
   ];
 
   const workbook = XLSX.utils.book_new();
