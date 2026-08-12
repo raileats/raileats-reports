@@ -1,333 +1,275 @@
 import * as XLSX from 'xlsx';
+import { MasterOrderRow } from './vendorRdsGenerator';
 
-// Universal date normalizer: converts any date string to standard format "D/M/YYYY"
-export const normalizeToDeliveryDate = (dateVal: any): string => {
-  if (!dateVal) return '';
-  const str = String(dateVal).trim();
+export interface DateWiseReportRow {
+  'Delivery Date': string;
+  'Vendor Price': number;
+  'Final Base Price': number;
+  'Final Total Commission': number;
+  'Final IRCTC Comm': number;
+  'Final RF Commission': number;
+  'Final GST': number;
+  'Final Discount': number;
+  'Final Vendor Discount': number;
+  'Final RF Discount': number;
+  'Delivery Charges': number;
+  'Final Selling Price': number;
+  'Final Order Total': number;
+  'Discounted Base Price': number;
+  'PPD': number;
+  'COD': number;
+  'Meals': number;
+  'Check': string;
+  'Count of Delivered Orders': number;
+  'Count of Not_Delivered As per IRCTC Status': number;
+  'Not_Delivered %': string;
+  'Prepaid %': string;
+}
 
-  // Agar format "YYYY-MM-DD" ya "YYYY-MM-DD HH:mm:ss" ho
-  if (str.includes('-')) {
-    const parts = str.split(' ')[0].split('-');
-    if (parts.length === 3) {
-      if (parts[0].length === 4) {
-        // YYYY-MM-DD
-        const year = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const day = parseInt(parts[2], 10);
-        return `${day}/${month}/${year}`;
-      } else {
-        // DD-MM-YYYY
-        const day = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const year = parseInt(parts[2], 10);
-        return `${day}/${month}/${year}`;
-      }
+/**
+ * Robust Date Normalizer Helper
+ * Converts Excel Serial, DD/MM/YYYY, YYYY-MM-DD, ISO Dates to standardized "D/M/YYYY"
+ */
+export const normalizeToDayMonthYear = (rawDate: any): string | null => {
+  if (rawDate === undefined || rawDate === null || rawDate === '') return null;
+
+  // 1. If date is an Excel Serial Number (e.g. 45505)
+  if (typeof rawDate === 'number' || (!isNaN(Number(rawDate)) && !String(rawDate).includes('-') && !String(rawDate).includes('/'))) {
+    const num = Number(rawDate);
+    if (num > 20000 && num < 60000) {
+      const utcDays = num - 25569;
+      const dateObj = new Date(utcDays * 86400 * 1000);
+      return `${dateObj.getUTCDate()}/${dateObj.getUTCMonth() + 1}/${dateObj.getUTCFullYear()}`;
     }
   }
 
-  // Agar format "DD/MM/YYYY" ya "D/M/YYYY" ho
-  if (str.includes('/')) {
-    const parts = str.split(' ')[0].split('/');
-    if (parts.length === 3) {
-      if (parts[2].length === 4) {
-        const day = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const year = parseInt(parts[2], 10);
-        return `${day}/${month}/${year}`;
-      }
-    }
+  // 2. If it's already a JS Date object
+  if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
+    return `${rawDate.getDate()}/${rawDate.getMonth() + 1}/${rawDate.getFullYear()}`;
   }
 
-  return str;
+  const str = String(rawDate).trim();
+
+  // 3. Match YYYY-MM-DD or YYYY/MM/DD
+  const ymdMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10);
+    const day = parseInt(ymdMatch[3], 10);
+    return `${day}/${month}/${year}`;
+  }
+
+  // 4. Match DD-MM-YYYY or DD/MM/YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10);
+    const year = parseInt(dmyMatch[3], 10);
+    return `${day}/${month}/${year}`;
+  }
+
+  // 5. Fallback Date parsing
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return `${parsed.getDate()}/${parsed.getMonth() + 1}/${parsed.getFullYear()}`;
+  }
+
+  return null;
 };
 
-export const generateDateWiseReportWorkbook = (masterData: any[]) => {
-  if (!masterData || masterData.length === 0) {
-    alert('Master Data khali hai! Pehle reports process karein.');
+/**
+ * Generates Date Wise Summary Data
+ */
+export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseReportRow[] => {
+  const dateOrdersMap: Record<string, { delivered: MasterOrderRow[]; notDeliveredCount: number }> = {};
+  const allUniqueDates = new Set<string>();
+
+  // Determine detected month & year for proper calendar sorting
+  let sampleYear = 2026;
+  let sampleMonth = 8;
+
+  masterOrders.forEach((row) => {
+    // Check multiple potential date field keys
+    const rawDate =
+      row['Delivery Date'] ||
+      (row as any)['Delivery date'] ||
+      (row as any)['DELIVERY DATE'] ||
+      (row as any)['Order Date'] ||
+      (row as any)['Date'];
+
+    const normalizedDate = normalizeToDayMonthYear(rawDate);
+    if (!normalizedDate) return;
+
+    allUniqueDates.add(normalizedDate);
+
+    const parts = normalizedDate.split('/');
+    if (parts.length === 3) {
+      sampleMonth = parseInt(parts[1], 10);
+      sampleYear = parseInt(parts[2], 10);
+    }
+
+    if (!dateOrdersMap[normalizedDate]) {
+      dateOrdersMap[normalizedDate] = { delivered: [], notDeliveredCount: 0 };
+    }
+
+    const finalStatus = String(row['Final Status'] || '').trim().toLowerCase();
+    const irctcStatus = String(row['IRCTC Status'] || '').trim().toLowerCase();
+    const rfStatus = String(row['RF Status'] || '').trim().toLowerCase();
+
+    // Check Not Delivered / Cancelled status
+    if (
+      finalStatus === 'not delivered' ||
+      finalStatus === 'cancelled' ||
+      finalStatus === 'undelivered' ||
+      irctcStatus.includes('undelivered') ||
+      irctcStatus.includes('cancel') ||
+      rfStatus.includes('undelivered') ||
+      rfStatus.includes('cancel')
+    ) {
+      dateOrdersMap[normalizedDate].notDeliveredCount += 1;
+    }
+
+    // Match delivered status (handles 'delivered', 'DELIVERED', 'delivered ', 'success')
+    if (finalStatus === 'delivered' || finalStatus === 'success' || (!finalStatus && irctcStatus.includes('deliver'))) {
+      dateOrdersMap[normalizedDate].delivered.push(row);
+    }
+  });
+
+  // Generate full calendar days for the detected month (1 to 28/30/31)
+  const daysInMonth = new Date(sampleYear, sampleMonth, 0).getDate();
+  const sortedDateList: string[] = [];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    sortedDateList.push(`${d}/${sampleMonth}/${sampleYear}`);
+  }
+
+  // Include any other dates present in master data that are outside month
+  allUniqueDates.forEach((d) => {
+    if (!sortedDateList.includes(d)) sortedDateList.push(d);
+  });
+
+  const reportRows: DateWiseReportRow[] = [];
+
+  sortedDateList.forEach((dateKey) => {
+    const bucket = dateOrdersMap[dateKey] || { delivered: [], notDeliveredCount: 0 };
+    const deliveredOrders = bucket.delivered;
+
+    let vendorPriceSum = 0;
+    let basePriceSum = 0;
+    let totalCommSum = 0;
+    let irctcCommSum = 0;
+    let rfCommSum = 0;
+    let gstSum = 0;
+    let totalDiscountSum = 0;
+    let vendorDiscountSum = 0;
+    let rfDiscountSum = 0;
+    let deliveryChargesSum = 0;
+    let sellingPriceSum = 0;
+    let orderTotalSum = 0;
+    let discountedBaseSum = 0;
+    let ppdSum = 0;
+    let codSum = 0;
+    let mealsSum = 0;
+    let deliveredOrdersCount = 0;
+
+    deliveredOrders.forEach((ord) => {
+      vendorPriceSum += Number(ord['Final Vendor Price'] || (ord as any)['Vendor Price'] || 0);
+      basePriceSum += Number(ord['Final Base Price'] || (ord as any)['Base Price'] || 0);
+      totalCommSum += Number(ord['Final Total Commission'] || (ord as any)['Total Commission'] || 0);
+      irctcCommSum += Number(ord['Final IRCTC Commission'] || (ord as any)['IRCTC Comm'] || 0);
+      rfCommSum += Number(ord['Final RF Commission'] || (ord as any)['RF Commission'] || 0);
+      gstSum += Number(ord['Final GST'] || (ord as any)['GST'] || 0);
+      totalDiscountSum += Number(ord['Final Total Discount'] || (ord as any)['Total Discount'] || (ord as any)['Discount'] || 0);
+      vendorDiscountSum += Number(ord['Final Vendor Discount'] || (ord as any)['Vendor Discount'] || 0);
+      rfDiscountSum += Number(ord['Final RF Discount'] || (ord as any)['RF Discount'] || 0);
+      deliveryChargesSum += Number(ord['Delivery Charges'] || 0);
+      sellingPriceSum += Number(ord['Final Selling Price'] || (ord as any)['Selling Price'] || 0);
+      orderTotalSum += Number(ord['Final Order Total'] || (ord as any)['Order Total'] || 0);
+      discountedBaseSum += Number(ord['Discounted Base Price'] || 0);
+      ppdSum += Number(ord['PPD'] || 0);
+      codSum += Number(ord['COD'] || 0);
+      mealsSum += Number(ord['Meals'] || 0);
+      deliveredOrdersCount += Number(ord['Orders Count'] || 1);
+    });
+
+    const vendorPrice = Number(vendorPriceSum.toFixed(2));
+    const finalBasePrice = Number(basePriceSum.toFixed(2));
+    const totalCommission = Number(totalCommSum.toFixed(2));
+    const irctcComm = Number(irctcCommSum.toFixed(2));
+    const rfComm = Number(rfCommSum.toFixed(2));
+    const gst = Number(gstSum.toFixed(2));
+    const totalDiscount = Number(totalDiscountSum.toFixed(2));
+    const vendorDiscount = Number(vendorDiscountSum.toFixed(2));
+    const rfDiscount = Number(rfDiscountSum.toFixed(2));
+    const deliveryCharges = Number(deliveryChargesSum.toFixed(2));
+    const sellingPrice = Number(sellingPriceSum.toFixed(2));
+    const orderTotal = Number(orderTotalSum.toFixed(2));
+    const discountedBase = Number(discountedBaseSum.toFixed(2));
+    const ppd = Number(ppdSum.toFixed(2));
+    const cod = Number(codSum.toFixed(2));
+    const notDeliveredOrdersCount = bucket.notDeliveredCount;
+
+    // Check %: (Total Commission / Vendor Price) %
+    const checkPct = vendorPrice > 0 ? `${((totalCommission / vendorPrice) * 100).toFixed(2)}%` : '#DIV/0!';
+
+    // Not Delivered %
+    const notDeliveredPct =
+      deliveredOrdersCount > 0
+        ? `${((notDeliveredOrdersCount / deliveredOrdersCount) * 100).toFixed(2)}%`
+        : notDeliveredOrdersCount > 0
+        ? '100.00%'
+        : '#DIV/0!';
+
+    // Prepaid %
+    const prepaidPct = sellingPrice > 0 ? `${((ppd / sellingPrice) * 100).toFixed(2)}%` : '#DIV/0!';
+
+    reportRows.push({
+      'Delivery Date': dateKey,
+      'Vendor Price': vendorPrice,
+      'Final Base Price': finalBasePrice,
+      'Final Total Commission': totalCommission,
+      'Final IRCTC Comm': irctcComm,
+      'Final RF Commission': rfComm,
+      'Final GST': gst,
+      'Final Discount': totalDiscount,
+      'Final Vendor Discount': vendorDiscount,
+      'Final RF Discount': rfDiscount,
+      'Delivery Charges': deliveryCharges,
+      'Final Selling Price': sellingPrice,
+      'Final Order Total': orderTotal,
+      'Discounted Base Price': discountedBase,
+      'PPD': ppd,
+      'COD': cod,
+      'Meals': mealsSum,
+      'Check': checkPct,
+      'Count of Delivered Orders': deliveredOrdersCount,
+      'Count of Not_Delivered As per IRCTC Status': notDeliveredOrdersCount,
+      'Not_Delivered %': notDeliveredPct,
+      'Prepaid %': prepaidPct,
+    });
+  });
+
+  return reportRows;
+};
+
+/**
+ * Direct Excel Workbook Generator for Date Wise Report
+ */
+export const generateDateWiseReportWorkbook = (
+  masterOrders: MasterOrderRow[],
+  fileNamePrefix: string = 'DATE_WISE_SUMMARY_REPORT'
+) => {
+  const dateWiseData = generateDateWiseData(masterOrders);
+
+  if (!dateWiseData || dateWiseData.length === 0) {
+    alert('Date wise report export karne ke liye koi data available nahi hai.');
     return;
   }
 
-  // Sirf Delivered orders par aggregate karein (screenshot metrics ke according)
-  const deliveredRows = masterData.filter(
-    (row) => String(row['Final Status'] || '').trim().toLowerCase() === 'delivered'
-  );
-
-  // Determine Month & Year from data
-  let detectedMonth = 8;
-  let detectedYear = 2026;
-  for (const r of deliveredRows) {
-    const dStr = normalizeToDeliveryDate(r['Delivery Date'] || r['Booking Date'] || '');
-    if (dStr.includes('/')) {
-      const parts = dStr.split('/');
-      if (parts.length === 3) {
-        detectedMonth = parseInt(parts[1], 10) || 8;
-        detectedYear = parseInt(parts[2], 10) || 2026;
-        break;
-      }
-    }
-  }
-
-  const daysInMonth = new Date(detectedYear, detectedMonth, 0).getDate();
-
-  // Group by Normalized Delivery Date
-  const dateMap: Record<
-    string,
-    {
-      vendorPrice: number;
-      finalBasePrice: number;
-      finalTotalComm: number;
-      finalIrctcComm: number;
-      finalRfComm: number;
-      finalGst: number;
-      finalDiscount: number;
-      finalVendorDiscount: number;
-      finalRfDiscount: number;
-      deliveryCharges: number;
-      finalSellingPrice: number;
-      finalOrderTotal: number;
-      discountedBasePrice: number;
-      ppd: number;
-      cod: number;
-      meals: number;
-      ordersCount: number;
-      uniqueOutlets: Set<string>;
-    }
-  > = {};
-
-  deliveredRows.forEach((r) => {
-    const dKey = normalizeToDeliveryDate(r['Delivery Date'] || r['Booking Date'] || '');
-    if (!dKey) return;
-
-    if (!dateMap[dKey]) {
-      dateMap[dKey] = {
-        vendorPrice: 0,
-        finalBasePrice: 0,
-        finalTotalComm: 0,
-        finalIrctcComm: 0,
-        finalRfComm: 0,
-        finalGst: 0,
-        finalDiscount: 0,
-        finalVendorDiscount: 0,
-        finalRfDiscount: 0,
-        deliveryCharges: 0,
-        finalSellingPrice: 0,
-        finalOrderTotal: 0,
-        discountedBasePrice: 0,
-        ppd: 0,
-        cod: 0,
-        meals: 0,
-        ordersCount: 0,
-        uniqueOutlets: new Set<string>(),
-      };
-    }
-
-    const item = dateMap[dKey];
-    item.vendorPrice += parseFloat(r['Final Vendor Price'] || 0) || 0;
-    item.finalBasePrice += parseFloat(r['Final Base Price'] || 0) || 0;
-    item.finalTotalComm += parseFloat(r['Final Total Commission'] || 0) || 0;
-    item.finalIrctcComm += parseFloat(r['Final IRCTC Commission'] || 0) || 0;
-    item.finalRfComm += parseFloat(r['Final RF Commission'] || 0) || 0;
-    item.finalGst += parseFloat(r['Final GST'] || 0) || 0;
-    item.finalDiscount += parseFloat(r['Final Total Discount'] || r['Discount'] || 0) || 0;
-    item.finalVendorDiscount += parseFloat(r['Final Vendor Discount'] || 0) || 0;
-    item.finalRfDiscount += parseFloat(r['Final RF Discount'] || 0) || 0;
-    item.deliveryCharges += parseFloat(r['Delivery Charges'] || 0) || 0;
-    item.finalSellingPrice += parseFloat(r['Final Selling Price'] || 0) || 0;
-    item.finalOrderTotal += parseFloat(r['Final Order Total'] || 0) || 0;
-    item.discountedBasePrice += parseFloat(r['Discounted Base Price'] || 0) || 0;
-    item.ppd += parseFloat(r['PPD'] || 0) || 0;
-    item.cod += parseFloat(r['COD'] || 0) || 0;
-    item.meals += parseInt(r['Meals'] || '1', 10) || 1;
-    item.ordersCount += 1;
-
-    const outId = String(r['Outlet ID'] || r['Outlet Id'] || '').trim();
-    if (outId) item.uniqueOutlets.add(outId);
-  });
-
-  // Calculate Month Totals for Top Summary Row
-  let totalVendorPrice = 0;
-  let totalFinalBasePrice = 0;
-  let totalFinalTotalComm = 0;
-  let totalFinalIrctcComm = 0;
-  let totalFinalRfComm = 0;
-  let totalFinalGst = 0;
-  let totalFinalDiscount = 0;
-  let totalFinalVendorDiscount = 0;
-  let totalFinalRfDiscount = 0;
-  let totalDeliveryCharges = 0;
-  let totalFinalSellingPrice = 0;
-  let totalFinalOrderTotal = 0;
-  let totalDiscountedBasePrice = 0;
-  let totalPpd = 0;
-  let totalCod = 0;
-  let totalMeals = 0;
-  let totalOrdersCount = 0;
-  const monthAllOutlets = new Set<string>();
-
-  // Build Day-wise rows 1 to daysInMonth (e.g. 1/8/2026 to 31/8/2026)
-  const rowsData: any[][] = [];
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dateStr = `${day}/${detectedMonth}/${detectedYear}`;
-    const d = dateMap[dateStr];
-
-    if (d && d.ordersCount > 0) {
-      const vPrice = Number(d.vendorPrice.toFixed(2));
-      const bPrice = Number(d.finalBasePrice.toFixed(2));
-      const tComm = Number(d.finalTotalComm.toFixed(2));
-      const irctcComm = Number(d.finalIrctcComm.toFixed(2));
-      const rfComm = Number(d.finalRfComm.toFixed(2));
-      const gst = Number(d.finalGst.toFixed(2));
-      const disc = Number(d.finalDiscount.toFixed(2));
-      const vDisc = Number(d.finalVendorDiscount.toFixed(2));
-      const rfDisc = Number(d.finalRfDiscount.toFixed(2));
-      const deliv = Number(d.deliveryCharges.toFixed(2));
-      const sellPrice = Number(d.finalSellingPrice.toFixed(2));
-      const ordTotal = Number(d.finalOrderTotal.toFixed(2));
-      const discBase = Number(d.discountedBasePrice.toFixed(2));
-      const ppdVal = Number(d.ppd.toFixed(2));
-      const codVal = Number(d.cod.toFixed(2));
-      const checkPct = bPrice > 0 ? Number(((tComm / bPrice) * 100).toFixed(2)) : 0;
-      const outletCount = d.uniqueOutlets.size;
-
-      totalVendorPrice += vPrice;
-      totalFinalBasePrice += bPrice;
-      totalFinalTotalComm += tComm;
-      totalFinalIrctcComm += irctcComm;
-      totalFinalRfComm += rfComm;
-      totalFinalGst += gst;
-      totalFinalDiscount += disc;
-      totalFinalVendorDiscount += vDisc;
-      totalFinalRfDiscount += rfDisc;
-      totalDeliveryCharges += deliv;
-      totalFinalSellingPrice += sellPrice;
-      totalFinalOrderTotal += ordTotal;
-      totalDiscountedBasePrice += discBase;
-      totalPpd += ppdVal;
-      totalCod += codVal;
-      totalMeals += d.meals;
-      totalOrdersCount += d.ordersCount;
-      d.uniqueOutlets.forEach((id) => monthAllOutlets.add(id));
-
-      rowsData.push([
-        dateStr,
-        vPrice,
-        bPrice,
-        tComm,
-        irctcComm,
-        rfComm,
-        gst,
-        disc,
-        vDisc,
-        rfDisc,
-        deliv,
-        sellPrice,
-        ordTotal,
-        discBase,
-        ppdVal,
-        codVal,
-        d.meals,
-        `${checkPct.toFixed(2)}%`,
-        d.ordersCount,
-        outletCount,
-      ]);
-    } else {
-      // Empty date row with 0s exactly as shown in screenshot
-      rowsData.push([
-        dateStr,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        '0.00%',
-        0,
-        0,
-      ]);
-    }
-  }
-
-  const overallCheckPct =
-    totalFinalBasePrice > 0
-      ? Number(((totalFinalTotalComm / totalFinalBasePrice) * 100).toFixed(2))
-      : 0;
-
-  // Row 1: Top Summary Row (Red numbers)
-  const topSummaryRow = [
-    '',
-    Number(totalVendorPrice.toFixed(2)),
-    Number(totalFinalBasePrice.toFixed(2)),
-    Number(totalFinalTotalComm.toFixed(2)),
-    Number(totalFinalIrctcComm.toFixed(2)),
-    Number(totalFinalRfComm.toFixed(2)),
-    Number(totalFinalGst.toFixed(2)),
-    Number(totalFinalDiscount.toFixed(2)),
-    Number(totalFinalVendorDiscount.toFixed(2)),
-    Number(totalFinalRfDiscount.toFixed(2)),
-    Number(totalDeliveryCharges.toFixed(2)),
-    Number(totalFinalSellingPrice.toFixed(2)),
-    Number(totalFinalOrderTotal.toFixed(2)),
-    Number(totalDiscountedBasePrice.toFixed(2)),
-    Number(totalPpd.toFixed(2)),
-    Number(totalCod.toFixed(2)),
-    totalMeals,
-    `${overallCheckPct.toFixed(2)}%`,
-    totalOrdersCount,
-    monthAllOutlets.size,
-  ];
-
-  // Row 2: Table Column Headers (Matching image layout)
-  const headers = [
-    'Delivery Date',
-    'Vendor Price',
-    'Final Base Price',
-    'Final Total Commission',
-    'Final IRCTC Comm',
-    'Final RF Commission',
-    'Final GST',
-    'Final Discount',
-    'Final Vendor Discount',
-    'Final RF Discount',
-    'Delivery Charges',
-    'Final Selling Price',
-    'Final Order Total',
-    'Discounted Base Price',
-    'PPD',
-    'COD',
-    'Meals',
-    'Check',
-    'Count of Delivered Orders',
-    'Delivered Orders Outlet Count',
-  ];
-
-  const fullSheetData = [topSummaryRow, headers, ...rowsData];
-  const worksheet = XLSX.utils.aoa_to_sheet(fullSheetData);
-
-  // Column auto-width styling
-  worksheet['!cols'] = [
-    { wch: 14 }, // Delivery Date
-    { wch: 14 }, // Vendor Price
-    { wch: 15 }, // Final Base Price
-    { wch: 22 }, // Final Total Commission
-    { wch: 16 }, // Final IRCTC Comm
-    { wch: 18 }, // Final RF Commission
-    { wch: 12 }, // Final GST
-    { wch: 14 }, // Final Discount
-    { wch: 19 }, // Final Vendor Discount
-    { wch: 16 }, // Final RF Discount
-    { wch: 15 }, // Delivery Charges
-    { wch: 18 }, // Final Selling Price
-    { wch: 16 }, // Final Order Total
-    { wch: 20 }, // Discounted Base Price
-    { wch: 14 }, // PPD
-    { wch: 14 }, // COD
-    { wch: 10 }, // Meals
-    { wch: 10 }, // Check
-    { wch: 24 }, // Count of Delivered Orders
-    { wch: 26 }, // Delivered Orders Outlet Count
-  ];
-
+  const worksheet = XLSX.utils.json_to_sheet(dateWiseData);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Date Wise Summary');
 
-  XLSX.writeFile(
-    workbook,
-    `DATE_WISE_SUMMARY_REPORT_${detectedMonth}_${detectedYear}.xlsx`
-  );
+  const todayStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
 };
