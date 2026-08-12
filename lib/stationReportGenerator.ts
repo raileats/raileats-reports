@@ -32,250 +32,274 @@ export interface StationReportRow {
   'Total Station Vendors': number;
 }
 
-/**
- * Generates Station Code Wise Summary Report matching exact screenshot format
- */
+// ---------------------------------------------------------------------------
+// 1. Flexible Key Finder (Case-insensitive, spaces/underscores ignore karta hai)
+// ---------------------------------------------------------------------------
+const getAnyValue = (row: any, searchKeys: string[]): any => {
+  if (!row || typeof row !== 'object') return null;
+  const rowKeys = Object.keys(row);
+  for (const sk of searchKeys) {
+    const cleanSk = sk.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const foundKey = rowKeys.find(
+      (rk) => rk.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanSk
+    );
+    if (
+      foundKey &&
+      row[foundKey] !== undefined &&
+      row[foundKey] !== null &&
+      String(row[foundKey]).trim() !== ''
+    ) {
+      return row[foundKey];
+    }
+  }
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// 2. Station Key Cleaner & Normalizer (E.g. "NDLS - New Delhi" -> "NDLS")
+// ---------------------------------------------------------------------------
+const normalizeStationKey = (val: any): string => {
+  if (!val) return '';
+  let str = String(val).trim().toUpperCase();
+  
+  // Agar "NDLS - NEW DELHI" ya "NDLS (NEW DELHI)" format ho toh code nikaal lo
+  if (str.includes('-')) {
+    str = str.split('-')[0].trim();
+  } else if (str.includes('(')) {
+    str = str.split('(')[0].trim();
+  }
+  return str.replace(/[^A-Z0-9]/g, '');
+};
+
+// ---------------------------------------------------------------------------
+// 3. Feedback / Complaint Valid Entry Checker
+// ---------------------------------------------------------------------------
+const hasValidEntry = (val: any): boolean => {
+  if (val === null || val === undefined) return false;
+  const str = String(val).trim().toLowerCase();
+  // Khali, '0', 'nan', 'null', 'nil', '-' ko ignore karega
+  if (str === '' || str === '0' || str === 'nan' || str === 'null' || str === 'nil' || str === '-' || str === 'none') {
+    return false;
+  }
+  return true;
+};
+
+// ---------------------------------------------------------------------------
+// Main Station Wise Generator Function
+// ---------------------------------------------------------------------------
 export const generateStationWiseData = (
-  masterOrders: MasterOrderRow[],
+  masterOrders: any[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {}
 ): StationReportRow[] => {
-  // 1. Group Master Orders Station Wise
-  const stationOrdersMap: Record<string, MasterOrderRow[]> = {};
-
-  // Total vendor counts per station from Master Outlets
+  // Master Outlets Vendor Mapping
   const totalStationVendorsMap: Record<string, Set<string>> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const stCode = String(
-      out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || ''
-    ).trim().toUpperCase();
+    const rawSt = out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '';
+    const cleanSt = normalizeStationKey(rawSt);
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
-    if (stCode && outId) {
-      if (!totalStationVendorsMap[stCode]) {
-        totalStationVendorsMap[stCode] = new Set();
-      }
-      totalStationVendorsMap[stCode].add(outId);
+    if (cleanSt && outId) {
+      if (!totalStationVendorsMap[cleanSt]) totalStationVendorsMap[cleanSt] = new Set();
+      totalStationVendorsMap[cleanSt].add(outId);
     }
   });
 
-  masterOrders.forEach((row: any) => {
-    const stCode = String(
-      row['Station Code'] ||
-      row['StationCode'] ||
-      row['Delivery Station'] ||
-      row['DeliveryStation'] ||
-      row['Station Name'] ||
-      row['Station'] ||
-      ''
-    ).trim().toUpperCase();
+  // Aggregation Map
+  const stationMap: Record<string, any> = {};
 
-    if (!stCode) return;
+  (masterOrders || []).forEach((row: any) => {
+    // Match Delivery Station (From IRCTC Raw) OR Station Code (From Master Sheet)
+    const rawStation = getAnyValue(row, [
+      'Delivery Station',
+      'DeliveryStation',
+      'Station Code',
+      'StationCode',
+      'Delivery Station Code',
+      'Delivery Station Name',
+      'Station Name',
+      'Station',
+      'Stn Code',
+      'stn_code'
+    ]);
 
-    if (!stationOrdersMap[stCode]) {
-      stationOrdersMap[stCode] = [];
+    const stationKey = normalizeStationKey(rawStation) || 'UNKNOWN';
+    const displayStationName = String(
+      getAnyValue(row, ['Station Name', 'Delivery Station Name', 'Delivery Station', 'Station']) || rawStation || stationKey
+    ).trim();
+
+    if (!stationMap[stationKey]) {
+      stationMap[stationKey] = {
+        stationCode: stationKey,
+        stationName: displayStationName,
+        vendorPrice: 0,
+        finalBasePrice: 0,
+        totalComm: 0,
+        irctcComm: 0,
+        rfComm: 0,
+        gst: 0,
+        totalDiscount: 0,
+        vendorDiscount: 0,
+        rfDiscount: 0,
+        deliveryCharges: 0,
+        sellingPrice: 0,
+        orderTotal: 0,
+        discountedBase: 0,
+        ppd: 0,
+        cod: 0,
+        meals: 0,
+        deliveredOrdersCount: 0,
+        notDeliveredOrdersCount: 0,
+        feedbackGoodCount: 0,
+        feedbackBadCount: 0,
+        deliveredOutlets: new Set<string>(),
+      };
     }
-    stationOrdersMap[stCode].push(row);
+
+    const st = stationMap[stationKey];
+
+    // Status Values Check
+    const finalStatus = String(getAnyValue(row, ['Final Status', 'Delivery Status', 'Status', 'Order Status']) || '').trim().toLowerCase();
+    const irctcStatus = String(getAnyValue(row, ['IRCTC Status', 'IRCTC Delivery Status']) || '').trim().toLowerCase();
+    const rfStatus = String(getAnyValue(row, ['RF Status']) || '').trim().toLowerCase();
+    const outletId = String(getAnyValue(row, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
+
+    // -------------------------------------------------------------
+    // FEEDBACK & COMPLAINT COUNT LOGIC (Delivery Station Wise Sum)
+    // -------------------------------------------------------------
+    const feedbackVal = getAnyValue(row, [
+      'Feedback',
+      'Customer Feedback',
+      'Feedback Good',
+      'Feedback Comment',
+      'Rating',
+      'Review'
+    ]);
+
+    const complaintVal = getAnyValue(row, [
+      'Complaint',
+      'Feedback Bad',
+      'Complaint Comment',
+      'Comment',
+      'Issue',
+      'Customer Complaint'
+    ]);
+
+    if (hasValidEntry(feedbackVal)) {
+      // Agar direct count number diya ho (jaise 1, 2) ya text comment ho
+      const num = Number(feedbackVal);
+      st.feedbackGoodCount += !isNaN(num) && num > 0 ? num : 1;
+    }
+
+    if (hasValidEntry(complaintVal)) {
+      const num = Number(complaintVal);
+      st.feedbackBadCount += !isNaN(num) && num > 0 ? num : 1;
+    }
+
+    // -------------------------------------------------------------
+    // DELIVERY & NOT-DELIVERY LOGIC
+    // -------------------------------------------------------------
+    const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
+    const isNotDelivered =
+      finalStatus === 'not delivered' ||
+      finalStatus === 'cancelled' ||
+      finalStatus === 'undelivered' ||
+      irctcStatus.includes('undelivered') ||
+      irctcStatus.includes('cancel') ||
+      rfStatus.includes('undelivered') ||
+      rfStatus.includes('cancel');
+
+    if (isNotDelivered) {
+      st.notDeliveredOrdersCount += 1;
+    }
+
+    if (isDelivered) {
+      st.vendorPrice += Number(getAnyValue(row, ['Final Vendor Price', 'Vendor Price', 'vendor_price']) || 0);
+      st.finalBasePrice += Number(getAnyValue(row, ['Final Base Price', 'Total Base Price', 'Base Price', 'base_price']) || 0);
+      st.totalComm += Number(getAnyValue(row, ['Final Total Commission', 'Total Commission', 'commission']) || 0);
+      st.irctcComm += Number(getAnyValue(row, ['Final IRCTC Commission', 'IRCTC Comm', 'Vendor Comm']) || 0);
+      st.rfComm += Number(getAnyValue(row, ['Final RF Commission', 'RF Commission', 'rf_comm']) || 0);
+      st.gst += Number(getAnyValue(row, ['Final GST', 'Total Gst', 'GST', 'gst']) || 0);
+      st.totalDiscount += Number(getAnyValue(row, ['Final Total Discount', 'Discount', 'discount']) || 0);
+      st.vendorDiscount += Number(getAnyValue(row, ['Final Vendor Discount', 'Vendor Discount']) || 0);
+      st.rfDiscount += Number(getAnyValue(row, ['Final RF Discount', 'RF Discount']) || 0);
+      st.deliveryCharges += Number(getAnyValue(row, ['Delivery Charges', 'Delivery Charge']) || 0);
+      st.sellingPrice += Number(getAnyValue(row, ['Final Selling Price', 'Selling Price']) || 0);
+      st.orderTotal += Number(getAnyValue(row, ['Final Order Total', 'Order Total']) || 0);
+      st.discountedBase += Number(getAnyValue(row, ['Discounted Base Price']) || 0);
+      st.ppd += Number(getAnyValue(row, ['PPD', 'ppd']) || 0);
+      st.cod += Number(getAnyValue(row, ['COD', 'cod']) || 0);
+      st.meals += Number(getAnyValue(row, ['Meals', 'Meal Count']) || 1);
+      st.deliveredOrdersCount += Number(getAnyValue(row, ['Orders Count']) || 1);
+
+      if (outletId) {
+        st.deliveredOutlets.add(outletId);
+      }
+    }
   });
 
-  const rawStationList: any[] = [];
+  // Sort descending by Final Base Price
+  const sortedStations = Object.values(stationMap).sort(
+    (a: any, b: any) => b.finalBasePrice - a.finalBasePrice
+  );
 
-  Object.entries(stationOrdersMap).forEach(([stationCode, orders]) => {
-    let vendorPriceSum = 0;
-    let basePriceSum = 0;
-    let totalCommSum = 0;
-    let irctcCommSum = 0;
-    let rfCommSum = 0;
-    let gstSum = 0;
-    let totalDiscountSum = 0;
-    let vendorDiscountSum = 0;
-    let rfDiscountSum = 0;
-    let deliveryChargesSum = 0;
-    let sellingPriceSum = 0;
-    let orderTotalSum = 0;
-    let discountedBaseSum = 0;
-    let ppdSum = 0;
-    let codSum = 0;
-    let mealsSum = 0;
-    let deliveredOrdersCount = 0;
-    let notDeliveredOrdersCount = 0;
-    let feedbackGoodCount = 0;
-    let feedbackBadCount = 0;
+  // Return Formatted Rows
+  return sortedStations.map((st: any, idx: number): StationReportRow => {
+    const vPrice = Number(st.vendorPrice.toFixed(2));
+    const bPrice = Number(st.finalBasePrice.toFixed(2));
+    const tComm = Number(st.totalComm.toFixed(2));
+    const sPrice = Number(st.sellingPrice.toFixed(2));
+    const ppdVal = Number(st.ppd.toFixed(2));
 
-    const deliveredOutletSet = new Set<string>();
-    let stationName = '';
+    const checkPct = bPrice > 0 ? `${((tComm / bPrice) * 100).toFixed(2)}%` : '0.00%';
+    const notDeliveredPct =
+      st.deliveredOrdersCount > 0
+        ? `${((st.notDeliveredOrdersCount / st.deliveredOrdersCount) * 100).toFixed(2)}%`
+        : st.notDeliveredOrdersCount > 0
+        ? '100.00%'
+        : '0.00%';
+    const ppdPct = sPrice > 0 ? `${((ppdVal / sPrice) * 100).toFixed(2)}%` : '0.00%';
 
-    orders.forEach((ord: any) => {
-      const finalStatus = String(ord['Final Status'] || ord['final_status'] || ord['Delivery Status'] || ord['Status'] || '').trim().toLowerCase();
-      const irctcStatus = String(ord['IRCTC Status'] || ord['irctc_status'] || ord['Order Status'] || '').trim().toLowerCase();
-      const rfStatus = String(ord['RF Status'] || ord['rf_status'] || '').trim().toLowerCase();
-      const outletId = String(ord['Outlet ID'] || ord['OutletId'] || ord['outlet_id'] || '').trim();
+    const totalVendors = totalStationVendorsMap[st.stationCode]
+      ? totalStationVendorsMap[st.stationCode].size
+      : Math.max(st.deliveredOutlets.size, 1);
 
-      // Station Name extraction from Delivery Station / Outlet Master / row
-      if (!stationName) {
-        const outInfo: any = outletsMasterInfo[outletId];
-        if (ord['Delivery Station']) {
-          stationName = String(ord['Delivery Station']).trim();
-        } else if (ord['Station Name']) {
-          stationName = String(ord['Station Name']).trim();
-        } else if (outInfo && outInfo.station) {
-          stationName = String(outInfo.station).trim();
-        } else if (ord['Station Code']) {
-          stationName = String(ord['Station Code']).trim();
-        }
-      }
-
-      // Feedback & Complaint Check
-      const feedbackVal = String(ord['Feedback'] || ord['feedback'] || ord['Customer Feedback'] || '').trim();
-      const complaintVal = String(ord['Complaint'] || ord['complaint'] || ord['Complaint Comment'] || ord['Comment'] || '').trim();
-
-      if (feedbackVal.length > 0) {
-        feedbackGoodCount += 1;
-      }
-      if (complaintVal.length > 0) {
-        feedbackBadCount += 1;
-      }
-
-      // Check Status
-      const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
-      const isNotDelivered =
-        finalStatus === 'not delivered' ||
-        finalStatus === 'cancelled' ||
-        finalStatus === 'undelivered' ||
-        irctcStatus.includes('undelivered') ||
-        irctcStatus.includes('cancel') ||
-        rfStatus.includes('undelivered') ||
-        rfStatus.includes('cancel');
-
-      if (isNotDelivered) {
-        notDeliveredOrdersCount += 1;
-      }
-
-      if (isDelivered) {
-        vendorPriceSum += Number(ord['Final Vendor Price'] || ord['Vendor Price'] || 0);
-        basePriceSum += Number(ord['Final Base Price'] || ord['Base Price'] || 0);
-        totalCommSum += Number(ord['Final Total Commission'] || ord['Total Commission'] || 0);
-        irctcCommSum += Number(ord['Final IRCTC Commission'] || ord['IRCTC Comm'] || ord['Vendor Comm'] || 0);
-        rfCommSum += Number(ord['Final RF Commission'] || ord['RF Commission'] || 0);
-        gstSum += Number(ord['Final GST'] || ord['Total Gst'] || ord['GST'] || 0);
-        totalDiscountSum += Number(ord['Final Total Discount'] || ord['Discount'] || ord['discount'] || 0);
-        vendorDiscountSum += Number(ord['Final Vendor Discount'] || ord['Vendor Discount'] || 0);
-        rfDiscountSum += Number(ord['Final RF Discount'] || ord['RF Discount'] || 0);
-        deliveryChargesSum += Number(ord['Delivery Charges'] || ord['Delivery Charge'] || 0);
-        sellingPriceSum += Number(ord['Final Selling Price'] || ord['Selling Price'] || 0);
-        orderTotalSum += Number(ord['Final Order Total'] || ord['Order Total'] || 0);
-        discountedBaseSum += Number(ord['Discounted Base Price'] || 0);
-        ppdSum += Number(ord['PPD'] || ord['ppd'] || 0);
-        codSum += Number(ord['COD'] || ord['cod'] || 0);
-        mealsSum += Number(ord['Meals'] || ord['Meal Count'] || 1);
-        deliveredOrdersCount += Number(ord['Orders Count'] || 1);
-
-        if (outletId) {
-          deliveredOutletSet.add(outletId);
-        }
-      }
-    });
-
-    const vendorPrice = Number(vendorPriceSum.toFixed(2));
-    const finalBasePrice = Number(basePriceSum.toFixed(2));
-    const totalCommission = Number(totalCommSum.toFixed(2));
-    const irctcComm = Number(irctcCommSum.toFixed(2));
-    const rfComm = Number(rfCommSum.toFixed(2));
-    const gst = Number(gstSum.toFixed(2));
-    const totalDiscount = Number(totalDiscountSum.toFixed(2));
-    const vendorDiscount = Number(vendorDiscountSum.toFixed(2));
-    const rfDiscount = Number(rfDiscountSum.toFixed(2));
-    const deliveryCharges = Number(deliveryChargesSum.toFixed(2));
-    const sellingPrice = Number(sellingPriceSum.toFixed(2));
-    const orderTotal = Number(orderTotalSum.toFixed(2));
-    const discountedBase = Number(discountedBaseSum.toFixed(2));
-    const ppd = Number(ppdSum.toFixed(2));
-    const cod = Number(codSum.toFixed(2));
-
-    // Percentages
-    const checkPct = finalBasePrice > 0 ? `${((totalCommission / finalBasePrice) * 100).toFixed(2)}%` : '0.00%';
-    const notDeliveredPct = deliveredOrdersCount > 0 
-      ? `${((notDeliveredOrdersCount / deliveredOrdersCount) * 100).toFixed(2)}%`
-      : notDeliveredOrdersCount > 0 ? '100.00%' : '0.00%';
-    const ppdPct = sellingPrice > 0 
-      ? `${((ppd / sellingPrice) * 100).toFixed(2)}%` 
-      : '0.00%';
-
-    const countOfDeliveredOutlets = deliveredOutletSet.size;
-    const totalStationVendors = totalStationVendorsMap[stationCode]
-      ? totalStationVendorsMap[stationCode].size
-      : Math.max(countOfDeliveredOutlets, 1);
-
-    rawStationList.push({
-      stationCode,
-      stationName: stationName || stationCode,
-      vendorPrice,
-      finalBasePrice,
-      totalCommission,
-      irctcComm,
-      rfComm,
-      gst,
-      totalDiscount,
-      vendorDiscount,
-      rfDiscount,
-      deliveryCharges,
-      sellingPrice,
-      orderTotal,
-      discountedBase,
-      ppd,
-      cod,
-      meals: mealsSum,
-      checkPct,
-      deliveredOrdersCount,
-      notDeliveredOrdersCount,
-      notDeliveredPct,
-      ppdPct,
-      feedbackGoodCount,
-      feedbackBadCount,
-      countOfDeliveredOutlets,
-      totalStationVendors,
-    });
+    return {
+      'Station Code': st.stationCode,
+      'Rank': idx + 1,
+      'Station Name': st.stationName,
+      'Vendor Price': vPrice,
+      'Final Base Price': bPrice,
+      'Final Total Commission': tComm,
+      'Final IRCTC Comm': Number(st.irctcComm.toFixed(2)),
+      'Final RF Commission': Number(st.rfComm.toFixed(2)),
+      'Final GST': Number(st.gst.toFixed(2)),
+      'Final Discount': Number(st.totalDiscount.toFixed(2)),
+      'Final Vendor Discount': Number(st.vendorDiscount.toFixed(2)),
+      'Final RF Discount': Number(st.rfDiscount.toFixed(2)),
+      'Delivery Charges': Number(st.deliveryCharges.toFixed(2)),
+      'Final Selling Price': sPrice,
+      'Final Order Total': Number(st.orderTotal.toFixed(2)),
+      'Discounted Base Price': Number(st.discountedBase.toFixed(2)),
+      'PPD': ppdVal,
+      'COD': Number(st.cod.toFixed(2)),
+      'Meals': st.meals,
+      'Check': checkPct,
+      'Count of Delivered Orders': st.deliveredOrdersCount,
+      'Not Delivered Order': st.notDeliveredOrdersCount,
+      'Not Delivered %': notDeliveredPct,
+      'PPD % of Final Selling Price': ppdPct,
+      'Feedback Good': st.feedbackGoodCount,
+      'Feedback Bad': st.feedbackBadCount,
+      'Count of Delivered Outlets': st.deliveredOutlets.size,
+      'Total Station Vendors': totalVendors,
+    };
   });
-
-  // 2. Sort by Highest Volume (Base Price)
-  rawStationList.sort((a, b) => b.finalBasePrice - a.finalBasePrice);
-
-  // 3. Map into exact Columns and Assign Rank
-  return rawStationList.map((st, idx) => ({
-    'Station Code': st.stationCode,
-    'Rank': idx + 1,
-    'Station Name': st.stationName,
-    'Vendor Price': st.vendorPrice,
-    'Final Base Price': st.finalBasePrice,
-    'Final Total Commission': st.totalCommission,
-    'Final IRCTC Comm': st.irctcComm,
-    'Final RF Commission': st.rfComm,
-    'Final GST': st.gst,
-    'Final Discount': st.totalDiscount,
-    'Final Vendor Discount': st.vendorDiscount,
-    'Final RF Discount': st.rfDiscount,
-    'Delivery Charges': st.deliveryCharges,
-    'Final Selling Price': st.sellingPrice,
-    'Final Order Total': st.orderTotal,
-    'Discounted Base Price': st.discountedBase,
-    'PPD': st.ppd,
-    'COD': st.cod,
-    'Meals': st.meals,
-    'Check': st.checkPct,
-    'Count of Delivered Orders': st.deliveredOrdersCount,
-    'Not Delivered Order': st.notDeliveredOrdersCount,
-    'Not Delivered %': st.notDeliveredPct,
-    'PPD % of Final Selling Price': st.ppdPct,
-    'Feedback Good': st.feedbackGoodCount,
-    'Feedback Bad': st.feedbackBadCount,
-    'Count of Delivered Outlets': st.countOfDeliveredOutlets,
-    'Total Station Vendors': st.totalStationVendors,
-  }));
 };
 
 /**
  * Direct Excel Export Workbook Generator
  */
 export const generateStationReportWorkbook = (
-  masterOrders: MasterOrderRow[],
+  masterOrders: any[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
   fileNamePrefix: string = 'STATION_WISE_REPORT'
 ) => {
