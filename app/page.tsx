@@ -988,7 +988,7 @@ export default function Page() {
                 <select
                   value={selectedReport}
                   onChange={(e) => setSelectedReport(e.target.value as ReportType)}
-                  className="bg-slate-900 border border-indigo-500/50 text-indigo-300 font-semibold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="bg-slate-900 border border-indigo-500/50 text-indigo-300 font-semibold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                 >
                   <option value="MAIN_REPORT">📊 Main Report (Date Matrix Layout)</option>
                   <option value="MASTER">📁 Master Data (All 19 Columns)</option>
@@ -1074,69 +1074,73 @@ export default function Page() {
               />
             </div>
 
-            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL TWO-FINGER HORIZONTAL SCROLL */}
+            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL HORIZONTAL SCROLL */}
             {selectedReport === 'MAIN_REPORT' && (
-              <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+              <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
                 {mainReportBlocks
                   .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
                   .map((blk, bIdx) => (
                     <div 
                       key={bIdx} 
-                      className="w-full overflow-x-auto rounded-xl border border-gray-400 bg-white shadow-xl scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100"
-                      style={{ WebkitOverflowScrolling: 'touch' }}
+                      className="w-full overflow-x-auto rounded-xl border border-gray-500 bg-white shadow-2xl"
+                      style={{ 
+                        WebkitOverflowScrolling: 'touch',
+                        scrollbarWidth: 'auto',
+                        scrollbarColor: '#475569 #0f172a'
+                      }}
                     >
-                      <table className="w-full min-w-[1750px] border-collapse text-[11px] table-fixed">
+                      <table className="w-full min-w-[2100px] border-collapse text-[11px] whitespace-nowrap">
                         <thead>
                           {/* Banner 1: Red Date Header */}
                           <tr>
-                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2 text-center text-xs tracking-wider">
+                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2.5 text-center text-xs tracking-wider">
                               {blk.dateLabel}
                             </th>
-                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[50px]">
+                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[60px]">
                               Outlets
                             </th>
                           </tr>
 
                           {/* Banner 2: Group Categories */}
                           <tr className="text-white font-bold text-center text-[10px]">
-                            <th className="bg-black text-white p-1 border border-gray-400 sticky left-0 z-20 min-w-[130px]">
+                            <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">
                               Source
                             </th>
-                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white">ORDERS</th>
-                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white">MEALS</th>
-                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white">VALUE</th>
-                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white">PREPAID</th>
-                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white">DISCOUNT</th>
-                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white">REVENUE</th>
-                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white">Complaints</th>
-                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white">Feedback</th>
-                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white">IRCTC Undelivered</th>
-                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-sm w-12 align-middle">
+                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white py-1">ORDERS</th>
+                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white py-1">MEALS</th>
+                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white py-1">VALUE</th>
+                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white py-1">PREPAID</th>
+                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white py-1">DISCOUNT</th>
+                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white py-1">REVENUE</th>
+                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white py-1">Complaints</th>
+                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white py-1">Feedback</th>
+                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white py-1">IRCTC Undelivered</th>
+                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base min-w-[60px] align-middle">
                               {blk.outletsCount}
                             </th>
                           </tr>
 
                           {/* Banner 3: Metric Sub-Headers */}
-                          <tr className="text-[9px] text-center font-bold bg-gray-100 text-gray-800">
-                            <th className="border border-gray-300 p-0.5 sticky left-0 z-20 bg-gray-100 min-w-[130px]"></th>
+                          <tr className="text-[10px] text-center font-bold bg-gray-100 text-gray-800">
+                            <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
                             {/* Orders */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">ASP</th><th className="border border-gray-300">Del%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">Del%</th>
                             {/* Meals */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">ASP</th><th className="border border-gray-300">MPO</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">MPO</th>
                             {/* Value */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th>
                             {/* Prepaid */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                             {/* Discount */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                             {/* Revenue */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                             {/* Complaints */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                             {/* Feedback */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                             {/* Undelivered */}
-                            <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">%</th>
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
                           </tr>
                         </thead>
 
@@ -1157,18 +1161,22 @@ export default function Page() {
               </div>
             )}
 
-            {/* ALL OTHER REPORT TABLES (WITH HORIZONTAL SCROLL ENABLED) */}
+            {/* ALL OTHER REPORT TABLES (WITH FULL HORIZONTAL SCROLL) */}
             {selectedReport !== 'MAIN_REPORT' && (
               <div 
-                className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900"
-                style={{ WebkitOverflowScrolling: 'touch' }}
+                className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/80 shadow-2xl max-h-[75vh]"
+                style={{ 
+                  WebkitOverflowScrolling: 'touch',
+                  scrollbarWidth: 'auto',
+                  scrollbarColor: '#475569 #0f172a'
+                }}
               >
                 {/* 1. MASTER VIEW */}
                 {selectedReport === 'MASTER' && (
-                  <table className="w-full min-w-[1300px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1400px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Order ID</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Order ID</th>
                         <th className="p-3 font-semibold">Outlet ID</th>
                         <th className="p-3 font-semibold">Vendor Name</th>
                         <th className="p-3 font-semibold">Station</th>
@@ -1194,7 +1202,7 @@ export default function Page() {
                         .slice(0, 100)
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-medium text-white">{row['IRCTC Order ID']}</td>
+                            <td className="p-3 font-medium text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['IRCTC Order ID']}</td>
                             <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
                             <td className="p-3 font-medium">{row['Vendor Name']}</td>
                             <td className="p-3 text-cyan-300 font-mono">{row['Station Code']}</td>
@@ -1226,10 +1234,10 @@ export default function Page() {
 
                 {/* 2. STATION / LAST DAY STATION VIEW */}
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Station Code</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Station Code</th>
                         <th className="p-3 font-semibold">State</th>
                         <th className="p-3 font-semibold text-center">Total Orders</th>
                         <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
@@ -1245,7 +1253,7 @@ export default function Page() {
                         .filter((s) => s.station.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-white font-mono">{row.station}</td>
+                            <td className="p-3 font-bold text-white font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.station}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
                             <td className="p-3 text-center font-semibold">{row.totalOrders}</td>
                             <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
@@ -1262,10 +1270,10 @@ export default function Page() {
 
                 {/* 3. VENDOR / VENDOR RDS VIEW */}
                 {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
-                  <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1300px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Vendor Name</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Vendor Name</th>
                         <th className="p-3 font-semibold">Outlet ID</th>
                         <th className="p-3 font-semibold">State</th>
                         <th className="p-3 font-semibold text-center">Total Orders</th>
@@ -1281,7 +1289,7 @@ export default function Page() {
                         .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-white">{row.vendor}</td>
+                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.vendor}</td>
                             <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
                             <td className="p-3 text-center">{row.totalOrders}</td>
@@ -1298,10 +1306,10 @@ export default function Page() {
 
                 {/* 4. DATE WISE VIEW */}
                 {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
-                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Date</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Date</th>
                         <th className="p-3 font-semibold text-center">Total Orders</th>
                         <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
                         <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
@@ -1315,7 +1323,7 @@ export default function Page() {
                         .filter((d) => d.date.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-white">{row.date}</td>
+                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.date}</td>
                             <td className="p-3 text-center">{row.totalOrders}</td>
                             <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
                             <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
@@ -1330,10 +1338,10 @@ export default function Page() {
 
                 {/* 5. OUTLETS MASTER VIEW */}
                 {selectedReport === 'OUTLETS_MASTER' && (
-                  <table className="w-full min-w-[950px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
                         <th className="p-3 font-semibold">Outlet Name</th>
                         <th className="p-3 font-semibold">Station</th>
                         <th className="p-3 font-semibold">State</th>
@@ -1346,7 +1354,7 @@ export default function Page() {
                         .filter((o) => o.outletId.includes(searchTerm) || o.outletName?.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-indigo-300 font-mono">{row.outletId}</td>
+                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 font-medium text-white">{row.outletName || '-'}</td>
                             <td className="p-3 text-cyan-300 font-mono">{row.station || '-'}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
@@ -1364,10 +1372,10 @@ export default function Page() {
 
                 {/* 6. PENALTIES VIEW */}
                 {selectedReport === 'PENALTIES' && (
-                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
                         <th className="p-3 font-semibold">Order ID</th>
                         <th className="p-3 font-semibold">Transaction Mode</th>
                         <th className="p-3 font-semibold">Vendor Name</th>
@@ -1381,7 +1389,7 @@ export default function Page() {
                         .filter((p) => p.outletId.includes(searchTerm) || p.orderId.includes(searchTerm))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-rose-300 font-mono">{row.outletId}</td>
+                            <td className="p-3 font-bold text-rose-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 text-white font-mono">{row.orderId || '-'}</td>
                             <td className="p-3">
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-800">
@@ -1401,7 +1409,7 @@ export default function Page() {
             )}
 
             <p className="text-[11px] text-slate-500 mt-2">
-              * Laptop Touchpad par 2 ungliyon (Two fingers) se left-right swipe karke poora data dekhein.
+              * Laptop Touchpad par 2 ungliyon (Two fingers) ya horizontal scrollbar se right swipe karke poora data dekhein.
             </p>
           </div>
         )}
