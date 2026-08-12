@@ -33,7 +33,7 @@ export interface StationReportRow {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Universal Value Getter (Key name chahe thoda aage-piche ho, dhoond lega)
+// 1. Universal Value Getter (Key name case/spaces ignore karega)
 // ---------------------------------------------------------------------------
 const getVal = (row: any, searchKeys: string[]): any => {
   if (!row || typeof row !== 'object') return null;
@@ -56,7 +56,7 @@ const getVal = (row: any, searchKeys: string[]): any => {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Station Matcher / Normalizer (e.g. "NDLS - New Delhi" -> "NDLS")
+// 2. Station Matcher & Normalizer (Handles "NDLS", "NDLS - New Delhi", etc.)
 // ---------------------------------------------------------------------------
 const getCleanStationCode = (val: any): string => {
   if (!val) return '';
@@ -68,13 +68,15 @@ const getCleanStationCode = (val: any): string => {
 };
 
 // ---------------------------------------------------------------------------
-// 3. Main Generator
+// 3. Station Wise Data Generator (Accepts masterOrders + raw irctcOrders)
 // ---------------------------------------------------------------------------
 export const generateStationWiseData = (
   masterOrders: any[],
-  outletsMasterInfo: Record<string, OutletMasterInfo> = {}
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  irctcOrders: any[] = [] // <--- IRCTC RAW FILE ARRAY YAHAN PASS KAREIN
 ): StationReportRow[] => {
-  // Master Outlets Vendor Mapping
+
+  // A. Total Vendor mapping
   const totalStationVendorsMap: Record<string, Set<string>> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
     const rawSt = out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '';
@@ -86,26 +88,64 @@ export const generateStationWiseData = (
     }
   });
 
-  const stationMap: Record<string, any> = {};
+  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana
+  const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
 
-  (masterOrders || []).forEach((row: any) => {
-    // IRCTC "Delivery Station" match with Target "Station Code"
+  (irctcOrders || []).forEach((row: any) => {
     const rawStation = getVal(row, [
       'Delivery Station',
       'DeliveryStation',
+      'Delivery Station Name',
+      'Station Code',
+      'Station'
+    ]);
+    const stationCode = getCleanStationCode(rawStation);
+    if (!stationCode) return;
+
+    if (!irctcFeedbackMap[stationCode]) {
+      irctcFeedbackMap[stationCode] = { good: 0, bad: 0 };
+    }
+
+    const typeVal = String(
+      getVal(row, ['Feedback Type', 'FeedbackType', 'Type', 'FEEDBACK TYPE']) || ''
+    ).trim().toUpperCase();
+
+    const directFeedback = String(getVal(row, ['FEEDBACK', 'Good Feedback', 'Feedback']) || '').trim();
+    const directComplain = String(getVal(row, ['COMPLAIN', 'Complaint', 'Bad Feedback', 'Issue']) || '').trim();
+
+    // Check FEEDBACK (Good) vs COMPLAIN (Bad)
+    if (typeVal === 'FEEDBACK' || typeVal.includes('FEEDBACK') || typeVal === 'GOOD') {
+      irctcFeedbackMap[stationCode].good += 1;
+    } else if (typeVal === 'COMPLAIN' || typeVal.includes('COMPLAIN') || typeVal.includes('BAD') || typeVal.includes('ISSUE')) {
+      irctcFeedbackMap[stationCode].bad += 1;
+    } else {
+      if (directFeedback && directFeedback !== '0' && directFeedback.toUpperCase() !== 'NA') {
+        irctcFeedbackMap[stationCode].good += 1;
+      }
+      if (directComplain && directComplain !== '0' && directComplain.toUpperCase() !== 'NA') {
+        irctcFeedbackMap[stationCode].bad += 1;
+      }
+    }
+  });
+
+  // C. STEP 2: Master Orders Processing (Financials & Orders)
+  const stationMap: Record<string, any> = {};
+
+  (masterOrders || []).forEach((row: any) => {
+    const rawStation = getVal(row, [
       'Station Code',
       'StationCode',
-      'Delivery Station Code',
+      'Delivery Station',
+      'DeliveryStation',
       'Station Name',
-      'Station',
-      'stn_code'
+      'Station'
     ]);
 
     const stationCode = getCleanStationCode(rawStation);
-    if (!stationCode) return; // Agar station nahi hai toh skip karein
+    if (!stationCode) return;
 
     const stationName = String(
-      getVal(row, ['Station Name', 'Delivery Station', 'Station']) || rawStation || stationCode
+      getVal(row, ['Station Name', 'Delivery Station Name', 'Delivery Station', 'Station']) || rawStation || stationCode
     ).trim();
 
     if (!stationMap[stationCode]) {
@@ -130,53 +170,12 @@ export const generateStationWiseData = (
         meals: 0,
         deliveredOrdersCount: 0,
         notDeliveredOrdersCount: 0,
-        feedbackGoodCount: 0,
-        feedbackBadCount: 0,
         deliveredOutlets: new Set<string>(),
       };
     }
 
     const st = stationMap[stationCode];
 
-    // =========================================================================
-    // FEEDBACK & COMPLAIN LOGIC (Exact matching from IRCTC Columns)
-    // =========================================================================
-    const feedbackType = String(
-      getVal(row, [
-        'Feedback Type',
-        'FeedbackType',
-        'Type',
-        'FEEDBACK',
-        'COMPLAIN',
-        'Complaint Type',
-        'Feedback / Complaint'
-      ]) || ''
-    ).trim().toUpperCase();
-
-    const directFeedbackCol = String(getVal(row, ['FEEDBACK', 'Feedback', 'Good Feedback']) || '').trim();
-    const directComplainCol = String(getVal(row, ['COMPLAIN', 'Complaint', 'Bad Feedback', 'Issue']) || '').trim();
-
-    // 1. If Feedback Type column has 'FEEDBACK' -> Feedback Good + 1
-    if (feedbackType.includes('FEEDBACK') || feedbackType === 'GOOD') {
-      st.feedbackGoodCount += 1;
-    } 
-    // 2. If Feedback Type column has 'COMPLAIN' / 'COMPLAINT' -> Feedback Bad + 1
-    else if (feedbackType.includes('COMPLAIN') || feedbackType.includes('BAD') || feedbackType.includes('ISSUE')) {
-      st.feedbackBadCount += 1;
-    }
-    // 3. Agar alag-alag FEEDBACK / COMPLAIN ke columns bane hue hain
-    else {
-      if (directFeedbackCol.length > 0 && directFeedbackCol !== '0' && directFeedbackCol.toUpperCase() !== 'NA') {
-        st.feedbackGoodCount += 1;
-      }
-      if (directComplainCol.length > 0 && directComplainCol !== '0' && directComplainCol.toUpperCase() !== 'NA') {
-        st.feedbackBadCount += 1;
-      }
-    }
-
-    // =========================================================================
-    // STATUS & FINANCIALS
-    // =========================================================================
     const finalStatus = String(getVal(row, ['Final Status', 'Delivery Status', 'Status']) || '').trim().toLowerCase();
     const irctcStatus = String(getVal(row, ['IRCTC Status', 'Order Status']) || '').trim().toLowerCase();
     const rfStatus = String(getVal(row, ['RF Status']) || '').trim().toLowerCase();
@@ -198,7 +197,7 @@ export const generateStationWiseData = (
 
     if (isDelivered) {
       st.vendorPrice += Number(getVal(row, ['Final Vendor Price', 'Vendor Price']) || 0);
-      st.finalBasePrice += Number(getVal(row, ['Final Base Price', 'Total Base Price', 'Base Price']) || 0);
+      st.finalBasePrice += Number(getVal(row, ['Final Base Price', 'Base Price']) || 0);
       st.totalComm += Number(getVal(row, ['Final Total Commission', 'Total Commission']) || 0);
       st.irctcComm += Number(getVal(row, ['Final IRCTC Commission', 'IRCTC Comm']) || 0);
       st.rfComm += Number(getVal(row, ['Final RF Commission', 'RF Commission']) || 0);
@@ -221,11 +220,12 @@ export const generateStationWiseData = (
     }
   });
 
-  // Sort descending by Final Base Price
+  // D. Sort descending by Base Price
   const sortedStations = Object.values(stationMap).sort(
     (a: any, b: any) => b.finalBasePrice - a.finalBasePrice
   );
 
+  // E. Final Mapping with Feedback Data
   return sortedStations.map((st: any, idx: number): StationReportRow => {
     const vPrice = Number(st.vendorPrice.toFixed(2));
     const bPrice = Number(st.finalBasePrice.toFixed(2));
@@ -245,6 +245,9 @@ export const generateStationWiseData = (
     const totalVendors = totalStationVendorsMap[st.stationCode]
       ? totalStationVendorsMap[st.stationCode].size
       : Math.max(st.deliveredOutlets.size, 1);
+
+    // Direct fetch from IRCTC Map
+    const irctcFeedback = irctcFeedbackMap[st.stationCode] || { good: 0, bad: 0 };
 
     return {
       'Station Code': st.stationCode,
@@ -271,8 +274,8 @@ export const generateStationWiseData = (
       'Not Delivered Order': st.notDeliveredOrdersCount,
       'Not Delivered %': notDeliveredPct,
       'PPD % of Final Selling Price': ppdPct,
-      'Feedback Good': st.feedbackGoodCount,
-      'Feedback Bad': st.feedbackBadCount,
+      'Feedback Good': irctcFeedback.good,
+      'Feedback Bad': irctcFeedback.bad,
       'Count of Delivered Outlets': st.deliveredOutlets.size,
       'Total Station Vendors': totalVendors,
     };
@@ -285,9 +288,10 @@ export const generateStationWiseData = (
 export const generateStationReportWorkbook = (
   masterOrders: any[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  irctcOrders: any[] = [],
   fileNamePrefix: string = 'STATION_WISE_REPORT'
 ) => {
-  const stationData = generateStationWiseData(masterOrders, outletsMasterInfo);
+  const stationData = generateStationWiseData(masterOrders, outletsMasterInfo, irctcOrders);
   if (stationData.length === 0) {
     alert('Station report export karne ke liye koi data available nahi hai.');
     return;
