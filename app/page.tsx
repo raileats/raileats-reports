@@ -5,6 +5,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { generateMainReportWorkbook } from '@/lib/mainReportGenerator'; // ✅ Added import
 import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
@@ -92,6 +93,7 @@ const cleanOutletId = (val: any): string => {
 
 type ReportType =
   | 'MASTER'
+  | 'MAIN_REPORT'
   | 'VENDOR_RDS'
   | 'STATION_REPORT'
   | 'VENDOR_REPORT'
@@ -536,6 +538,9 @@ export default function Page() {
       case 'MASTER':
         exportMasterExcel();
         break;
+      case 'MAIN_REPORT': // ✅ Integrated generator
+        generateMainReportWorkbook(data);
+        break;
       case 'VENDOR_RDS':
         generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
         break;
@@ -594,7 +599,7 @@ export default function Page() {
     let head: string[][] = [];
     let body: any[][] = [];
 
-    if (selectedReport === 'MASTER') {
+    if (selectedReport === 'MASTER' || selectedReport === 'MAIN_REPORT') {
       head = [['Order ID', 'Outlet ID', 'Vendor', 'Station', 'State', 'Status', 'Vendor ₹', 'Base ₹', 'GST ₹', 'RF Comm ₹', 'Selling ₹', 'Margin%']];
       body = data.map((r) => [
         r['IRCTC Order ID'],
@@ -681,7 +686,7 @@ export default function Page() {
         textColor: [30, 41, 59],
       },
       headStyles: {
-        fillColor: [37, 99, 235], // Blue Header
+        fillColor: [37, 99, 235],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
       },
@@ -754,6 +759,7 @@ export default function Page() {
                   className="bg-slate-900 border border-indigo-500/50 text-indigo-300 font-semibold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="MASTER">📁 Master Data (All 19 Columns)</option>
+                  <option value="MAIN_REPORT">📊 Main Report (Custom Layout)</option>
                   <option value="VENDOR_RDS">📋 Vendor RDS Summary</option>
                   <option value="STATION_REPORT">🚉 Station Report</option>
                   <option value="VENDOR_REPORT">🏪 Vendor Report</option>
@@ -838,8 +844,8 @@ export default function Page() {
 
             {/* Dynamic Table Renderer According to Dropdown */}
             <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[72vh]">
-              {/* 1. MASTER VIEW */}
-              {selectedReport === 'MASTER' && (
+              {/* 1. MASTER VIEW & MAIN REPORT VIEW */}
+              {(selectedReport === 'MASTER' || selectedReport === 'MAIN_REPORT') && (
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                     <tr>
