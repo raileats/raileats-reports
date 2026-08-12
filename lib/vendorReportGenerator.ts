@@ -1,250 +1,232 @@
 import * as XLSX from 'xlsx';
-import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
-export interface VendorReportRow {
-  'Aggregator Outlet ID': string;
-  'Station Code': string;
-  'Rank': number;
-  'Station Name': string;
-  'Vendor Name': string;
-  'Vendor Price': number;
-  'Final Base Price': number;
-  'Final Total Commission': number;
-  'Final IRCTC Comm': number;
-  'Final RF Commission': number;
-  'Final GST': number;
-  'Final Discount': number;
-  'Final Vendor Discount': number;
-  'Final RF Discount': number;
-  'Delivery Charges': number;
-  'Final Selling Price': number;
-  'Final Order Total': number;
-  'Discounted Base Price': number;
-  'PPD': number;
-  'COD': number;
-  'Meals': number;
-  'Check': string;
-  'Count of Delivered Orders': number;
-  'Count of Not_Delivered As per IRCTC Status': number;
-  'Not_Delivered %': string;
-  'Prepaid %': string;
-}
-
-/**
- * Generates Outlet-level Vendor Summary Report matching exact screenshot format
- */
-export const generateVendorWiseData = (
-  masterOrders: MasterOrderRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo> = {}
-): VendorReportRow[] => {
-  const outletOrdersMap: Record<string, MasterOrderRow[]> = {};
-
-  // Group all master orders by Outlet ID
-  masterOrders.forEach((row) => {
-    const outletId = String(row['Outlet ID'] || '').trim().replace(/\.0$/, '');
-    if (!outletId) return;
-
-    if (!outletOrdersMap[outletId]) {
-      outletOrdersMap[outletId] = [];
-    }
-    outletOrdersMap[outletId].push(row);
-  });
-
-  // Also consider outlets present in Outlet Master even if zero orders
-  Object.keys(outletsMasterInfo).forEach((outId) => {
-    const cleanId = String(outId).trim().replace(/\.0$/, '');
-    if (cleanId && !outletOrdersMap[cleanId]) {
-      outletOrdersMap[cleanId] = [];
-    }
-  });
-
-  const rawOutletList: any[] = [];
-
-  Object.entries(outletOrdersMap).forEach(([outletId, orders]) => {
-    let vendorPriceSum = 0;
-    let basePriceSum = 0;
-    let totalCommSum = 0;
-    let irctcCommSum = 0;
-    let rfCommSum = 0;
-    let gstSum = 0;
-    let totalDiscountSum = 0;
-    let vendorDiscountSum = 0;
-    let rfDiscountSum = 0;
-    let deliveryChargesSum = 0;
-    let sellingPriceSum = 0;
-    let orderTotalSum = 0;
-    let discountedBaseSum = 0;
-    let ppdSum = 0;
-    let codSum = 0;
-    let mealsSum = 0;
-    let deliveredOrdersCount = 0;
-    let notDeliveredOrdersCount = 0;
-
-    let vendorName = '';
-    let stationCode = '';
-    let stationName = '';
-
-    // Metadata from Outlet Master if available
-    const outMaster = outletsMasterInfo[outletId];
-    if (outMaster) {
-      vendorName = outMaster.outletName || '';
-      stationCode = outMaster.station || '';
-      stationName = outMaster.station || '';
-    }
-
-    orders.forEach((ord) => {
-      if (!vendorName && ord['Vendor Name']) vendorName = ord['Vendor Name'];
-      if (!stationCode && ord['Station Code']) stationCode = ord['Station Code'];
-      if (!stationName) stationName = stationCode;
-
-      const finalStatus = String(ord['Final Status'] || '').trim().toLowerCase();
-      const irctcStatus = String(ord['IRCTC Status'] || '').trim().toLowerCase();
-      const rfStatus = String(ord['RF Status'] || '').trim().toLowerCase();
-
-      // Count Not Delivered based on status
-      if (
-        finalStatus === 'not delivered' ||
-        finalStatus === 'cancelled' ||
-        irctcStatus.includes('undelivered') ||
-        irctcStatus.includes('cancel') ||
-        rfStatus.includes('undelivered') ||
-        rfStatus.includes('cancel')
-      ) {
-        notDeliveredOrdersCount += 1;
-      }
-
-      if (finalStatus === 'delivered') {
-        vendorPriceSum += Number(ord['Final Vendor Price'] || 0);
-        basePriceSum += Number(ord['Final Base Price'] || 0);
-        totalCommSum += Number(ord['Final Total Commission'] || 0);
-        irctcCommSum += Number(ord['Final IRCTC Commission'] || 0);
-        rfCommSum += Number(ord['Final RF Commission'] || 0);
-        gstSum += Number(ord['Final GST'] || 0);
-        totalDiscountSum += Number(ord['Final Total Discount'] || 0);
-        vendorDiscountSum += Number(ord['Final Vendor Discount'] || 0);
-        rfDiscountSum += Number(ord['Final RF Discount'] || 0);
-        deliveryChargesSum += Number(ord['Delivery Charges'] || 0);
-        sellingPriceSum += Number(ord['Final Selling Price'] || 0);
-        orderTotalSum += Number(ord['Final Order Total'] || 0);
-        discountedBaseSum += Number(ord['Discounted Base Price'] || 0);
-        ppdSum += Number(ord['PPD'] || 0);
-        codSum += Number(ord['COD'] || 0);
-        mealsSum += Number(ord['Meals'] || 0);
-        deliveredOrdersCount += Number(ord['Orders Count'] || 1);
-      }
-    });
-
-    const vendorPrice = Number(vendorPriceSum.toFixed(2));
-    const finalBasePrice = Number(basePriceSum.toFixed(2));
-    const totalCommission = Number(totalCommSum.toFixed(2));
-    const irctcComm = Number(irctcCommSum.toFixed(2));
-    const rfComm = Number(rfCommSum.toFixed(2));
-    const gst = Number(gstSum.toFixed(2));
-    const totalDiscount = Number(totalDiscountSum.toFixed(2));
-    const vendorDiscount = Number(vendorDiscountSum.toFixed(2));
-    const rfDiscount = Number(rfDiscountSum.toFixed(2));
-    const deliveryCharges = Number(deliveryChargesSum.toFixed(2));
-    const sellingPrice = Number(sellingPriceSum.toFixed(2));
-    const orderTotal = Number(orderTotalSum.toFixed(2));
-    const discountedBase = Number(discountedBaseSum.toFixed(2));
-    const ppd = Number(ppdSum.toFixed(2));
-    const cod = Number(codSum.toFixed(2));
-
-    // Check %: (Total Commission / Vendor Price) %
-    const checkPct = vendorPrice > 0 ? `${((totalCommission / vendorPrice) * 100).toFixed(2)}%` : '#DIV/0!';
-
-    // Not Delivered %: (Not_Delivered / Delivered Orders) %
-    const notDeliveredPct =
-      deliveredOrdersCount > 0
-        ? `${((notDeliveredOrdersCount / deliveredOrdersCount) * 100).toFixed(2)}%`
-        : notDeliveredOrdersCount > 0
-        ? '100.00%'
-        : '#DIV/0!';
-
-    // Prepaid %: (PPD / Selling Price) %
-    const prepaidPct = sellingPrice > 0 ? `${((ppd / sellingPrice) * 100).toFixed(2)}%` : '#DIV/0!';
-
-    rawOutletList.push({
-      outletId,
-      stationCode: stationCode || '',
-      stationName: stationName || stationCode || '',
-      vendorName: vendorName || `Outlet ${outletId}`,
-      vendorPrice,
-      finalBasePrice,
-      totalCommission,
-      irctcComm,
-      rfComm,
-      gst,
-      totalDiscount,
-      vendorDiscount,
-      rfDiscount,
-      deliveryCharges,
-      sellingPrice,
-      orderTotal,
-      discountedBase,
-      ppd,
-      cod,
-      meals: mealsSum,
-      checkPct,
-      deliveredOrdersCount,
-      notDeliveredOrdersCount,
-      notDeliveredPct,
-      prepaidPct,
-    });
-  });
-
-  // Sort by Final Base Price (Highest to Lowest)
-  rawOutletList.sort((a, b) => b.finalBasePrice - a.finalBasePrice);
-
-  // Map into exact columns matching image structure
-  return rawOutletList.map((row, idx) => ({
-    'Aggregator Outlet ID': row.outletId,
-    'Station Code': row.stationCode,
-    'Rank': idx + 1,
-    'Station Name': row.stationName,
-    'Vendor Name': row.vendorName,
-    'Vendor Price': row.vendorPrice,
-    'Final Base Price': row.finalBasePrice,
-    'Final Total Commission': row.totalCommission,
-    'Final IRCTC Comm': row.irctcComm,
-    'Final RF Commission': row.rfComm,
-    'Final GST': row.gst,
-    'Final Discount': row.totalDiscount,
-    'Final Vendor Discount': row.vendorDiscount,
-    'Final RF Discount': row.rfDiscount,
-    'Delivery Charges': row.deliveryCharges,
-    'Final Selling Price': row.sellingPrice,
-    'Final Order Total': row.orderTotal,
-    'Discounted Base Price': row.discountedBase,
-    'PPD': row.ppd,
-    'COD': row.cod,
-    'Meals': row.meals,
-    'Check': row.checkPct,
-    'Count of Delivered Orders': row.deliveredOrdersCount,
-    'Count of Not_Delivered As per IRCTC Status': row.notDeliveredOrdersCount,
-    'Not_Delivered %': row.notDeliveredPct,
-    'Prepaid %': row.prepaidPct,
-  }));
-};
-
-/**
- * Direct Vendor Report Excel Workbook Generator
- */
 export const generateVendorReportWorkbook = (
-  masterOrders: MasterOrderRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
-  fileNamePrefix: string = 'VENDOR_OUTLET_WISE_REPORT'
+  masterData: any[],
+  outletsMasterInfo: Record<string, any> = {},
+  penaltySummary: Record<string, number> = {}
 ) => {
-  const vendorData = generateVendorWiseData(masterOrders, outletsMasterInfo);
-  if (vendorData.length === 0) {
-    alert('Vendor report export karne ke liye koi data available nahi hai.');
+  if (!masterData || masterData.length === 0) {
+    alert('No data available to generate Vendor Report.');
     return;
   }
 
-  const worksheet = XLSX.utils.json_to_sheet(vendorData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendor Report');
+  // 1. Grouping and aggregation logic
+  const outletMap: Record<string, any> = {};
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
+  masterData.forEach((row) => {
+    const outletId = String(row['Outlet ID'] || row['OutletId'] || '').trim();
+    if (!outletId) return;
+
+    const vendorName = String(row['Vendor Name'] || '').trim();
+    const stationCode = String(row['Station Code'] || '').trim();
+    const outletInfo = outletsMasterInfo[outletId] || {};
+
+    const state = outletInfo.state || row['State'] || '';
+    const gstNo = outletInfo.gst || row['GST No'] || '';
+    const irctcStatus = outletInfo.irctcStatus || row['Outlet IRCTC Status'] || 'Active';
+
+    if (!outletMap[outletId]) {
+      outletMap[outletId] = {
+        outletId,
+        vendorName,
+        stationCode,
+        state,
+        gstNo,
+        irctcStatus,
+        totalOrders: 0,
+        deliveredOrders: 0,
+        cancelledOrders: 0,
+        undeliveredOrders: 0,
+        totalMeals: 0,
+        totalSellingPrice: 0,
+        totalBasePrice: 0,
+        totalVendorPrice: 0,
+        totalRFCommission: 0,
+        totalIRCTCCommission: 0,
+        totalVendorDiscount: 0,
+        totalRFDiscount: 0,
+        totalDiscount: 0,
+        totalGST: 0,
+        totalDeliveryCharge: 0,
+        penaltyAmount: penaltySummary[outletId] || 0,
+      };
+    }
+
+    const isDelivered = row['Final Status'] === 'Delivered';
+    const isCancelled = row['Final Status'] === 'Cancelled';
+    const isUndelivered =
+      row['Final Status'] === 'Not Delivered' ||
+      String(row['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
+
+    const sellingPrice = parseFloat(row['Final Selling Price'] || row['Selling Price'] || 0) || 0;
+    const basePrice = parseFloat(row['Final Base Price'] || row['Base Price'] || 0) || 0;
+    const vendorPrice = parseFloat(row['Final Vendor Price'] || row['Vendor Price'] || 0) || 0;
+    const rfComm = parseFloat(row['Final RF Commission'] || row['RF Comm'] || 0) || 0;
+    const irctcComm = parseFloat(row['Final IRCTC Commission'] || row['IRCTC Comm'] || 0) || 0;
+    const vendorDisc = parseFloat(row['Final Vendor Discount'] || 0) || 0;
+    const rfDisc = parseFloat(row['Final RF Discount'] || 0) || 0;
+    const totalDisc = parseFloat(row['Final Total Discount'] || row['Total Discount'] || 0) || 0;
+    const gst = parseFloat(row['Final GST'] || row['GST'] || 0) || 0;
+    const deliveryCharge = parseFloat(row['Delivery Charges'] || row['Delivery Charge'] || 0) || 0;
+    const meals = parseInt(row['Meals'] || '1', 10) || 1;
+
+    outletMap[outletId].totalOrders += 1;
+    if (isDelivered) outletMap[outletId].deliveredOrders += 1;
+    if (isCancelled) outletMap[outletId].cancelledOrders += 1;
+    if (isUndelivered) outletMap[outletId].undeliveredOrders += 1;
+
+    outletMap[outletId].totalMeals += meals;
+    outletMap[outletId].totalSellingPrice += sellingPrice;
+    outletMap[outletId].totalBasePrice += basePrice;
+    outletMap[outletId].totalVendorPrice += vendorPrice;
+    outletMap[outletId].totalRFCommission += rfComm;
+    outletMap[outletId].totalIRCTCCommission += irctcComm;
+    outletMap[outletId].totalVendorDiscount += vendorDisc;
+    outletMap[outletId].totalRFDiscount += rfDisc;
+    outletMap[outletId].totalDiscount += totalDisc;
+    outletMap[outletId].totalGST += gst;
+    outletMap[outletId].totalDeliveryCharge += deliveryCharge;
+  });
+
+  // 2. Map Row Data (Net Payment is placed as the LAST Column)
+  const reportRows = Object.values(outletMap).map((o: any) => {
+    const netPayment = Number((o.totalVendorPrice - o.penaltyAmount).toFixed(2));
+
+    return {
+      'Outlet ID': o.outletId,
+      'Vendor Name': o.vendorName,
+      'Station Code': o.stationCode,
+      'State': o.state,
+      'GST Number': o.gstNo,
+      'IRCTC Status': o.irctcStatus,
+      'Total Orders': o.totalOrders,
+      'Delivered Orders': o.deliveredOrders,
+      'Cancelled Orders': o.cancelledOrders,
+      'Undelivered Orders': o.undeliveredOrders,
+      'Meal Count': o.totalMeals,
+      'Total Selling Price (₹)': Number(o.totalSellingPrice.toFixed(2)),
+      'Total Base Price (₹)': Number(o.totalBasePrice.toFixed(2)),
+      'Final Vendor Payout (₹)': Number(o.totalVendorPrice.toFixed(2)),
+      'Vendor Discount (₹)': Number(o.totalVendorDiscount.toFixed(2)),
+      'RF Discount (₹)': Number(o.totalRFDiscount.toFixed(2)),
+      'Total Discount (₹)': Number(o.totalDiscount.toFixed(2)),
+      'RF Commission (₹)': Number(o.totalRFCommission.toFixed(2)),
+      'IRCTC Commission (₹)': Number(o.totalIRCTCCommission.toFixed(2)),
+      'GST 5% (₹)': Number(o.totalGST.toFixed(2)),
+      'Delivery Charges (₹)': Number(o.totalDeliveryCharge.toFixed(2)),
+      'Penalty / Deductions (₹)': Number(o.penaltyAmount.toFixed(2)),
+      'Net Payment (₹)': netPayment,
+    };
+  });
+
+  // 3. Totals Aggregation
+  const totals = reportRows.reduce(
+    (acc, row) => {
+      acc.totalOrders += row['Total Orders'];
+      acc.deliveredOrders += row['Delivered Orders'];
+      acc.cancelledOrders += row['Cancelled Orders'];
+      acc.undeliveredOrders += row['Undelivered Orders'];
+      acc.totalMeals += row['Meal Count'];
+      acc.totalSellingPrice += row['Total Selling Price (₹)'];
+      acc.totalBasePrice += row['Total Base Price (₹)'];
+      acc.totalVendorPrice += row['Final Vendor Payout (₹)'];
+      acc.totalVendorDiscount += row['Vendor Discount (₹)'];
+      acc.totalRFDiscount += row['RF Discount (₹)'];
+      acc.totalDiscount += row['Total Discount (₹)'];
+      acc.totalRFCommission += row['RF Commission (₹)'];
+      acc.totalIRCTCCommission += row['IRCTC Commission (₹)'];
+      acc.totalGST += row['GST 5% (₹)'];
+      acc.totalDeliveryCharge += row['Delivery Charges (₹)'];
+      acc.totalPenalty += row['Penalty / Deductions (₹)'];
+      acc.totalNetPayment += row['Net Payment (₹)'];
+      return acc;
+    },
+    {
+      totalOrders: 0,
+      deliveredOrders: 0,
+      cancelledOrders: 0,
+      undeliveredOrders: 0,
+      totalMeals: 0,
+      totalSellingPrice: 0,
+      totalBasePrice: 0,
+      totalVendorPrice: 0,
+      totalVendorDiscount: 0,
+      totalRFDiscount: 0,
+      totalDiscount: 0,
+      totalRFCommission: 0,
+      totalIRCTCCommission: 0,
+      totalGST: 0,
+      totalDeliveryCharge: 0,
+      totalPenalty: 0,
+      totalNetPayment: 0,
+    }
+  );
+
+  const grandTotalRow = {
+    'Outlet ID': 'GRAND TOTAL',
+    'Vendor Name': '',
+    'Station Code': '',
+    'State': '',
+    'GST Number': '',
+    'IRCTC Status': '',
+    'Total Orders': totals.totalOrders,
+    'Delivered Orders': totals.deliveredOrders,
+    'Cancelled Orders': totals.cancelledOrders,
+    'Undelivered Orders': totals.undeliveredOrders,
+    'Meal Count': totals.totalMeals,
+    'Total Selling Price (₹)': Number(totals.totalSellingPrice.toFixed(2)),
+    'Total Base Price (₹)': Number(totals.totalBasePrice.toFixed(2)),
+    'Final Vendor Payout (₹)': Number(totals.totalVendorPrice.toFixed(2)),
+    'Vendor Discount (₹)': Number(totals.totalVendorDiscount.toFixed(2)),
+    'RF Discount (₹)': Number(totals.totalRFDiscount.toFixed(2)),
+    'Total Discount (₹)': Number(totals.totalDiscount.toFixed(2)),
+    'RF Commission (₹)': Number(totals.totalRFCommission.toFixed(2)),
+    'IRCTC Commission (₹)': Number(totals.totalIRCTCCommission.toFixed(2)),
+    'GST 5% (₹)': Number(totals.totalGST.toFixed(2)),
+    'Delivery Charges (₹)': Number(totals.totalDeliveryCharge.toFixed(2)),
+    'Penalty / Deductions (₹)': Number(totals.totalPenalty.toFixed(2)),
+    'Net Payment (₹)': Number(totals.totalNetPayment.toFixed(2)),
+  };
+
+  reportRows.push(grandTotalRow);
+
+  // 4. Create Sheet
+  const worksheet = XLSX.utils.json_to_sheet(reportRows);
+
+  // Auto-fit Column Widths
+  const colWidths = [
+    { wch: 14 }, // Outlet ID
+    { wch: 28 }, // Vendor Name
+    { wch: 14 }, // Station Code
+    { wch: 16 }, // State
+    { wch: 18 }, // GST Number
+    { wch: 14 }, // IRCTC Status
+    { wch: 14 }, // Total Orders
+    { wch: 16 }, // Delivered Orders
+    { wch: 16 }, // Cancelled Orders
+    { wch: 18 }, // Undelivered Orders
+    { wch: 12 }, // Meal Count
+    { wch: 22 }, // Total Selling Price
+    { wch: 20 }, // Total Base Price
+    { wch: 22 }, // Final Vendor Payout
+    { wch: 20 }, // Vendor Discount
+    { wch: 18 }, // RF Discount
+    { wch: 18 }, // Total Discount
+    { wch: 20 }, // RF Commission
+    { wch: 22 }, // IRCTC Commission
+    { wch: 14 }, // GST 5%
+    { wch: 20 }, // Delivery Charges
+    { wch: 24 }, // Penalty / Deductions
+    { wch: 20 }, // Net Payment
+  ];
+  worksheet['!cols'] = colWidths;
+
+  // 5. Build Workbook & Trigger Export
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendor Summary Report');
+
+  XLSX.writeFile(
+    workbook,
+    `RELFOOD_VENDOR_REPORT_${new Date().toISOString().slice(0, 10)}.xlsx`
+  );
 };
