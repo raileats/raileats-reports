@@ -123,17 +123,30 @@ const createEmptyStats = (): MetricStats => ({
 
 const getSourceChannel = (row: any): string => {
   const channel = String(row['Source'] || row['Channel'] || row['Booking Channel'] || '').toUpperCase();
-  const orderId = String(row['IRCTC Order ID'] || row['Order ID'] || '').toUpperCase();
-
   if (channel.includes('MMT') || channel.includes('MAKEMYTRIP')) return 'MakeMyTrip';
   if (channel.includes('APP') || channel.includes('REL_APP')) return 'REL_Food_App';
   if (channel.includes('WEB') || channel.includes('WEBSITE')) return 'RELFood_WEBSITE';
   return 'RELFood_IRCTC';
 };
 
-const formatFullDisplayDate = (dateStr: string): string => {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
+// --- Date Fix: Excel Serial Number & Regular Dates ---
+const formatFullDisplayDate = (dateVal: any): string => {
+  if (!dateVal) return 'Unknown Date';
+  
+  const num = parseFloat(String(dateVal));
+  let d: Date;
+
+  // Check if it's an Excel serial date number like 46061.0001
+  if (!isNaN(num) && num > 30000 && num < 70000) {
+    const utcDays = Math.floor(num - 25569);
+    const utcValue = utcDays * 86400;
+    d = new Date(utcValue * 1000);
+  } else {
+    d = new Date(String(dateVal));
+  }
+
+  if (isNaN(d.getTime())) return String(dateVal);
+
   return d.toLocaleDateString('en-GB', {
     weekday: 'long',
     day: 'numeric',
@@ -163,7 +176,7 @@ export default function Page() {
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [selectedReport, setSelectedReport] = useState<ReportType>('MASTER');
+  const [selectedReport, setSelectedReport] = useState<ReportType>('MAIN_REPORT');
 
   // Upload States
   const [rfFile, setRfFile] = useState<File | null>(null);
@@ -176,7 +189,6 @@ export default function Page() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('');
 
-  // 1. Load saved master records
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
@@ -428,7 +440,6 @@ export default function Page() {
         const paymentType = String(rf['Payment Type'] || irctc['Transaction Type'] || '').trim().toUpperCase();
         const isPrepaid = paymentType.includes('PRE_PAID') || paymentType.includes('PREPAID') || paymentType.includes('ONLINE');
         const ppd = isPrepaid ? finalSellingPrice : 0;
-
         const isCOD = paymentType.includes('CASH') || paymentType.includes('COD');
         const cod = isCOD ? finalSellingPrice : 0;
 
@@ -449,7 +460,6 @@ export default function Page() {
           'Booking Date': rf['Booking Date'] || irctc['Date of Booking'] || '',
           'Delivery Date': rf['Delivery Date'] || irctc['Delivery Date'] || '',
           'Payment Type': paymentType,
-
           'RF Status': rfRawStatus,
           'IRCTC Status': irctcRawStatus,
           'Final Status': finalStatus,
@@ -507,7 +517,12 @@ export default function Page() {
       dateMap[dateKey].push(row);
     });
 
-    const sortedDates = Object.keys(dateMap).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    const sortedDates = Object.keys(dateMap).sort((a, b) => {
+      const numA = parseFloat(a);
+      const numB = parseFloat(b);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return new Date(a).getTime() - new Date(b).getTime();
+    });
 
     const mtdBySource: Record<string, MetricStats> = {};
     SOURCES.forEach((s) => (mtdBySource[s] = createEmptyStats()));
@@ -522,11 +537,13 @@ export default function Page() {
       rows.forEach((r) => {
         const src = getSourceChannel(r);
         const isDelivered = r['Final Status'] === 'Delivered';
-        const isUndelivered = r['Final Status'] === 'Not Delivered' || String(r['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
-        const sellingPrice = parseFloat(r['Final Selling Price'] || r['Selling Price'] || 0) || 0;
-        const discount = parseFloat(r['Final Total Discount'] || r['Total Discount'] || 0) || 0;
-        const rfComm = parseFloat(r['Final RF Commission'] || r['RF Comm'] || 0) || 0;
-        const prepaid = parseFloat(r['PPD'] || r['Prepaid'] || 0) || 0;
+        const isUndelivered =
+          r['Final Status'] === 'Not Delivered' ||
+          String(r['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
+        const sellingPrice = parseFloat(r['Final Selling Price'] || 0) || 0;
+        const discount = parseFloat(r['Final Total Discount'] || 0) || 0;
+        const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
+        const prepaid = parseFloat(r['PPD'] || 0) || 0;
         const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
         const outletId = String(r['Outlet ID'] || '').trim();
 
@@ -594,7 +611,7 @@ export default function Page() {
     });
   }, [data]);
 
-  // --- Aggregate Views Generator ---
+  // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
     const map: Record<string, any> = {};
     data.forEach((r) => {
@@ -653,9 +670,10 @@ export default function Page() {
     const map: Record<string, any> = {};
     data.forEach((r) => {
       const dt = r['Delivery Date'] || r['Booking Date'] || 'N/A';
-      if (!map[dt]) {
-        map[dt] = {
-          date: dt,
+      const formatted = formatFullDisplayDate(dt);
+      if (!map[formatted]) {
+        map[formatted] = {
+          date: formatted,
           totalOrders: 0,
           delivered: 0,
           cancelled: 0,
@@ -664,17 +682,17 @@ export default function Page() {
           rfComm: 0,
         };
       }
-      map[dt].totalOrders += 1;
-      if (r['Final Status'] === 'Delivered') map[dt].delivered += 1;
-      if (r['Final Status'] === 'Cancelled') map[dt].cancelled += 1;
-      map[dt].sellingPrice += r['Final Selling Price'] || 0;
-      map[dt].vendorPrice += r['Final Vendor Price'] || 0;
-      map[dt].rfComm += r['Final RF Commission'] || 0;
+      map[formatted].totalOrders += 1;
+      if (r['Final Status'] === 'Delivered') map[formatted].delivered += 1;
+      if (r['Final Status'] === 'Cancelled') map[formatted].cancelled += 1;
+      map[formatted].sellingPrice += r['Final Selling Price'] || 0;
+      map[formatted].vendorPrice += r['Final Vendor Price'] || 0;
+      map[formatted].rfComm += r['Final RF Commission'] || 0;
     });
     return Object.values(map);
   }, [data]);
 
-  // --- Excel Exports ---
+  // --- Exports ---
   const exportMasterExcel = () => {
     if (!data.length) return alert('No Data available!');
     const ws = XLSX.utils.json_to_sheet(data);
@@ -698,7 +716,7 @@ export default function Page() {
         generateStationReportWorkbook(data, outletsMasterInfo);
         break;
       case 'VENDOR_REPORT':
-        generateVendorReportWorkbook(data, outletsMasterInfo);
+        generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary);
         break;
       case 'DATE_WISE':
         generateDateWiseReportWorkbook(data);
@@ -726,7 +744,6 @@ export default function Page() {
     }
   };
 
-  // --- PDF Generator ---
   const exportCurrentPDF = () => {
     if (!data.length && Object.keys(outletsMasterInfo).length === 0) {
       return alert('No Data available to generate PDF!');
@@ -829,19 +846,9 @@ export default function Page() {
       body: body,
       startY: 65,
       theme: 'grid',
-      styles: {
-        fontSize: 8,
-        cellPadding: 4,
-        textColor: [30, 41, 59],
-      },
-      headStyles: {
-        fillColor: [37, 99, 235],
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
+      styles: { fontSize: 8, cellPadding: 4, textColor: [30, 41, 59] },
+      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { top: 60, bottom: 30, left: 20, right: 20 },
     });
 
@@ -862,64 +869,64 @@ export default function Page() {
 
     return (
       <tr className={`border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
-        <td className={`p-1 border border-gray-400 text-[11px] text-center whitespace-nowrap ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+        <td className={`p-1.5 border border-gray-400 text-[11px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
           {label}
         </td>
 
         {/* ORDERS */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{ftd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{mtd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{orderAsp}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{delPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{orderAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{delPct}</td>
 
         {/* MEALS */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{ftd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-medium">{mtd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{mealAsp}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{mpo}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mealAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mpo}</td>
 
         {/* VALUE */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-semibold text-gray-900">{Math.round(ftd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-semibold text-gray-900">{Math.round(mtd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
 
         {/* PREPAID */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(ftd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(mtd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{prepaidPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{prepaidPct}</td>
 
         {/* DISCOUNT */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(ftd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{Math.round(mtd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{discountPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{discountPct}</td>
 
         {/* REVENUE */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-bold text-emerald-700">{Math.round(ftd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center font-bold text-emerald-700">{Math.round(mtd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{revenuePct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{revenuePct}</td>
 
         {/* Complaints */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{ftd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{mtd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{complaintPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{complaintPct}</td>
 
         {/* Feedback */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{ftd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{mtd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{feedbackPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{feedbackPct}</td>
 
         {/* IRCTC Undelivered */}
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-rose-600 font-bold">{ftd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-rose-600 font-bold">{mtd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center text-gray-400">0</td>
-        <td className="p-1 border border-gray-300 text-[11px] text-center">{undeliveredPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{undeliveredPct}</td>
       </tr>
     );
   };
@@ -939,19 +946,19 @@ export default function Page() {
   const outletsInfoCount = Object.keys(outletsMasterInfo).length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-3 md:p-6 font-sans">
       {/* Top Header */}
-      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-6 border-b border-slate-800">
+      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-emerald-950">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-emerald-950">
             📊
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
+              <h1 className="text-lg md:text-xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
                 RELFOOD ENTERPRISE PORTAL
               </h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
                 19 RULES ACTIVE
               </span>
               {outletsInfoCount > 0 && (
@@ -977,14 +984,14 @@ export default function Page() {
             <>
               {/* Report Switcher Dropdown */}
               <div className="relative flex items-center">
-                <span className="text-xs font-semibold text-slate-400 mr-2">View:</span>
+                <span className="text-xs font-semibold text-slate-400 mr-2 hidden sm:inline">View:</span>
                 <select
                   value={selectedReport}
                   onChange={(e) => setSelectedReport(e.target.value as ReportType)}
                   className="bg-slate-900 border border-indigo-500/50 text-indigo-300 font-semibold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="MASTER">📁 Master Data (All 19 Columns)</option>
                   <option value="MAIN_REPORT">📊 Main Report (Date Matrix Layout)</option>
+                  <option value="MASTER">📁 Master Data (All 19 Columns)</option>
                   <option value="VENDOR_RDS">📋 Vendor RDS Summary</option>
                   <option value="STATION_REPORT">🚉 Station Report</option>
                   <option value="VENDOR_REPORT">🏪 Vendor Report</option>
@@ -1031,7 +1038,7 @@ export default function Page() {
       </header>
 
       {/* Main Content Area */}
-      <main className="mt-6">
+      <main className="mt-4">
         {data.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-16 rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 text-center">
             <div className="text-5xl mb-4">📂</div>
@@ -1049,7 +1056,7 @@ export default function Page() {
         ) : (
           <div>
             {/* Filter / Search Bar */}
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold px-3 py-1 bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 rounded-lg">
                   Viewing: {selectedReport.replace(/_/g, ' ')}
@@ -1060,33 +1067,41 @@ export default function Page() {
               </div>
               <input
                 type="text"
-                placeholder="Search report records..."
+                placeholder="Search records..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="px-3.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 w-72"
               />
             </div>
 
-            {/* MAIN REPORT: EXACT MATCH DATE-WISE MATRIX VIEW */}
+            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL TWO-FINGER HORIZONTAL SCROLL */}
             {selectedReport === 'MAIN_REPORT' && (
-              <div className="space-y-6 overflow-x-auto rounded-xl border border-slate-800 bg-white p-3 shadow-2xl max-h-[72vh]">
+              <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
                 {mainReportBlocks
                   .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
                   .map((blk, bIdx) => (
-                    <div key={bIdx} className="border border-gray-400 shadow-sm overflow-hidden mb-4">
-                      <table className="w-full border-collapse text-[11px]">
+                    <div 
+                      key={bIdx} 
+                      className="w-full overflow-x-auto rounded-xl border border-gray-400 bg-white shadow-xl scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100"
+                      style={{ WebkitOverflowScrolling: 'touch' }}
+                    >
+                      <table className="w-full min-w-[1750px] border-collapse text-[11px] table-fixed">
                         <thead>
                           {/* Banner 1: Red Date Header */}
                           <tr>
-                            <th colSpan={38} className="bg-red-600 text-white font-bold py-1.5 text-center text-xs tracking-wider">
+                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2 text-center text-xs tracking-wider">
                               {blk.dateLabel}
                             </th>
-                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold">Outlets</th>
+                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[50px]">
+                              Outlets
+                            </th>
                           </tr>
 
                           {/* Banner 2: Group Categories */}
                           <tr className="text-white font-bold text-center text-[10px]">
-                            <th className="bg-black text-white p-1 border border-gray-400">Source</th>
+                            <th className="bg-black text-white p-1 border border-gray-400 sticky left-0 z-20 min-w-[130px]">
+                              Source
+                            </th>
                             <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white">ORDERS</th>
                             <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white">MEALS</th>
                             <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white">VALUE</th>
@@ -1103,7 +1118,7 @@ export default function Page() {
 
                           {/* Banner 3: Metric Sub-Headers */}
                           <tr className="text-[9px] text-center font-bold bg-gray-100 text-gray-800">
-                            <th className="border border-gray-300 p-0.5"></th>
+                            <th className="border border-gray-300 p-0.5 sticky left-0 z-20 bg-gray-100 min-w-[130px]"></th>
                             {/* Orders */}
                             <th className="border border-gray-300">FTD</th><th className="border border-gray-300">MTD</th><th className="border border-gray-300">LMTD</th><th className="border border-gray-300">ASP</th><th className="border border-gray-300">Del%</th>
                             {/* Meals */}
@@ -1142,12 +1157,15 @@ export default function Page() {
               </div>
             )}
 
-            {/* ALL OTHER REPORT TABLES */}
+            {/* ALL OTHER REPORT TABLES (WITH HORIZONTAL SCROLL ENABLED) */}
             {selectedReport !== 'MAIN_REPORT' && (
-              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[72vh]">
+              <div 
+                className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
                 {/* 1. MASTER VIEW */}
                 {selectedReport === 'MASTER' && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1300px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Order ID</th>
@@ -1208,7 +1226,7 @@ export default function Page() {
 
                 {/* 2. STATION / LAST DAY STATION VIEW */}
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Station Code</th>
@@ -1244,7 +1262,7 @@ export default function Page() {
 
                 {/* 3. VENDOR / VENDOR RDS VIEW */}
                 {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Vendor Name</th>
@@ -1280,7 +1298,7 @@ export default function Page() {
 
                 {/* 4. DATE WISE VIEW */}
                 {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Date</th>
@@ -1294,7 +1312,7 @@ export default function Page() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
                       {dateSummary
-                        .filter((d) => d.date.includes(searchTerm))
+                        .filter((d) => d.date.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-3 font-bold text-white">{row.date}</td>
@@ -1312,7 +1330,7 @@ export default function Page() {
 
                 {/* 5. OUTLETS MASTER VIEW */}
                 {selectedReport === 'OUTLETS_MASTER' && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[950px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Outlet ID</th>
@@ -1346,7 +1364,7 @@ export default function Page() {
 
                 {/* 6. PENALTIES VIEW */}
                 {selectedReport === 'PENALTIES' && (
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold">Outlet ID</th>
@@ -1383,7 +1401,7 @@ export default function Page() {
             )}
 
             <p className="text-[11px] text-slate-500 mt-2">
-              * Showing dynamic preview. Use top &quot;Excel (.xlsx)&quot; or &quot;Download PDF&quot; buttons to export the active selected report.
+              * Laptop Touchpad par 2 ungliyon (Two fingers) se left-right swipe karke poora data dekhein.
             </p>
           </div>
         )}
