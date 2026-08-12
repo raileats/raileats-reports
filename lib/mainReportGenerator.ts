@@ -1,74 +1,195 @@
 import * as XLSX from 'xlsx';
 
+// Helper date formatter: "Saturday, 1 August, 2026"
+const formatDisplayDate = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
+
+// Clean source classifier from order data
+const getOrderSource = (row: any): string => {
+  const channel = String(row['Source'] || row['Channel'] || row['Booking Channel'] || '').toUpperCase();
+  const orderId = String(row['IRCTC Order ID'] || row['Order ID'] || '').toUpperCase();
+
+  if (channel.includes('MMT') || channel.includes('MAKEMYTRIP')) return 'MakeMyTrip';
+  if (channel.includes('APP') || channel.includes('REL_APP')) return 'REL_Food_App';
+  if (channel.includes('WEB') || channel.includes('WEBSITE')) return 'RELFood_WEBSITE';
+  if (channel.includes('IRCTC') || orderId.startsWith('IR') || !channel) return 'RELFood_IRCTC';
+  return 'RELFood_IRCTC';
+};
+
+interface MetricStats {
+  orders: number;
+  deliveredOrders: number;
+  cancelledOrders: number;
+  meals: number;
+  value: number;
+  prepaidValue: number;
+  discount: number;
+  revenue: number;
+  complaints: number;
+  feedback: number;
+  undelivered: number;
+  outletsSet: Set<string>;
+}
+
+const createEmptyStats = (): MetricStats => ({
+  orders: 0,
+  deliveredOrders: 0,
+  cancelledOrders: 0,
+  meals: 0,
+  value: 0,
+  prepaidValue: 0,
+  discount: 0,
+  revenue: 0,
+  complaints: 0,
+  feedback: 0,
+  undelivered: 0,
+  outletsSet: new Set<string>(),
+});
+
 export const generateMainReportWorkbook = (masterData: any[]) => {
   if (!masterData || masterData.length === 0) {
-    alert('Master Data uplabdh nahi hai!');
+    alert('Koi data uplabdh nahi hai!');
     return;
   }
 
-  // Group by Delivery Date
-  const dateGroups: { [date: string]: any[] } = {};
-
-  masterData.forEach((row) => {
-    let rawDate = (row['Delivery Date'] || row['Booking Date'] || 'Unknown').trim();
-    if (rawDate.includes('T')) rawDate = rawDate.split('T')[0];
-    if (rawDate.includes(' ')) rawDate = rawDate.split(' ')[0];
-    if (!dateGroups[rawDate]) dateGroups[rawDate] = [];
-    dateGroups[rawDate].push(row);
-  });
-
-  const sortedDates = Object.keys(dateGroups).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-
-  const sheetData: any[][] = [];
-
-  // Track MTD metrics
-  let mtdOrders = 0;
-  let mtdMeals = 0;
-  let mtdValue = 0;
-  let mtdPrepaid = 0;
-  let mtdDiscount = 0;
-  let mtdRevenue = 0;
-  let mtdComplaints = 0;
-  let mtdFeedback = 0;
-  let mtdUndelivered = 0;
-
-  // Source-wise MTD tracking
-  const sourceMtdMap: { [source: string]: { orders: number; meals: number; value: number; prepaid: number; discount: number; revenue: number } } = {
-    'RELFood_IRCTC': { orders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-    'RELFood_WEBSITE': { orders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-    'REL_Food_App': { orders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-    'MakeMyTrip': { orders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-  };
-
+  // 1. Group records by Date and Source
+  const dateGroups: Record<string, Record<string, any[]>> = {};
   const sourcesList = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
-  sortedDates.forEach((dateStr) => {
-    const rows = dateGroups[dateStr];
+  masterData.forEach((row) => {
+    const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
+    // Normalize date format YYYY-MM-DD or standard
+    const dateKey = String(rawDate).split(' ')[0].split('T')[0];
+    const src = getOrderSource(row);
 
-    // Format Date Title (e.g. Saturday, 1 August, 2026)
-    let formattedDateTitle = dateStr;
-    try {
-      const d = new Date(dateStr);
-      if (!isNaN(d.getTime())) {
-        formattedDateTitle = d.toLocaleDateString('en-US', {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-        });
-      }
-    } catch (e) {
-      // fallback
+    if (!dateGroups[dateKey]) {
+      dateGroups[dateKey] = {
+        RELFood_IRCTC: [],
+        RELFood_WEBSITE: [],
+        REL_Food_App: [],
+        MakeMyTrip: [],
+      };
     }
+    if (!dateGroups[dateKey][src]) {
+      dateGroups[dateKey][src] = [];
+    }
+    dateGroups[dateKey][src].push(row);
+  });
 
-    // 1. Red Date Banner Header
-    sheetData.push([formattedDateTitle]);
+  // Sort dates chronologically
+  const sortedDates = Object.keys(dateGroups).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
 
-    // 2. Main Metric Group Header
-    sheetData.push([
+  // Matrix construction for Excel
+  const excelRows: any[][] = [];
+  const merges: XLSX.Range[] = [];
+
+  // MTD Trackers across consecutive dates in month
+  const mtdCumulativeBySource: Record<string, MetricStats> = {};
+  sourcesList.forEach((s) => (mtdCumulativeBySource[s] = createEmptyStats()));
+  let mtdGrandTotal = createEmptyStats();
+
+  let currentRowIdx = 0;
+
+  sortedDates.forEach((dateKey) => {
+    const displayDate = formatDisplayDate(dateKey);
+    const daySources = dateGroups[dateKey];
+
+    // Day FTD Stats
+    const dayStatsBySource: Record<string, MetricStats> = {};
+    const dayTotalStats = createEmptyStats();
+
+    sourcesList.forEach((s) => {
+      const rows = daySources[s] || [];
+      const stats = createEmptyStats();
+
+      rows.forEach((r) => {
+        const isDelivered = r['Final Status'] === 'Delivered';
+        const isUndelivered = r['Final Status'] === 'Not Delivered' || String(r['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
+        const sellingPrice = parseFloat(r['Final Selling Price'] || 0) || 0;
+        const discount = parseFloat(r['Final Total Discount'] || 0) || 0;
+        const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
+        const prepaid = parseFloat(r['PPD'] || 0) || 0;
+        const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
+        const outletId = String(r['Outlet ID'] || '').trim();
+
+        stats.orders += 1;
+        if (isDelivered) stats.deliveredOrders += 1;
+        if (r['Final Status'] === 'Cancelled') stats.cancelledOrders += 1;
+        if (isUndelivered) stats.undelivered += 1;
+
+        stats.meals += mealCount;
+        stats.value += sellingPrice;
+        stats.prepaidValue += prepaid;
+        stats.discount += discount;
+        stats.revenue += rfComm;
+
+        if (r['Rating'] && parseFloat(r['Rating']) > 0) stats.feedback += 1;
+        if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) stats.complaints += 1;
+        if (outletId) stats.outletsSet.add(outletId);
+      });
+
+      dayStatsBySource[s] = stats;
+
+      // Accumulate Day Total
+      dayTotalStats.orders += stats.orders;
+      dayTotalStats.deliveredOrders += stats.deliveredOrders;
+      dayTotalStats.cancelledOrders += stats.cancelledOrders;
+      dayTotalStats.meals += stats.meals;
+      dayTotalStats.value += stats.value;
+      dayTotalStats.prepaidValue += stats.prepaidValue;
+      dayTotalStats.discount += stats.discount;
+      dayTotalStats.revenue += stats.revenue;
+      dayTotalStats.complaints += stats.complaints;
+      dayTotalStats.feedback += stats.feedback;
+      dayTotalStats.undelivered += stats.undelivered;
+      stats.outletsSet.forEach((o) => dayTotalStats.outletsSet.add(o));
+
+      // Update MTD Accumulators
+      const mtd = mtdCumulativeBySource[s];
+      mtd.orders += stats.orders;
+      mtd.deliveredOrders += stats.deliveredOrders;
+      mtd.meals += stats.meals;
+      mtd.value += stats.value;
+      mtd.prepaidValue += stats.prepaidValue;
+      mtd.discount += stats.discount;
+      mtd.revenue += stats.revenue;
+      mtd.complaints += stats.complaints;
+      mtd.feedback += stats.feedback;
+      mtd.undelivered += stats.undelivered;
+    });
+
+    // Update MTD Grand Total
+    mtdGrandTotal.orders += dayTotalStats.orders;
+    mtdGrandTotal.deliveredOrders += dayTotalStats.deliveredOrders;
+    mtdGrandTotal.meals += dayTotalStats.meals;
+    mtdGrandTotal.value += dayTotalStats.value;
+    mtdGrandTotal.prepaidValue += dayTotalStats.prepaidValue;
+    mtdGrandTotal.discount += dayTotalStats.discount;
+    mtdGrandTotal.revenue += dayTotalStats.revenue;
+    mtdGrandTotal.complaints += dayTotalStats.complaints;
+    mtdGrandTotal.feedback += dayTotalStats.feedback;
+    mtdGrandTotal.undelivered += dayTotalStats.undelivered;
+
+    // --- ROW 1: RED FULL BANNER DATE HEADER ---
+    const dateRow = new Array(39).fill('');
+    dateRow[0] = displayDate;
+    excelRows.push(dateRow);
+    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 38 } });
+    currentRowIdx++;
+
+    // --- ROW 2: GROUP HEADERS ---
+    const groupHeaderRow = [
       'Source',
-      'ORDERS', '', '', '',
-      'MEALS', '', '', '',
+      'ORDERS', '', '', '', '',
+      'MEALS', '', '', '', '',
       'VALUE', '', '',
       'PREPAID', '', '', '',
       'DISCOUNT', '', '', '',
@@ -76,186 +197,132 @@ export const generateMainReportWorkbook = (masterData: any[]) => {
       'Complaints', '', '', '',
       'Feedback', '', '', '',
       'IRCTC Undelivered', '', '', '',
-      'Outlets'
-    ]);
+      'Outlets',
+    ];
+    excelRows.push(groupHeaderRow);
 
-    // 3. Sub-headers
-    sheetData.push([
+    // Group Header Merges
+    merges.push({ s: { r: currentRowIdx, c: 1 }, e: { r: currentRowIdx, c: 5 } }); // ORDERS
+    merges.push({ s: { r: currentRowIdx, c: 6 }, e: { r: currentRowIdx, c: 10 } }); // MEALS
+    merges.push({ s: { r: currentRowIdx, c: 11 }, e: { r: currentRowIdx, c: 13 } }); // VALUE
+    merges.push({ s: { r: currentRowIdx, c: 14 }, e: { r: currentRowIdx, c: 17 } }); // PREPAID
+    merges.push({ s: { r: currentRowIdx, c: 18 }, e: { r: currentRowIdx, c: 21 } }); // DISCOUNT
+    merges.push({ s: { r: currentRowIdx, c: 22 }, e: { r: currentRowIdx, c: 25 } }); // REVENUE
+    merges.push({ s: { r: currentRowIdx, c: 26 }, e: { r: currentRowIdx, c: 29 } }); // Complaints
+    merges.push({ s: { r: currentRowIdx, c: 30 }, e: { r: currentRowIdx, c: 33 } }); // Feedback
+    merges.push({ s: { r: currentRowIdx, c: 34 }, e: { r: currentRowIdx, c: 37 } }); // IRCTC Undelivered
+    currentRowIdx++;
+
+    // --- ROW 3: SUB-COLUMN HEADERS ---
+    const subColRow = [
       '',
+      // ORDERS (5)
       'FTD', 'MTD', 'LMTD', 'ASP', 'Del%',
+      // MEALS (5)
       'FTD', 'MTD', 'LMTD', 'ASP', 'MPO',
+      // VALUE (3)
       'FTD', 'MTD', 'LMTD',
+      // PREPAID (4)
       'FTD', 'MTD', 'LMTD', '%',
+      // DISCOUNT (4)
       'FTD', 'MTD', 'LMTD', '%',
+      // REVENUE (4)
       'FTD', 'MTD', 'LMTD', '%',
+      // Complaints (4)
       'FTD', 'MTD', 'LMTD', '%',
+      // Feedback (4)
       'FTD', 'MTD', 'LMTD', '%',
+      // IRCTC Undelivered (4)
       'FTD', 'MTD', 'LMTD', '%',
-      ''
-    ]);
+      // Outlets
+      '',
+    ];
+    excelRows.push(subColRow);
+    currentRowIdx++;
 
-    // Daily totals calculation
-    let ftdOrders = 0;
-    let ftdDeliveredOrders = 0;
-    let ftdMeals = 0;
-    let ftdValue = 0;
-    let ftdPrepaid = 0;
-    let ftdDiscount = 0;
-    let ftdRevenue = 0;
-    let ftdComplaints = 0;
-    let ftdFeedback = 0;
-    let ftdUndelivered = 0;
+    // Helper for rendering row data
+    const formatRowData = (label: string, ftd: MetricStats, mtd: MetricStats, outletsCount: number | string) => {
+      const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
+      const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
+      const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
+      const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
+      const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+      const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+      const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+      const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+      const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+      const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
-    const uniqueOutlets = new Set<string>();
-
-    // Source breakdown map for this date
-    const daySourceMap: { [key: string]: any } = {
-      'RELFood_IRCTC': { orders: 0, delOrders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-      'RELFood_WEBSITE': { orders: 0, delOrders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-      'REL_Food_App': { orders: 0, delOrders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
-      'MakeMyTrip': { orders: 0, delOrders: 0, meals: 0, value: 0, prepaid: 0, discount: 0, revenue: 0 },
+      return [
+        label,
+        // ORDERS
+        ftd.orders, mtd.orders, 0, orderAsp, delPct,
+        // MEALS
+        ftd.meals, mtd.meals, 0, mealAsp, mpo,
+        // VALUE
+        Math.round(ftd.value), Math.round(mtd.value), 0,
+        // PREPAID
+        Math.round(ftd.prepaidValue), Math.round(mtd.prepaidValue), 0, prepaidPct,
+        // DISCOUNT
+        Math.round(ftd.discount), Math.round(mtd.discount), 0, discountPct,
+        // REVENUE
+        Math.round(ftd.revenue), Math.round(mtd.revenue), 0, revenuePct,
+        // Complaints
+        ftd.complaints, mtd.complaints, 0, complaintPct,
+        // Feedback
+        ftd.feedback, mtd.feedback, 0, feedbackPct,
+        // IRCTC Undelivered
+        ftd.undelivered, mtd.undelivered, 0, undeliveredPct,
+        // Outlets
+        outletsCount,
+      ];
     };
 
-    rows.forEach((r) => {
-      const orderId = String(r['IRCTC Order ID'] || '');
-      const outletId = String(r['Outlet ID'] || '');
-      if (outletId) uniqueOutlets.add(outletId);
+    // --- ROW 4: TOTAL ROW ---
+    excelRows.push(formatRowData('Total', dayTotalStats, mtdGrandTotal, dayTotalStats.outletsSet.size));
+    currentRowIdx++;
 
-      const status = String(r['Final Status'] || '').trim().toLowerCase();
-      const val = parseFloat(r['Final Base Price'] || r['Final Selling Price'] || 0) || 0;
-      const ppd = parseFloat(r['PPD'] || 0) || 0;
-      const disc = parseFloat(r['Final Total Discount'] || 0) || 0;
-      const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
-      const meal = parseInt(r['Meals'] || 1, 10) || 1;
-
-      ftdOrders += 1;
-      if (status === 'delivered') ftdDeliveredOrders += 1;
-      if (status.includes('not') || status.includes('undelivered')) ftdUndelivered += 1;
-
-      ftdMeals += meal;
-      ftdValue += val;
-      ftdPrepaid += ppd;
-      ftdDiscount += disc;
-      ftdRevenue += rfComm;
-
-      if (r['Remarks'] && String(r['Remarks']).length > 2) ftdComplaints += 1;
-      if (r['Rating'] && String(r['Rating']).trim() !== '') ftdFeedback += 1;
-
-      // Classify Source
-      let matchedSource = 'RELFood_IRCTC';
-      const rawVendor = String(r['Vendor Name'] || '').toUpperCase();
-      if (rawVendor.includes('WEBSITE') || orderId.startsWith('WEB')) {
-        matchedSource = 'RELFood_WEBSITE';
-      } else if (rawVendor.includes('APP') || orderId.startsWith('APP')) {
-        matchedSource = 'REL_Food_App';
-      } else if (rawVendor.includes('MMT') || rawVendor.includes('MAKEMYTRIP')) {
-        matchedSource = 'MakeMyTrip';
-      }
-
-      const sm = daySourceMap[matchedSource];
-      sm.orders += 1;
-      if (status === 'delivered') sm.delOrders += 1;
-      sm.meals += meal;
-      sm.value += val;
-      sm.prepaid += ppd;
-      sm.discount += disc;
-      sm.revenue += rfComm;
-    });
-
-    // Update Overall MTD
-    mtdOrders += ftdOrders;
-    mtdMeals += ftdMeals;
-    mtdValue += ftdValue;
-    mtdPrepaid += ftdPrepaid;
-    mtdDiscount += ftdDiscount;
-    mtdRevenue += ftdRevenue;
-    mtdComplaints += ftdComplaints;
-    mtdFeedback += ftdFeedback;
-    mtdUndelivered += ftdUndelivered;
-
-    const totalASP = ftdOrders > 0 ? Number((ftdValue / ftdOrders).toFixed(0)) : 0;
-    const totalDelPct = ftdOrders > 0 ? `${((ftdDeliveredOrders / ftdOrders) * 100).toFixed(2)}%` : '0%';
-    const totalMealASP = ftdMeals > 0 ? Number((ftdValue / ftdMeals).toFixed(0)) : 0;
-    const totalMPO = ftdOrders > 0 ? Number((ftdMeals / ftdOrders).toFixed(2)) : 0;
-    const totalPrepaidPct = ftdValue > 0 ? `${((ftdPrepaid / ftdValue) * 100).toFixed(2)}%` : '0%';
-    const totalDiscPct = ftdValue > 0 ? `${((ftdDiscount / ftdValue) * 100).toFixed(2)}%` : '0%';
-    const totalRevPct = ftdValue > 0 ? `${((ftdRevenue / ftdValue) * 100).toFixed(2)}%` : '0%';
-    const totalUndelPct = ftdOrders > 0 ? `${((ftdUndelivered / ftdOrders) * 100).toFixed(2)}%` : '0%';
-
-    // 4. Total Row
-    sheetData.push([
-      'Total',
-      ftdOrders, mtdOrders, 0, totalASP, totalDelPct,
-      ftdMeals, mtdMeals, 0, totalMealASP, totalMPO,
-      Number(ftdValue.toFixed(0)), Number(mtdValue.toFixed(0)), 0,
-      Number(ftdPrepaid.toFixed(0)), Number(mtdPrepaid.toFixed(0)), 0, totalPrepaidPct,
-      Number(ftdDiscount.toFixed(0)), Number(mtdDiscount.toFixed(0)), 0, totalDiscPct,
-      Number(ftdRevenue.toFixed(0)), Number(mtdRevenue.toFixed(0)), 0, totalRevPct,
-      ftdComplaints, mtdComplaints, 0, '0.00%',
-      ftdFeedback, mtdFeedback, 0, '0.00%',
-      ftdUndelivered, mtdUndelivered, 0, totalUndelPct,
-      uniqueOutlets.size
-    ]);
-
-    // 5. Source Breakdown Rows
+    // --- ROWS 5-8: SOURCE ROWS ---
     sourcesList.forEach((src) => {
-      const sm = daySourceMap[src];
-      const mtd = sourceMtdMap[src];
-
-      mtd.orders += sm.orders;
-      mtd.meals += sm.meals;
-      mtd.value += sm.value;
-      mtd.prepaid += sm.prepaid;
-      mtd.discount += sm.discount;
-      mtd.revenue += sm.revenue;
-
-      const asp = sm.orders > 0 ? Number((sm.value / sm.orders).toFixed(0)) : 0;
-      const delPct = sm.orders > 0 ? `${((sm.delOrders / sm.orders) * 100).toFixed(0)}%` : '0%';
-      const mealAsp = sm.meals > 0 ? Number((sm.value / sm.meals).toFixed(0)) : 0;
-      const mpo = sm.orders > 0 ? Number((sm.meals / sm.orders).toFixed(2)) : 0;
-      const prepPct = sm.value > 0 ? `${((sm.prepaid / sm.value) * 100).toFixed(2)}%` : '0%';
-      const discPct = sm.value > 0 ? `${((sm.discount / sm.value) * 100).toFixed(2)}%` : '0%';
-      const revPct = sm.value > 0 ? `${((sm.revenue / sm.value) * 100).toFixed(2)}%` : '0%';
-
-      sheetData.push([
-        src,
-        sm.orders, mtd.orders, 0, asp, delPct,
-        sm.meals, mtd.meals, 0, mealAsp, mpo,
-        Number(sm.value.toFixed(0)), Number(mtd.value.toFixed(0)), 0,
-        Number(sm.prepaid.toFixed(0)), Number(mtd.prepaid.toFixed(0)), 0, prepPct,
-        Number(sm.discount.toFixed(0)), Number(mtd.discount.toFixed(0)), 0, discPct,
-        Number(sm.revenue.toFixed(0)), Number(mtd.revenue.toFixed(0)), 0, revPct,
-        0, 0, 0, '0.00%',
-        0, 0, 0, '0.00%',
-        0, 0, 0, '0.00%',
-        ''
-      ]);
+      excelRows.push(
+        formatRowData(
+          src,
+          dayStatsBySource[src] || createEmptyStats(),
+          mtdCumulativeBySource[src] || createEmptyStats(),
+          dayStatsBySource[src]?.outletsSet.size || 0
+        )
+      );
+      currentRowIdx++;
     });
 
-    // Blank row spacer
-    sheetData.push([]);
+    // Merge Outlets count across all data rows for this date block
+    merges.push({ s: { r: currentRowIdx - 5, c: 38 }, e: { r: currentRowIdx - 1, c: 38 } });
+
+    // Empty separator row between dates
+    excelRows.push(new Array(39).fill(''));
+    currentRowIdx++;
   });
 
-  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+  // Create Sheet
+  const ws = XLSX.utils.aoa_to_sheet(excelRows);
+  ws['!merges'] = merges;
 
-  // Set column widths
+  // Set Auto Column Widths
   ws['!cols'] = [
     { wch: 18 }, // Source
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, // Orders
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // Meals
-    { wch: 10 }, { wch: 10 }, { wch: 8 }, // Value
-    { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 9 }, // Prepaid
-    { wch: 9 }, { wch: 9 }, { wch: 8 }, { wch: 8 }, // Discount
-    { wch: 9 }, { wch: 9 }, { wch: 8 }, { wch: 8 }, // Revenue
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // Complaints
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // Feedback
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // IRCTC Undelivered
-    { wch: 8 }, // Outlets
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, // ORDERS
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, // MEALS
+    { wch: 10 }, { wch: 11 }, { wch: 8 }, // VALUE
+    { wch: 10 }, { wch: 11 }, { wch: 8 }, { wch: 9 }, // PREPAID
+    { wch: 9 }, { wch: 9 }, { wch: 8 }, { wch: 9 }, // DISCOUNT
+    { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 9 }, // REVENUE
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, // Complaints
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, // Feedback
+    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, // IRCTC Undelivered
+    { wch: 10 }, // Outlets
   ];
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Main Report');
-
-  const today = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `MAIN_EXECUTIVE_REPORT_${today}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, 'Main Report Date Wise');
+  XLSX.writeFile(wb, `Main_Report_Date_Wise_${new Date().toISOString().slice(0, 10)}.xlsx`);
 };
