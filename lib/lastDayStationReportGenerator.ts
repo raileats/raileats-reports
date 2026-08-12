@@ -42,7 +42,7 @@ const dateToTimestamp = (dateStr: string): number => {
 
 export const generateLastDayStationReportWorkbook = (
   masterData: any[],
-  outletsMasterInfo: Record<string, any>
+  outletsMasterInfo: Record<string, any> = {}
 ) => {
   if (!masterData || masterData.length === 0) {
     alert('Master Data khali hai! Pehle reports process karein.');
@@ -103,6 +103,7 @@ export const generateLastDayStationReportWorkbook = (
       cod: number;
       meals: number;
       deliveredOrdersCount: number;
+      notDeliveredOrdersCount: number;
       deliveredOutlets: Set<string>;
       stationAllOutlets: Set<string>;
     }
@@ -110,9 +111,9 @@ export const generateLastDayStationReportWorkbook = (
 
   // First, map all known outlets from outletsMasterInfo to stations if available, to calculate Total Station Vendors accurately
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
-  Object.values(outletsMasterInfo).forEach((out: any) => {
-    const stCode = String(out.station || '').trim().toUpperCase();
-    const outId = String(out.outletId || '').trim();
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const stCode = String(out?.station || '').trim().toUpperCase();
+    const outId = String(out?.outletId || '').trim();
     if (stCode && outId) {
       if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set();
       stationTotalOutletsMap[stCode].add(outId);
@@ -123,7 +124,20 @@ export const generateLastDayStationReportWorkbook = (
     const stationCode = String(r['Station Code'] || 'UNKNOWN').trim().toUpperCase();
     const stationName = String(r['Station Name'] || r['Station'] || stationCode).trim().toUpperCase();
     const outletId = String(r['Outlet ID'] || '').trim();
-    const isDelivered = String(r['Final Status'] || '').trim().toLowerCase() === 'delivered';
+    
+    const finalStatus = String(r['Final Status'] || '').trim().toLowerCase();
+    const irctcStatus = String(r['IRCTC Status'] || '').trim().toLowerCase();
+    const rfStatus = String(r['RF Status'] || '').trim().toLowerCase();
+
+    const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
+    const isNotDelivered =
+      finalStatus === 'not delivered' ||
+      finalStatus === 'cancelled' ||
+      finalStatus === 'undelivered' ||
+      irctcStatus.includes('undelivered') ||
+      irctcStatus.includes('cancel') ||
+      rfStatus.includes('undelivered') ||
+      rfStatus.includes('cancel');
 
     if (!stationMap[stationCode]) {
       stationMap[stationCode] = {
@@ -146,6 +160,7 @@ export const generateLastDayStationReportWorkbook = (
         cod: 0,
         meals: 0,
         deliveredOrdersCount: 0,
+        notDeliveredOrdersCount: 0,
         deliveredOutlets: new Set<string>(),
         stationAllOutlets: stationTotalOutletsMap[stationCode] || new Set<string>(),
       };
@@ -156,24 +171,27 @@ export const generateLastDayStationReportWorkbook = (
       st.stationName = stationName;
     }
 
-    st.vendorPrice += parseFloat(r['Final Vendor Price'] || 0) || 0;
-    st.finalBasePrice += parseFloat(r['Final Base Price'] || 0) || 0;
-    st.finalTotalComm += parseFloat(r['Final Total Commission'] || 0) || 0;
-    st.finalIrctcComm += parseFloat(r['Final IRCTC Commission'] || 0) || 0;
-    st.finalRfComm += parseFloat(r['Final RF Commission'] || 0) || 0;
-    st.finalGst += parseFloat(r['Final GST'] || 0) || 0;
-    st.finalDiscount += parseFloat(r['Final Total Discount'] || r['Discount'] || 0) || 0;
-    st.finalVendorDiscount += parseFloat(r['Final Vendor Discount'] || 0) || 0;
-    st.finalRfDiscount += parseFloat(r['Final RF Discount'] || 0) || 0;
-    st.deliveryCharges += parseFloat(r['Delivery Charges'] || 0) || 0;
-    st.finalSellingPrice += parseFloat(r['Final Selling Price'] || 0) || 0;
-    st.finalOrderTotal += parseFloat(r['Final Order Total'] || 0) || 0;
-    st.discountedBasePrice += parseFloat(r['Discounted Base Price'] || 0) || 0;
-    st.ppd += parseFloat(r['PPD'] || 0) || 0;
-    st.cod += parseFloat(r['COD'] || 0) || 0;
-    st.meals += parseInt(r['Meals'] || '1', 10) || 1;
+    if (isNotDelivered) {
+      st.notDeliveredOrdersCount += 1;
+    }
 
     if (isDelivered) {
+      st.vendorPrice += parseFloat(r['Final Vendor Price'] || r['Vendor Price'] || 0) || 0;
+      st.finalBasePrice += parseFloat(r['Final Base Price'] || r['Base Price'] || 0) || 0;
+      st.finalTotalComm += parseFloat(r['Final Total Commission'] || r['Total Commission'] || 0) || 0;
+      st.finalIrctcComm += parseFloat(r['Final IRCTC Commission'] || r['IRCTC Comm'] || 0) || 0;
+      st.finalRfComm += parseFloat(r['Final RF Commission'] || r['RF Commission'] || 0) || 0;
+      st.finalGst += parseFloat(r['Final GST'] || r['GST'] || 0) || 0;
+      st.finalDiscount += parseFloat(r['Final Total Discount'] || r['Discount'] || 0) || 0;
+      st.finalVendorDiscount += parseFloat(r['Final Vendor Discount'] || r['Vendor Discount'] || 0) || 0;
+      st.finalRfDiscount += parseFloat(r['Final RF Discount'] || r['RF Discount'] || 0) || 0;
+      st.deliveryCharges += parseFloat(r['Delivery Charges'] || 0) || 0;
+      st.finalSellingPrice += parseFloat(r['Final Selling Price'] || r['Selling Price'] || 0) || 0;
+      st.finalOrderTotal += parseFloat(r['Final Order Total'] || r['Order Total'] || 0) || 0;
+      st.discountedBasePrice += parseFloat(r['Discounted Base Price'] || 0) || 0;
+      st.ppd += parseFloat(r['PPD'] || 0) || 0;
+      st.cod += parseFloat(r['COD'] || 0) || 0;
+      st.meals += parseInt(r['Meals'] || '1', 10) || 1;
       st.deliveredOrdersCount += 1;
       if (outletId) {
         st.deliveredOutlets.add(outletId);
@@ -182,7 +200,7 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
-  // Convert to array and sort by Final Base Price descending (or Total Commission descending)
+  // Convert to array and sort by Final Base Price descending
   const sortedStations = Object.values(stationMap).sort(
     (a, b) => b.finalBasePrice - a.finalBasePrice
   );
@@ -205,6 +223,7 @@ export const generateLastDayStationReportWorkbook = (
   let sumCod = 0;
   let sumMeals = 0;
   let sumDeliveredOrders = 0;
+  let sumNotDeliveredOrders = 0;
   let sumDeliveredOutlets = 0;
   let sumStationVendors = 0;
 
@@ -226,16 +245,29 @@ export const generateLastDayStationReportWorkbook = (
     sumCod += st.cod;
     sumMeals += st.meals;
     sumDeliveredOrders += st.deliveredOrdersCount;
+    sumNotDeliveredOrders += st.notDeliveredOrdersCount;
     sumDeliveredOutlets += st.deliveredOutlets.size;
     sumStationVendors += st.stationAllOutlets.size;
   });
 
   const overallCheckPct =
     sumFinalBasePrice > 0
-      ? Number(((sumFinalTotalComm / sumFinalBasePrice) * 100).toFixed(6))
-      : 0;
+      ? `${((sumFinalTotalComm / sumFinalBasePrice) * 100).toFixed(2)}%`
+      : '0.00%';
 
-  // Row 1: Top Summary Row (Red numbers as in screenshot)
+  const overallNotDeliveredPct =
+    sumDeliveredOrders > 0
+      ? `${((sumNotDeliveredOrders / sumDeliveredOrders) * 100).toFixed(2)}%`
+      : sumNotDeliveredOrders > 0
+      ? '100.00%'
+      : '0.00%';
+
+  const overallPpdPct =
+    sumFinalSellingPrice > 0
+      ? `${((sumPpd / sumFinalSellingPrice) * 100).toFixed(2)}%`
+      : '0.00%';
+
+  // Row 1: Top Summary Row
   const topSummaryRow = [
     '', // Station Code placeholder
     '', // Rank
@@ -257,16 +289,14 @@ export const generateLastDayStationReportWorkbook = (
     Number(sumPpd.toFixed(2)),
     Number(sumCod.toFixed(2)),
     sumMeals,
-    sumCheckPctFormatted(overallCheckPct),
+    overallCheckPct,
     sumDeliveredOrders,
+    sumNotDeliveredOrders,
+    overallNotDeliveredPct,
+    overallPpdPct,
     sumDeliveredOutlets,
     sumStationVendors,
   ];
-
-  // Helper for check percentage
-  function sumCheckPctFormatted(val: number) {
-    return val;
-  }
 
   // Row 2: Headers
   const headers = [
@@ -292,6 +322,9 @@ export const generateLastDayStationReportWorkbook = (
     'Meals',
     'Check',
     'Count of Delivered Orders',
+    'Not Delivered Order',
+    'Not Delivered %',
+    'PPD % of Final Selling Price',
     'Count of Delivered Outlets',
     'Total Station Vendors',
   ];
@@ -301,7 +334,17 @@ export const generateLastDayStationReportWorkbook = (
     const vPrice = Number(st.vendorPrice.toFixed(2));
     const bPrice = Number(st.finalBasePrice.toFixed(2));
     const tComm = Number(st.finalTotalComm.toFixed(2));
-    const checkPct = bPrice > 0 ? Number((tComm / bPrice).toFixed(6)) : 0;
+    const sPrice = Number(st.finalSellingPrice.toFixed(2));
+    const ppdVal = Number(st.ppd.toFixed(2));
+
+    const checkPct = bPrice > 0 ? `${((tComm / bPrice) * 100).toFixed(2)}%` : '#DIV/0!';
+    const notDeliveredPct =
+      st.deliveredOrdersCount > 0
+        ? `${((st.notDeliveredOrdersCount / st.deliveredOrdersCount) * 100).toFixed(2)}%`
+        : st.notDeliveredOrdersCount > 0
+        ? '100.00%'
+        : '#DIV/0!';
+    const ppdPct = sPrice > 0 ? `${((ppdVal / sPrice) * 100).toFixed(2)}%` : '#DIV/0!';
 
     return [
       st.stationCode,
@@ -318,14 +361,17 @@ export const generateLastDayStationReportWorkbook = (
       Number(st.finalVendorDiscount.toFixed(2)),
       Number(st.finalRfDiscount.toFixed(2)),
       Number(st.deliveryCharges.toFixed(2)),
-      Number(st.finalSellingPrice.toFixed(2)),
+      sPrice,
       Number(st.finalOrderTotal.toFixed(2)),
       Number(st.discountedBasePrice.toFixed(2)),
-      Number(st.ppd.toFixed(2)),
+      ppdVal,
       Number(st.cod.toFixed(2)),
       st.meals,
       checkPct,
       st.deliveredOrdersCount,
+      st.notDeliveredOrdersCount,
+      notDeliveredPct,
+      ppdPct,
       st.deliveredOutlets.size,
       st.stationAllOutlets.size,
     ];
@@ -358,6 +404,9 @@ export const generateLastDayStationReportWorkbook = (
     { wch: 10 }, // Meals
     { wch: 12 }, // Check
     { wch: 24 }, // Count of Delivered Orders
+    { wch: 20 }, // Not Delivered Order
+    { wch: 16 }, // Not Delivered %
+    { wch: 26 }, // PPD % of Final Selling Price
     { wch: 26 }, // Count of Delivered Outlets
     { wch: 22 }, // Total Station Vendors
   ];
