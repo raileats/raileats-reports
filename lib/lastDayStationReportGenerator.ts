@@ -1,26 +1,60 @@
 import * as XLSX from 'xlsx';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 1. AUTO-CLEANERS & NORMALIZERS
 // ---------------------------------------------------------------------------
 
-const cleanId = (val: any): string => {
+/**
+ * Har tarah ki gandi Order ID ko standard pure number/clean string me badalta hai.
+ * Handles: 12345.0, " 12345 ", "ORD-12345", 12345n, "IRCTC_12345"
+ */
+const autoCleanOrderId = (val: any): string => {
   if (val === null || val === undefined) return '';
-  return String(val).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  let str = String(val).trim();
+  
+  // Agar scientific notation ya .0 float string ho (e.g. "12345.0")
+  if (str.endsWith('.0')) {
+    str = str.slice(0, -2);
+  }
+  
+  // Strip out everything except alphanumeric
+  const clean = str.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+  // Agar IRCTC / ORD prefix ho toh core digits/letters extract karna
+  const digitsOnly = clean.replace(/\D/g, '');
+  if (digitsOnly.length >= 4) {
+    return digitsOnly; // Core numeric ID return karega
+  }
+
+  return clean;
 };
 
+/**
+ * Outlet IDs clean helper
+ */
+const autoCleanOutletId = (val: any): string => {
+  if (val === null || val === undefined) return '';
+  return String(val).trim().toLowerCase().replace(/[^a-zA-Z0-9]/g, '');
+};
+
+/**
+ * Safely parse any dirty number (e.g., "1,200.50", " ₹500 ", null)
+ */
 const parseSafeNumber = (val: any, fallback = 0): number => {
   if (val === null || val === undefined || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
-  const sanitized = String(val).replace(/,/g, '').trim();
+  const sanitized = String(val).replace(/[^0-9.-]/g, '').trim();
   const num = parseFloat(sanitized);
   return isNaN(num) ? fallback : num;
 };
 
-// Universal date normalizer (Excel Serial, YYYY-MM-DD, DD/MM/YYYY)
+/**
+ * Universal date normalizer (Excel Serial, YYYY-MM-DD, DD/MM/YYYY, ISO string)
+ */
 const normalizeToDeliveryDate = (dateVal: any): string => {
   if (!dateVal) return '';
 
+  // Excel Serial date handler
   if (typeof dateVal === 'number' || (!isNaN(Number(dateVal)) && !String(dateVal).includes('-') && !String(dateVal).includes('/'))) {
     const serial = Number(dateVal);
     if (serial > 30000 && serial < 60000) {
@@ -32,6 +66,7 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
 
   const str = String(dateVal).trim();
 
+  // YYYY-MM-DD
   if (str.includes('-')) {
     const parts = str.split(' ')[0].split('T')[0].split('-');
     if (parts.length === 3) {
@@ -43,6 +78,7 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
     }
   }
 
+  // DD/MM/YYYY
   if (str.includes('/')) {
     const parts = str.split(' ')[0].split('/');
     if (parts.length === 3) {
@@ -66,8 +102,23 @@ const dateToTimestamp = (dateStr: string): number => {
   return 0;
 };
 
+/**
+ * Smart Value Finder: Row me se keywords ke base par value dhoondta hai
+ */
+const findValueByKeywords = (row: any, keywords: string[]): any => {
+  if (!row || typeof row !== 'object') return null;
+  const keys = Object.keys(row);
+  for (const kw of keywords) {
+    const matchedKey = keys.find((k) => k.trim().toLowerCase().replace(/[^a-z0-9]/g, '') === kw.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null && String(row[matchedKey]).trim() !== '') {
+      return row[matchedKey];
+    }
+  }
+  return null;
+};
+
 // ---------------------------------------------------------------------------
-// Main Generator
+// 2. MAIN REPORT GENERATOR
 // ---------------------------------------------------------------------------
 
 export const generateLastDayStationReportWorkbook = (
@@ -80,20 +131,12 @@ export const generateLastDayStationReportWorkbook = (
     return;
   }
 
-  console.log(`[Station Report] Total Master Rows: ${masterData.length}, Feedback Rows: ${feedbackData?.length || 0}`);
-
-  // 1. Find Maximum/Last Delivery Date
+  // 1. Find Maximum / Last Delivery Date
   let maxTimestamp = -1;
   let lastDeliveryDateStr = '';
 
   masterData.forEach((row) => {
-    const rawDate =
-      row['Delivery Date'] ||
-      row['delivery_date'] ||
-      row['Booking Date'] ||
-      row['booking_date'] ||
-      row['Order Date'] ||
-      '';
+    const rawDate = findValueByKeywords(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'BookingDate', 'Order Date', 'Date']);
     const dStr = normalizeToDeliveryDate(rawDate);
     if (dStr) {
       const ts = dateToTimestamp(dStr);
@@ -109,19 +152,10 @@ export const generateLastDayStationReportWorkbook = (
     return;
   }
 
-  console.log(`[Station Report] Selected Last Delivery Date: ${lastDeliveryDateStr}`);
-
-  // 2. Filter Master rows belonging ONLY to the last delivery date
+  // 2. Filter Master rows for Last Day
   const lastDayRows = masterData.filter((row) => {
-    const rawDate =
-      row['Delivery Date'] ||
-      row['delivery_date'] ||
-      row['Booking Date'] ||
-      row['booking_date'] ||
-      row['Order Date'] ||
-      '';
-    const dStr = normalizeToDeliveryDate(rawDate);
-    return dStr === lastDeliveryDateStr;
+    const rawDate = findValueByKeywords(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'BookingDate', 'Order Date', 'Date']);
+    return normalizeToDeliveryDate(rawDate) === lastDeliveryDateStr;
   });
 
   if (lastDayRows.length === 0) {
@@ -129,9 +163,7 @@ export const generateLastDayStationReportWorkbook = (
     return;
   }
 
-  // 3. Mapping Maps:
-  // - Clean Order ID -> Station Code
-  // - Clean Outlet ID -> Station Code
+  // 3. Build Mapping Lookup Tables
   const orderToStationMap: Record<string, string> = {};
   const outletToStationMap: Record<string, string> = {};
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
@@ -141,138 +173,97 @@ export const generateLastDayStationReportWorkbook = (
     const stCode = String(out?.station || out?.stationCode || out?.stn_code || '').trim().toUpperCase();
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
     if (stCode && outId) {
-      outletToStationMap[cleanId(outId)] = stCode;
-      if (!stationTotalOutletsMap[stCode]) {
-        stationTotalOutletsMap[stCode] = new Set<string>();
-      }
+      outletToStationMap[autoCleanOutletId(outId)] = stCode;
+      if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set<string>();
       stationTotalOutletsMap[stCode].add(outId);
     }
   });
 
-  // Master Data Map (All rows mapping)
+  // Master Data records se Order ID -> Station Code Mapping
   masterData.forEach((r) => {
-    const rawOrderId =
-      r['Order ID'] ||
-      r['Order Id'] ||
-      r['order_id'] ||
-      r['IRCTC Order ID'] ||
-      r['Booking ID'] ||
-      r['Order No'] ||
-      r['order_no'] ||
-      '';
-    const stCode = String(
-      r['Station Code'] ||
-      r['station_code'] ||
-      r['Station'] ||
-      r['station'] ||
-      ''
-    ).trim().toUpperCase();
-    const rawOutletId = String(r['Outlet ID'] || r['outlet_id'] || r['Restaurant ID'] || '').trim();
+    const rawOrderId = findValueByKeywords(r, ['Order ID', 'OrderId', 'IRCTC Order ID', 'Booking ID', 'Order No', 'OrderNumber']);
+    const stCode = String(findValueByKeywords(r, ['Station Code', 'StationCode', 'Station', 'stn_code']) || '').trim().toUpperCase();
+    const rawOutletId = findValueByKeywords(r, ['Outlet ID', 'OutletId', 'Restaurant ID', 'restaurant_id']);
 
-    if (rawOrderId && stCode) {
-      orderToStationMap[cleanId(rawOrderId)] = stCode;
+    const cleanOrd = autoCleanOrderId(rawOrderId);
+    const cleanOut = autoCleanOutletId(rawOutletId);
+
+    if (cleanOrd && stCode) {
+      orderToStationMap[cleanOrd] = stCode;
     }
-    if (rawOutletId && stCode && !outletToStationMap[cleanId(rawOutletId)]) {
-      outletToStationMap[cleanId(rawOutletId)] = stCode;
+    if (cleanOut && stCode && !outletToStationMap[cleanOut]) {
+      outletToStationMap[cleanOut] = stCode;
     }
   });
 
-  // 4. Process Feedback / Complaint Table
+  // 4. Feedback & Complaint Auto-Match Engine
   const feedbackStationMap: Record<string, { goodCount: number; badCount: number }> = {};
-  let matchedFeedbacks = 0;
 
   if (Array.isArray(feedbackData) && feedbackData.length > 0) {
     feedbackData.forEach((fb) => {
-      // Pick Order ID with all variations
-      const rawFbOrderId =
-        fb['Order ID'] ||
-        fb['Order Id'] ||
-        fb['order_id'] ||
-        fb['Booking ID'] ||
-        fb['booking_id'] ||
-        fb['IRCTC Order ID'] ||
-        fb['Order No'] ||
-        fb['order_no'] ||
-        fb['Order Number'] ||
-        '';
+      const rawOrderId = findValueByKeywords(fb, ['Order ID', 'OrderId', 'IRCTC Order ID', 'Booking ID', 'Order No', 'OrderNumber', 'IRCTC_ID']);
+      const rawOutletId = findValueByKeywords(fb, ['Outlet ID', 'OutletId', 'Restaurant ID', 'outlet_id']);
+      const rawStation = findValueByKeywords(fb, ['Station Code', 'StationCode', 'Station', 'STATION CODE', 'stn_code']);
 
-      const rawFbOutletId =
-        fb['Outlet ID'] ||
-        fb['outlet_id'] ||
-        fb['Restaurant ID'] ||
-        fb['restaurant_id'] ||
-        '';
+      const cleanOrd = autoCleanOrderId(rawOrderId);
+      const cleanOut = autoCleanOutletId(rawOutletId);
 
-      // Pick Station Code:
-      // Priority 1: Match Order ID to Master
-      // Priority 2: Match Direct Station Code in row
-      // Priority 3: Match Outlet ID to Master
+      // Robust Station Code Resolution
       let stCode = '';
-      const cOrderId = cleanId(rawFbOrderId);
-      const cOutletId = cleanId(rawFbOutletId);
-
-      if (cOrderId && orderToStationMap[cOrderId]) {
-        stCode = orderToStationMap[cOrderId];
-      } else if (fb['Station Code'] || fb['station_code'] || fb['Station'] || fb['STATION CODE'] || fb['stn_code']) {
-        stCode = String(fb['Station Code'] || fb['station_code'] || fb['Station'] || fb['STATION CODE'] || fb['stn_code']).trim().toUpperCase();
-      } else if (cOutletId && outletToStationMap[cOutletId]) {
-        stCode = outletToStationMap[cOutletId];
+      if (cleanOrd && orderToStationMap[cleanOrd]) {
+        stCode = orderToStationMap[cleanOrd];
+      } else if (cleanOrd) {
+        // Fallback: Agar exact match na mile to check partial sub-string
+        const matchedKey = Object.keys(orderToStationMap).find(k => k.includes(cleanOrd) || cleanOrd.includes(k));
+        if (matchedKey) stCode = orderToStationMap[matchedKey];
       }
 
-      if (!stCode) return; // Unmapped row skip
+      if (!stCode && cleanOut && outletToStationMap[cleanOut]) {
+        stCode = outletToStationMap[cleanOut];
+      }
+
+      if (!stCode && rawStation) {
+        stCode = String(rawStation).trim().toUpperCase();
+      }
+
+      if (!stCode) return; // Agar mapping kisi bhi tarike se na mile
 
       if (!feedbackStationMap[stCode]) {
         feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
       }
 
-      // Read Type / Feedback Text / Complaint columns
+      // Check Type / Status / Feedback Description
       const typeVal = String(
-        fb['Type'] ||
-        fb['type'] ||
-        fb['TYPE'] ||
-        fb['Feedback Type'] ||
-        fb['feedback_type'] ||
-        fb['Nature'] ||
-        fb['Category'] ||
-        fb['Feedback'] ||
-        fb['feedback'] ||
-        fb['Remark'] ||
-        fb['Status'] ||
-        ''
+        findValueByKeywords(fb, ['Type', 'type', 'Feedback Type', 'feedback_type', 'Nature', 'Category', 'Feedback', 'Status', 'Remark', 'Complaint Type']) || ''
       ).trim().toLowerCase();
 
-      const rating = parseSafeNumber(fb['Rating'] || fb['rating'] || fb['Stars'] || fb['star_rating'], 0);
+      const rating = parseSafeNumber(findValueByKeywords(fb, ['Rating', 'rating', 'Stars', 'star_rating']), 0);
 
       const isComplaint =
         typeVal.includes('complaint') ||
         typeVal.includes('comp') ||
         typeVal.includes('bad') ||
-        typeVal.includes('negative') ||
         typeVal.includes('poor') ||
+        typeVal.includes('negative') ||
         typeVal.includes('issue') ||
         (rating > 0 && rating <= 3);
 
-      const isGood =
+      const isFeedback =
         typeVal.includes('feedback') ||
-        typeVal.includes('feed') ||
         typeVal.includes('good') ||
-        typeVal.includes('positive') ||
-        typeVal.includes('satisf') ||
+        typeVal.includes('pos') ||
+        typeVal.includes('sat') ||
         rating >= 4;
 
       if (isComplaint) {
         feedbackStationMap[stCode].badCount += 1;
-        matchedFeedbacks++;
-      } else if (isGood) {
+      } else if (isFeedback) {
         feedbackStationMap[stCode].goodCount += 1;
-        matchedFeedbacks++;
       }
     });
   }
 
-  console.log(`[Station Report] Total Matched Feedbacks/Complaints: ${matchedFeedbacks}`, feedbackStationMap);
-
-  // 5. Group Last Day Rows by Station Code
+  // 5. Aggregate Station Level Data
   const stationMap: Record<
     string,
     {
@@ -304,13 +295,13 @@ export const generateLastDayStationReportWorkbook = (
   > = {};
 
   lastDayRows.forEach((r) => {
-    const stationCode = String(r['Station Code'] || r['station_code'] || 'UNKNOWN').trim().toUpperCase();
-    const stationName = String(r['Station Name'] || r['station_name'] || r['Station'] || stationCode).trim().toUpperCase();
-    const outletId = String(r['Outlet ID'] || r['outlet_id'] || '').trim();
+    const stationCode = String(findValueByKeywords(r, ['Station Code', 'StationCode', 'Station', 'stn_code']) || 'UNKNOWN').trim().toUpperCase();
+    const stationName = String(findValueByKeywords(r, ['Station Name', 'StationName', 'Station']) || stationCode).trim().toUpperCase();
+    const outletId = String(findValueByKeywords(r, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
 
-    const finalStatus = String(r['Final Status'] || r['final_status'] || r['status'] || '').trim().toLowerCase();
-    const irctcStatus = String(r['IRCTC Status'] || r['irctc_status'] || '').trim().toLowerCase();
-    const rfStatus = String(r['RF Status'] || r['rf_status'] || '').trim().toLowerCase();
+    const finalStatus = String(findValueByKeywords(r, ['Final Status', 'final_status', 'Status', 'status']) || '').trim().toLowerCase();
+    const irctcStatus = String(findValueByKeywords(r, ['IRCTC Status', 'irctc_status']) || '').trim().toLowerCase();
+    const rfStatus = String(findValueByKeywords(r, ['RF Status', 'rf_status']) || '').trim().toLowerCase();
 
     const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
     const isNotDelivered =
@@ -364,22 +355,22 @@ export const generateLastDayStationReportWorkbook = (
     }
 
     if (isDelivered) {
-      st.vendorPrice += parseSafeNumber(r['Final Vendor Price'] || r['Vendor Price']);
-      st.finalBasePrice += parseSafeNumber(r['Final Base Price'] || r['Base Price']);
-      st.finalTotalComm += parseSafeNumber(r['Final Total Commission'] || r['Total Commission']);
-      st.finalIrctcComm += parseSafeNumber(r['Final IRCTC Commission'] || r['IRCTC Comm']);
-      st.finalRfComm += parseSafeNumber(r['Final RF Commission'] || r['RF Commission']);
-      st.finalGst += parseSafeNumber(r['Final GST'] || r['GST']);
-      st.finalDiscount += parseSafeNumber(r['Final Total Discount'] || r['Discount']);
-      st.finalVendorDiscount += parseSafeNumber(r['Final Vendor Discount'] || r['Vendor Discount']);
-      st.finalRfDiscount += parseSafeNumber(r['Final RF Discount'] || r['RF Discount']);
-      st.deliveryCharges += parseSafeNumber(r['Delivery Charges']);
-      st.finalSellingPrice += parseSafeNumber(r['Final Selling Price'] || r['Selling Price']);
-      st.finalOrderTotal += parseSafeNumber(r['Final Order Total'] || r['Order Total']);
-      st.discountedBasePrice += parseSafeNumber(r['Discounted Base Price']);
-      st.ppd += parseSafeNumber(r['PPD']);
-      st.cod += parseSafeNumber(r['COD']);
-      st.meals += parseInt(String(r['Meals'] || '1'), 10) || 1;
+      st.vendorPrice += parseSafeNumber(findValueByKeywords(r, ['Final Vendor Price', 'Vendor Price', 'vendor_price']));
+      st.finalBasePrice += parseSafeNumber(findValueByKeywords(r, ['Final Base Price', 'Base Price', 'base_price']));
+      st.finalTotalComm += parseSafeNumber(findValueByKeywords(r, ['Final Total Commission', 'Total Commission', 'commission']));
+      st.finalIrctcComm += parseSafeNumber(findValueByKeywords(r, ['Final IRCTC Commission', 'IRCTC Comm', 'irctc_comm']));
+      st.finalRfComm += parseSafeNumber(findValueByKeywords(r, ['Final RF Commission', 'RF Commission', 'rf_comm']));
+      st.finalGst += parseSafeNumber(findValueByKeywords(r, ['Final GST', 'GST', 'gst']));
+      st.finalDiscount += parseSafeNumber(findValueByKeywords(r, ['Final Total Discount', 'Discount', 'total_discount']));
+      st.finalVendorDiscount += parseSafeNumber(findValueByKeywords(r, ['Final Vendor Discount', 'Vendor Discount']));
+      st.finalRfDiscount += parseSafeNumber(findValueByKeywords(r, ['Final RF Discount', 'RF Discount']));
+      st.deliveryCharges += parseSafeNumber(findValueByKeywords(r, ['Delivery Charges', 'delivery_charges']));
+      st.finalSellingPrice += parseSafeNumber(findValueByKeywords(r, ['Final Selling Price', 'Selling Price', 'selling_price']));
+      st.finalOrderTotal += parseSafeNumber(findValueByKeywords(r, ['Final Order Total', 'Order Total', 'order_total']));
+      st.discountedBasePrice += parseSafeNumber(findValueByKeywords(r, ['Discounted Base Price', 'discounted_base_price']));
+      st.ppd += parseSafeNumber(findValueByKeywords(r, ['PPD', 'ppd']));
+      st.cod += parseSafeNumber(findValueByKeywords(r, ['COD', 'cod']));
+      st.meals += parseInt(String(findValueByKeywords(r, ['Meals', 'meals']) || '1'), 10) || 1;
       st.deliveredOrdersCount += 1;
 
       if (outletId) {
@@ -460,7 +451,7 @@ export const generateLastDayStationReportWorkbook = (
       ? `${((sumPpd / sumFinalSellingPrice) * 100).toFixed(2)}%`
       : '0.00%';
 
-  // Summary Row (Top Row)
+  // Summary Row (Top)
   const topSummaryRow = [
     '', '', '', '',
     Number(sumVendorPrice.toFixed(2)),
@@ -490,7 +481,7 @@ export const generateLastDayStationReportWorkbook = (
     sumStationVendors,
   ];
 
-  // Headers Row
+  // Headers
   const headers = [
     'Station Code',
     'Rank',
