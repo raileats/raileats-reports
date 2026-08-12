@@ -94,7 +94,7 @@ export const generateLastDayStationReportWorkbook = (
   let lastDeliveryDateStr = '';
 
   masterData.forEach((row) => {
-    const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'BookingDate', 'Order Date', 'Date']);
+    const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'Date of Booking', 'Date']);
     const dStr = normalizeToDeliveryDate(rawDate);
     if (dStr) {
       const ts = dateToTimestamp(dStr);
@@ -112,14 +112,16 @@ export const generateLastDayStationReportWorkbook = (
 
   // 2. Filter Master rows for Last Day
   const lastDayRows = masterData.filter((row) => {
-    const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'BookingDate', 'Order Date', 'Date']);
+    const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'Date of Booking', 'Date']);
     return normalizeToDeliveryDate(rawDate) === lastDeliveryDateStr;
   });
 
   // 3. Map Master Outlets
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const stCode = String(out?.station || out?.stationCode || out?.stn_code || out?.station_code || '').trim().toUpperCase();
+    const stCode = String(
+      out?.station || out?.stationCode || out?.stn_code || out?.station_code || out?.deliveryStation || out?.stationName || ''
+    ).trim().toUpperCase();
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
     if (stCode && outId) {
       if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set<string>();
@@ -127,7 +129,7 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
-  // 4. Group Station Level Data for Last Day (Directly using Feedback Type from row)
+  // 4. Group Station Level Data for Last Day
   const stationMap: Record<
     string,
     {
@@ -159,23 +161,26 @@ export const generateLastDayStationReportWorkbook = (
   > = {};
 
   lastDayRows.forEach((r) => {
-    let stationCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code', 'station_code']) || '').trim().toUpperCase();
-    let stationName = String(getValue(r, ['Station Name', 'StationName']) || '').trim().toUpperCase();
+    // Delivery Station mapped from IRCTC sheet to Station Name / Station Code
+    const deliveryStation = String(
+      getValue(r, [
+        'Delivery Station',
+        'DeliveryStation',
+        'Station Name',
+        'StationName',
+        'Station Code',
+        'StationCode',
+        'Station',
+        'stn_code'
+      ]) || ''
+    ).trim().toUpperCase();
 
-    if (!stationCode && stationName) {
-      stationCode = stationName;
-    }
-    if (!stationName && stationCode) {
-      stationName = stationCode;
-    }
-    if (!stationCode) {
-      stationCode = 'UNKNOWN';
-      stationName = 'UNKNOWN';
-    }
+    const stationCode = deliveryStation || 'UNKNOWN';
+    const stationName = deliveryStation || 'UNKNOWN';
 
     const outletId = String(getValue(r, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
-    const finalStatus = String(getValue(r, ['Final Status', 'final_status', 'Status', 'status']) || '').trim().toLowerCase();
-    const irctcStatus = String(getValue(r, ['IRCTC Status', 'irctc_status']) || '').trim().toLowerCase();
+    const finalStatus = String(getValue(r, ['Final Status', 'final_status', 'Delivery Status', 'DeliveryStatus', 'Status']) || '').trim().toLowerCase();
+    const irctcStatus = String(getValue(r, ['IRCTC Status', 'irctc_status', 'Order Status', 'OrderStatus']) || '').trim().toLowerCase();
     const rfStatus = String(getValue(r, ['RF Status', 'rf_status']) || '').trim().toLowerCase();
 
     const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
@@ -220,19 +225,19 @@ export const generateLastDayStationReportWorkbook = (
     }
 
     const st = stationMap[stationCode];
-    if (stationName && st.stationName === st.stationCode) {
-      st.stationName = stationName;
+
+    // --- ACCURATE FEEDBACK & COMPLAINT COUNTS ---
+    const feedbackVal = String(getValue(r, ['Feedback', 'feedback', 'Customer Feedback']) || '').trim();
+    const complaintVal = String(getValue(r, ['Complaint', 'complaint', 'Complaint Comment', 'Comment']) || '').trim();
+
+    // If row has text in Feedback column -> Count in Feedback Good
+    if (feedbackVal.length > 0) {
+      st.feedbackGoodCount += 1;
     }
 
-    // Direct Feedback Type Check from IRCTC / Master Row
-    const feedbackTypeVal = String(
-      getValue(r, ['Feedback Type', 'feedback_type', 'FeedbackType', 'Feedback', 'Complain', 'Complaint']) || ''
-    ).trim().toUpperCase();
-
-    if (feedbackTypeVal.includes('COMPLAIN') || feedbackTypeVal.includes('BAD') || feedbackTypeVal.includes('ISSUE')) {
+    // If row has text in Complaint column -> Count in Feedback Bad
+    if (complaintVal.length > 0) {
       st.feedbackBadCount += 1;
-    } else if (feedbackTypeVal.includes('FEEDBACK') || feedbackTypeVal.includes('GOOD')) {
-      st.feedbackGoodCount += 1;
     }
 
     if (isNotDelivered) {
@@ -240,22 +245,22 @@ export const generateLastDayStationReportWorkbook = (
     }
 
     if (isDelivered) {
-      st.vendorPrice += parseSafeNumber(getValue(r, ['Final Vendor Price', 'Vendor Price', 'vendor_price']));
-      st.finalBasePrice += parseSafeNumber(getValue(r, ['Final Base Price', 'Base Price', 'base_price']));
+      st.vendorPrice += parseSafeNumber(getValue(r, ['Final Vendor Price', 'Vendor Price', 'vendor_price', 'Amount Paid To Vendor']));
+      st.finalBasePrice += parseSafeNumber(getValue(r, ['Final Base Price', 'Total Base Price', 'Base Price', 'base_price']));
       st.finalTotalComm += parseSafeNumber(getValue(r, ['Final Total Commission', 'Total Commission', 'commission']));
-      st.finalIrctcComm += parseSafeNumber(getValue(r, ['Final IRCTC Commission', 'IRCTC Comm', 'irctc_comm']));
+      st.finalIrctcComm += parseSafeNumber(getValue(r, ['Final IRCTC Commission', 'IRCTC Comm', 'Vendor Comm', 'irctc_comm']));
       st.finalRfComm += parseSafeNumber(getValue(r, ['Final RF Commission', 'RF Commission', 'rf_comm']));
-      st.finalGst += parseSafeNumber(getValue(r, ['Final GST', 'GST', 'gst']));
-      st.finalDiscount += parseSafeNumber(getValue(r, ['Final Total Discount', 'Discount', 'total_discount']));
+      st.finalGst += parseSafeNumber(getValue(r, ['Final GST', 'Total Gst', 'GST', 'gst']));
+      st.finalDiscount += parseSafeNumber(getValue(r, ['Final Total Discount', 'Discount', 'discount', 'total_discount']));
       st.finalVendorDiscount += parseSafeNumber(getValue(r, ['Final Vendor Discount', 'Vendor Discount']));
       st.finalRfDiscount += parseSafeNumber(getValue(r, ['Final RF Discount', 'RF Discount']));
-      st.deliveryCharges += parseSafeNumber(getValue(r, ['Delivery Charges', 'delivery_charges']));
-      st.finalSellingPrice += parseSafeNumber(getValue(r, ['Final Selling Price', 'Selling Price', 'selling_price']));
+      st.deliveryCharges += parseSafeNumber(getValue(r, ['Delivery Charges', 'Delivery Charge', 'delivery_charges']));
+      st.finalSellingPrice += parseSafeNumber(getValue(r, ['Final Selling Price', 'Selling Price', 'Amount Paid', 'selling_price']));
       st.finalOrderTotal += parseSafeNumber(getValue(r, ['Final Order Total', 'Order Total', 'order_total']));
       st.discountedBasePrice += parseSafeNumber(getValue(r, ['Discounted Base Price', 'discounted_base_price']));
       st.ppd += parseSafeNumber(getValue(r, ['PPD', 'ppd']));
       st.cod += parseSafeNumber(getValue(r, ['COD', 'cod']));
-      st.meals += parseInt(String(getValue(r, ['Meals', 'meals']) || '1'), 10) || 1;
+      st.meals += parseInt(String(getValue(r, ['Meals', 'Meal Count', 'meals']) || '1'), 10) || 1;
       st.deliveredOrdersCount += 1;
 
       if (outletId) {
@@ -366,7 +371,7 @@ export const generateLastDayStationReportWorkbook = (
     sumStationVendors,
   ];
 
-  // Headers
+  // Headers (DailyStation Format)
   const headers = [
     'Station Code',
     'Rank',
