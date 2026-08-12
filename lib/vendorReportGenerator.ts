@@ -36,7 +36,8 @@ export interface VendorReportRow {
  */
 export const generateVendorWiseData = (
   masterOrders: MasterOrderRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo> = {}
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  penaltySummary: Record<string, number> = {}
 ): VendorReportRow[] => {
   const outletOrdersMap: Record<string, MasterOrderRow[]> = {};
 
@@ -137,7 +138,11 @@ export const generateVendorWiseData = (
 
     const vendorPrice = Number(vendorPriceSum.toFixed(2));
     const vendorDiscount = Number(vendorDiscountSum.toFixed(2));
-    const netPayment = Number((vendorPrice - vendorDiscount).toFixed(2));
+    const penaltyAmount =
+      typeof penaltySummary === 'object' && penaltySummary !== null
+        ? Number(penaltySummary[outletId] || 0)
+        : 0;
+    const netPayment = Number((vendorPrice - vendorDiscount - penaltyAmount).toFixed(2));
     const finalBasePrice = Number(basePriceSum.toFixed(2));
     const totalCommission = Number(totalCommSum.toFixed(2));
     const irctcComm = Number(irctcCommSum.toFixed(2));
@@ -237,9 +242,15 @@ export const generateVendorWiseData = (
 export const generateVendorReportWorkbook = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  penaltySummary: Record<string, number> | string = {},
   fileNamePrefix: string = 'VENDOR_OUTLET_WISE_REPORT'
 ) => {
-  const vendorData = generateVendorWiseData(masterOrders, outletsMasterInfo);
+  const penaltyMap: Record<string, number> =
+    typeof penaltySummary === 'object' && penaltySummary !== null ? penaltySummary : {};
+  const prefix: string =
+    typeof penaltySummary === 'string' ? penaltySummary : fileNamePrefix || 'VENDOR_OUTLET_WISE_REPORT';
+
+  const vendorData = generateVendorWiseData(masterOrders, outletsMasterInfo, penaltyMap);
   if (vendorData.length === 0) {
     alert('Vendor report export karne ke liye koi data available nahi hai.');
     return;
@@ -250,5 +261,5 @@ export const generateVendorReportWorkbook = (
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendor Report');
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
+  XLSX.writeFile(workbook, `${prefix}_${todayStr}.xlsx`);
 };
