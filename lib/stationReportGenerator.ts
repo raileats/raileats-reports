@@ -33,9 +33,9 @@ export interface StationReportRow {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Flexible Key Finder (Case-insensitive, spaces/underscores ignore karta hai)
+// 1. Universal Value Getter (Key name chahe thoda aage-piche ho, dhoond lega)
 // ---------------------------------------------------------------------------
-const getAnyValue = (row: any, searchKeys: string[]): any => {
+const getVal = (row: any, searchKeys: string[]): any => {
   if (!row || typeof row !== 'object') return null;
   const rowKeys = Object.keys(row);
   for (const sk of searchKeys) {
@@ -56,36 +56,19 @@ const getAnyValue = (row: any, searchKeys: string[]): any => {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Station Key Cleaner & Normalizer (E.g. "NDLS - New Delhi" -> "NDLS")
+// 2. Station Matcher / Normalizer (e.g. "NDLS - New Delhi" -> "NDLS")
 // ---------------------------------------------------------------------------
-const normalizeStationKey = (val: any): string => {
+const getCleanStationCode = (val: any): string => {
   if (!val) return '';
   let str = String(val).trim().toUpperCase();
-  
-  // Agar "NDLS - NEW DELHI" ya "NDLS (NEW DELHI)" format ho toh code nikaal lo
-  if (str.includes('-')) {
-    str = str.split('-')[0].trim();
-  } else if (str.includes('(')) {
-    str = str.split('(')[0].trim();
-  }
+  if (str.includes('-')) str = str.split('-')[0].trim();
+  if (str.includes('(')) str = str.split('(')[0].trim();
+  if (str.includes('/')) str = str.split('/')[0].trim();
   return str.replace(/[^A-Z0-9]/g, '');
 };
 
 // ---------------------------------------------------------------------------
-// 3. Feedback / Complaint Valid Entry Checker
-// ---------------------------------------------------------------------------
-const hasValidEntry = (val: any): boolean => {
-  if (val === null || val === undefined) return false;
-  const str = String(val).trim().toLowerCase();
-  // Khali, '0', 'nan', 'null', 'nil', '-' ko ignore karega
-  if (str === '' || str === '0' || str === 'nan' || str === 'null' || str === 'nil' || str === '-' || str === 'none') {
-    return false;
-  }
-  return true;
-};
-
-// ---------------------------------------------------------------------------
-// Main Station Wise Generator Function
+// 3. Main Generator
 // ---------------------------------------------------------------------------
 export const generateStationWiseData = (
   masterOrders: any[],
@@ -95,7 +78,7 @@ export const generateStationWiseData = (
   const totalStationVendorsMap: Record<string, Set<string>> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
     const rawSt = out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '';
-    const cleanSt = normalizeStationKey(rawSt);
+    const cleanSt = getCleanStationCode(rawSt);
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
     if (cleanSt && outId) {
       if (!totalStationVendorsMap[cleanSt]) totalStationVendorsMap[cleanSt] = new Set();
@@ -103,33 +86,32 @@ export const generateStationWiseData = (
     }
   });
 
-  // Aggregation Map
   const stationMap: Record<string, any> = {};
 
   (masterOrders || []).forEach((row: any) => {
-    // Match Delivery Station (From IRCTC Raw) OR Station Code (From Master Sheet)
-    const rawStation = getAnyValue(row, [
+    // IRCTC "Delivery Station" match with Target "Station Code"
+    const rawStation = getVal(row, [
       'Delivery Station',
       'DeliveryStation',
       'Station Code',
       'StationCode',
       'Delivery Station Code',
-      'Delivery Station Name',
       'Station Name',
       'Station',
-      'Stn Code',
       'stn_code'
     ]);
 
-    const stationKey = normalizeStationKey(rawStation) || 'UNKNOWN';
-    const displayStationName = String(
-      getAnyValue(row, ['Station Name', 'Delivery Station Name', 'Delivery Station', 'Station']) || rawStation || stationKey
+    const stationCode = getCleanStationCode(rawStation);
+    if (!stationCode) return; // Agar station nahi hai toh skip karein
+
+    const stationName = String(
+      getVal(row, ['Station Name', 'Delivery Station', 'Station']) || rawStation || stationCode
     ).trim();
 
-    if (!stationMap[stationKey]) {
-      stationMap[stationKey] = {
-        stationCode: stationKey,
-        stationName: displayStationName,
+    if (!stationMap[stationCode]) {
+      stationMap[stationCode] = {
+        stationCode,
+        stationName,
         vendorPrice: 0,
         finalBasePrice: 0,
         totalComm: 0,
@@ -154,49 +136,52 @@ export const generateStationWiseData = (
       };
     }
 
-    const st = stationMap[stationKey];
+    const st = stationMap[stationCode];
 
-    // Status Values Check
-    const finalStatus = String(getAnyValue(row, ['Final Status', 'Delivery Status', 'Status', 'Order Status']) || '').trim().toLowerCase();
-    const irctcStatus = String(getAnyValue(row, ['IRCTC Status', 'IRCTC Delivery Status']) || '').trim().toLowerCase();
-    const rfStatus = String(getAnyValue(row, ['RF Status']) || '').trim().toLowerCase();
-    const outletId = String(getAnyValue(row, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
+    // =========================================================================
+    // FEEDBACK & COMPLAIN LOGIC (Exact matching from IRCTC Columns)
+    // =========================================================================
+    const feedbackType = String(
+      getVal(row, [
+        'Feedback Type',
+        'FeedbackType',
+        'Type',
+        'FEEDBACK',
+        'COMPLAIN',
+        'Complaint Type',
+        'Feedback / Complaint'
+      ]) || ''
+    ).trim().toUpperCase();
 
-    // -------------------------------------------------------------
-    // FEEDBACK & COMPLAINT COUNT LOGIC (Delivery Station Wise Sum)
-    // -------------------------------------------------------------
-    const feedbackVal = getAnyValue(row, [
-      'Feedback',
-      'Customer Feedback',
-      'Feedback Good',
-      'Feedback Comment',
-      'Rating',
-      'Review'
-    ]);
+    const directFeedbackCol = String(getVal(row, ['FEEDBACK', 'Feedback', 'Good Feedback']) || '').trim();
+    const directComplainCol = String(getVal(row, ['COMPLAIN', 'Complaint', 'Bad Feedback', 'Issue']) || '').trim();
 
-    const complaintVal = getAnyValue(row, [
-      'Complaint',
-      'Feedback Bad',
-      'Complaint Comment',
-      'Comment',
-      'Issue',
-      'Customer Complaint'
-    ]);
-
-    if (hasValidEntry(feedbackVal)) {
-      // Agar direct count number diya ho (jaise 1, 2) ya text comment ho
-      const num = Number(feedbackVal);
-      st.feedbackGoodCount += !isNaN(num) && num > 0 ? num : 1;
+    // 1. If Feedback Type column has 'FEEDBACK' -> Feedback Good + 1
+    if (feedbackType.includes('FEEDBACK') || feedbackType === 'GOOD') {
+      st.feedbackGoodCount += 1;
+    } 
+    // 2. If Feedback Type column has 'COMPLAIN' / 'COMPLAINT' -> Feedback Bad + 1
+    else if (feedbackType.includes('COMPLAIN') || feedbackType.includes('BAD') || feedbackType.includes('ISSUE')) {
+      st.feedbackBadCount += 1;
+    }
+    // 3. Agar alag-alag FEEDBACK / COMPLAIN ke columns bane hue hain
+    else {
+      if (directFeedbackCol.length > 0 && directFeedbackCol !== '0' && directFeedbackCol.toUpperCase() !== 'NA') {
+        st.feedbackGoodCount += 1;
+      }
+      if (directComplainCol.length > 0 && directComplainCol !== '0' && directComplainCol.toUpperCase() !== 'NA') {
+        st.feedbackBadCount += 1;
+      }
     }
 
-    if (hasValidEntry(complaintVal)) {
-      const num = Number(complaintVal);
-      st.feedbackBadCount += !isNaN(num) && num > 0 ? num : 1;
-    }
+    // =========================================================================
+    // STATUS & FINANCIALS
+    // =========================================================================
+    const finalStatus = String(getVal(row, ['Final Status', 'Delivery Status', 'Status']) || '').trim().toLowerCase();
+    const irctcStatus = String(getVal(row, ['IRCTC Status', 'Order Status']) || '').trim().toLowerCase();
+    const rfStatus = String(getVal(row, ['RF Status']) || '').trim().toLowerCase();
+    const outletId = String(getVal(row, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
 
-    // -------------------------------------------------------------
-    // DELIVERY & NOT-DELIVERY LOGIC
-    // -------------------------------------------------------------
     const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
     const isNotDelivered =
       finalStatus === 'not delivered' ||
@@ -212,23 +197,23 @@ export const generateStationWiseData = (
     }
 
     if (isDelivered) {
-      st.vendorPrice += Number(getAnyValue(row, ['Final Vendor Price', 'Vendor Price', 'vendor_price']) || 0);
-      st.finalBasePrice += Number(getAnyValue(row, ['Final Base Price', 'Total Base Price', 'Base Price', 'base_price']) || 0);
-      st.totalComm += Number(getAnyValue(row, ['Final Total Commission', 'Total Commission', 'commission']) || 0);
-      st.irctcComm += Number(getAnyValue(row, ['Final IRCTC Commission', 'IRCTC Comm', 'Vendor Comm']) || 0);
-      st.rfComm += Number(getAnyValue(row, ['Final RF Commission', 'RF Commission', 'rf_comm']) || 0);
-      st.gst += Number(getAnyValue(row, ['Final GST', 'Total Gst', 'GST', 'gst']) || 0);
-      st.totalDiscount += Number(getAnyValue(row, ['Final Total Discount', 'Discount', 'discount']) || 0);
-      st.vendorDiscount += Number(getAnyValue(row, ['Final Vendor Discount', 'Vendor Discount']) || 0);
-      st.rfDiscount += Number(getAnyValue(row, ['Final RF Discount', 'RF Discount']) || 0);
-      st.deliveryCharges += Number(getAnyValue(row, ['Delivery Charges', 'Delivery Charge']) || 0);
-      st.sellingPrice += Number(getAnyValue(row, ['Final Selling Price', 'Selling Price']) || 0);
-      st.orderTotal += Number(getAnyValue(row, ['Final Order Total', 'Order Total']) || 0);
-      st.discountedBase += Number(getAnyValue(row, ['Discounted Base Price']) || 0);
-      st.ppd += Number(getAnyValue(row, ['PPD', 'ppd']) || 0);
-      st.cod += Number(getAnyValue(row, ['COD', 'cod']) || 0);
-      st.meals += Number(getAnyValue(row, ['Meals', 'Meal Count']) || 1);
-      st.deliveredOrdersCount += Number(getAnyValue(row, ['Orders Count']) || 1);
+      st.vendorPrice += Number(getVal(row, ['Final Vendor Price', 'Vendor Price']) || 0);
+      st.finalBasePrice += Number(getVal(row, ['Final Base Price', 'Total Base Price', 'Base Price']) || 0);
+      st.totalComm += Number(getVal(row, ['Final Total Commission', 'Total Commission']) || 0);
+      st.irctcComm += Number(getVal(row, ['Final IRCTC Commission', 'IRCTC Comm']) || 0);
+      st.rfComm += Number(getVal(row, ['Final RF Commission', 'RF Commission']) || 0);
+      st.gst += Number(getVal(row, ['Final GST', 'GST']) || 0);
+      st.totalDiscount += Number(getVal(row, ['Final Total Discount', 'Discount']) || 0);
+      st.vendorDiscount += Number(getVal(row, ['Final Vendor Discount', 'Vendor Discount']) || 0);
+      st.rfDiscount += Number(getVal(row, ['Final RF Discount', 'RF Discount']) || 0);
+      st.deliveryCharges += Number(getVal(row, ['Delivery Charges', 'Delivery Charge']) || 0);
+      st.sellingPrice += Number(getVal(row, ['Final Selling Price', 'Selling Price']) || 0);
+      st.orderTotal += Number(getVal(row, ['Final Order Total', 'Order Total']) || 0);
+      st.discountedBase += Number(getVal(row, ['Discounted Base Price']) || 0);
+      st.ppd += Number(getVal(row, ['PPD', 'ppd']) || 0);
+      st.cod += Number(getVal(row, ['COD', 'cod']) || 0);
+      st.meals += Number(getVal(row, ['Meals', 'Meal Count']) || 1);
+      st.deliveredOrdersCount += Number(getVal(row, ['Orders Count']) || 1);
 
       if (outletId) {
         st.deliveredOutlets.add(outletId);
@@ -241,7 +226,6 @@ export const generateStationWiseData = (
     (a: any, b: any) => b.finalBasePrice - a.finalBasePrice
   );
 
-  // Return Formatted Rows
   return sortedStations.map((st: any, idx: number): StationReportRow => {
     const vPrice = Number(st.vendorPrice.toFixed(2));
     const bPrice = Number(st.finalBasePrice.toFixed(2));
