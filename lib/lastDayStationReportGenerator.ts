@@ -4,16 +4,6 @@ import * as XLSX from 'xlsx';
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Pure standard Order ID converter (e.g. 2460600201.0 -> "2460600201")
-const cleanOrderId = (val: any): string => {
-  if (val === null || val === undefined) return '';
-  let str = String(val).trim();
-  if (str.endsWith('.0')) {
-    str = str.slice(0, -2);
-  }
-  return str.replace(/[^a-zA-Z0-9]/g, '');
-};
-
 const parseSafeNumber = (val: any, fallback = 0): number => {
   if (val === null || val === undefined || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
@@ -71,7 +61,7 @@ const dateToTimestamp = (dateStr: string): number => {
   return 0;
 };
 
-// Robust Key/Value Finder
+// Robust Case-Insensitive Key/Value Finder
 const getValue = (row: any, keys: string[]): any => {
   if (!row || typeof row !== 'object') return null;
   const rowKeys = Object.keys(row);
@@ -92,8 +82,7 @@ const getValue = (row: any, keys: string[]): any => {
 
 export const generateLastDayStationReportWorkbook = (
   masterData: any[],
-  outletsMasterInfo: Record<string, any> = {},
-  feedbackData: any[] = []
+  outletsMasterInfo: Record<string, any> = {}
 ) => {
   if (!masterData || masterData.length === 0) {
     alert('Master Data khali hai! Pehle reports process karein.');
@@ -127,11 +116,8 @@ export const generateLastDayStationReportWorkbook = (
     return normalizeToDeliveryDate(rawDate) === lastDeliveryDateStr;
   });
 
-  // 3. Create Order ID -> Station Code Mapping from Master / IRCTC Data
-  const orderToStationMap: Record<string, string> = {};
+  // 3. Map Master Outlets
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
-
-  // Master Outlets
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
     const stCode = String(out?.station || out?.stationCode || out?.stn_code || out?.station_code || '').trim().toUpperCase();
     const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
@@ -141,55 +127,7 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
-  // Master Data se Order ID -> Station Code map (Header issues handling included)
-  masterData.forEach((r) => {
-    const rawOrderId = getValue(r, ['Order ID', 'OrderId', 'IRCTC Order ID', 'Booking ID', 'Order No', 'OrderNumber']);
-    let stCode = String(getValue(r, ['Station Code', 'StationCode', 'Station', 'stn_code', 'station_code']) || '').trim().toUpperCase();
-
-    // Fallback: Agar Station Code na mile par Station Name column me hi station code ho
-    if (!stCode) {
-      stCode = String(getValue(r, ['Station Name', 'StationName']) || '').trim().toUpperCase();
-    }
-
-    const cleanOrd = cleanOrderId(rawOrderId);
-    if (cleanOrd && stCode) {
-      orderToStationMap[cleanOrd] = stCode;
-    }
-  });
-
-  // 4. Feedback & Complaint Logic (Strictly Order ID based -> Master Station Code)
-  const feedbackStationMap: Record<string, { goodCount: number; badCount: number }> = {};
-
-  if (Array.isArray(feedbackData) && feedbackData.length > 0) {
-    feedbackData.forEach((fb) => {
-      // Order ID from Feedback File (Column D)
-      const rawOrderId = getValue(fb, ['Order ID', 'OrderId', 'Order Id', 'IRCTC Order ID', 'Booking ID', 'Order No', 'OrderNumber']);
-      const cleanOrd = cleanOrderId(rawOrderId);
-
-      if (!cleanOrd) return;
-
-      // Match Order ID in Master/IRCTC to get Station Code
-      const stCode = orderToStationMap[cleanOrd];
-      if (!stCode) return;
-
-      if (!feedbackStationMap[stCode]) {
-        feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
-      }
-
-      // Check Type (Column L: feedback vs complaint)
-      const typeVal = String(
-        getValue(fb, ['Type', 'type', 'Feedback Type', 'feedback_type', 'Nature', 'Category', 'Feedback', 'Status']) || ''
-      ).trim().toLowerCase();
-
-      if (typeVal.includes('complaint') || typeVal.includes('complain') || typeVal.includes('bad') || typeVal.includes('issue')) {
-        feedbackStationMap[stCode].badCount += 1;
-      } else if (typeVal.includes('feedback') || typeVal.includes('good') || typeVal.includes('pos')) {
-        feedbackStationMap[stCode].goodCount += 1;
-      }
-    });
-  }
-
-  // 5. Group Station Level Data for Last Day
+  // 4. Group Station Level Data for Last Day (Directly using Feedback Type from row)
   const stationMap: Record<
     string,
     {
@@ -251,7 +189,6 @@ export const generateLastDayStationReportWorkbook = (
       rfStatus.includes('cancel');
 
     if (!stationMap[stationCode]) {
-      const fbCounts = feedbackStationMap[stationCode] || { goodCount: 0, badCount: 0 };
       stationMap[stationCode] = {
         stationCode,
         stationName,
@@ -273,8 +210,8 @@ export const generateLastDayStationReportWorkbook = (
         meals: 0,
         deliveredOrdersCount: 0,
         notDeliveredOrdersCount: 0,
-        feedbackGoodCount: fbCounts.goodCount,
-        feedbackBadCount: fbCounts.badCount,
+        feedbackGoodCount: 0,
+        feedbackBadCount: 0,
         deliveredOutlets: new Set<string>(),
         stationAllOutlets: stationTotalOutletsMap[stationCode]
           ? new Set<string>(stationTotalOutletsMap[stationCode])
@@ -285,6 +222,17 @@ export const generateLastDayStationReportWorkbook = (
     const st = stationMap[stationCode];
     if (stationName && st.stationName === st.stationCode) {
       st.stationName = stationName;
+    }
+
+    // Direct Feedback Type Check from IRCTC / Master Row
+    const feedbackTypeVal = String(
+      getValue(r, ['Feedback Type', 'feedback_type', 'FeedbackType', 'Feedback', 'Complain', 'Complaint']) || ''
+    ).trim().toUpperCase();
+
+    if (feedbackTypeVal.includes('COMPLAIN') || feedbackTypeVal.includes('BAD') || feedbackTypeVal.includes('ISSUE')) {
+      st.feedbackBadCount += 1;
+    } else if (feedbackTypeVal.includes('FEEDBACK') || feedbackTypeVal.includes('GOOD')) {
+      st.feedbackGoodCount += 1;
     }
 
     if (isNotDelivered) {
@@ -322,7 +270,7 @@ export const generateLastDayStationReportWorkbook = (
     (a, b) => b.finalBasePrice - a.finalBasePrice
   );
 
-  // Grand Totals Calculation
+  // Grand Totals
   let sumVendorPrice = 0;
   let sumFinalBasePrice = 0;
   let sumFinalTotalComm = 0;
@@ -418,7 +366,7 @@ export const generateLastDayStationReportWorkbook = (
     sumStationVendors,
   ];
 
-  // Exact Standard Table Headers
+  // Headers
   const headers = [
     'Station Code',
     'Rank',
