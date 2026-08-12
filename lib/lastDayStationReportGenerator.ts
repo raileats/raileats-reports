@@ -4,9 +4,6 @@ import * as XLSX from 'xlsx';
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Safely parse numbers from dirty strings, floats, and comma formatted numbers
- */
 const parseSafeNumber = (val: any, fallback = 0): number => {
   if (val === null || val === undefined || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
@@ -15,13 +12,10 @@ const parseSafeNumber = (val: any, fallback = 0): number => {
   return isNaN(num) ? fallback : num;
 };
 
-/**
- * Universal date normalizer supporting Excel serial numbers, ISO strings, YYYY-MM-DD, DD/MM/YYYY
- */
+// Universal date normalizer (Excel Serial, YYYY-MM-DD, DD/MM/YYYY)
 const normalizeToDeliveryDate = (dateVal: any): string => {
   if (!dateVal) return '';
 
-  // Handle Excel Serial Number (e.g. 45280)
   if (typeof dateVal === 'number' || (!isNaN(Number(dateVal)) && !String(dateVal).includes('-') && !String(dateVal).includes('/'))) {
     const serial = Number(dateVal);
     if (serial > 30000 && serial < 60000) {
@@ -33,21 +27,17 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
 
   const str = String(dateVal).trim();
 
-  // YYYY-MM-DD or DD-MM-YYYY
   if (str.includes('-')) {
     const parts = str.split(' ')[0].split('T')[0].split('-');
     if (parts.length === 3) {
       if (parts[0].length === 4) {
-        // YYYY-MM-DD
         return `${parseInt(parts[2], 10)}/${parseInt(parts[1], 10)}/${parts[0]}`;
       } else {
-        // DD-MM-YYYY
         return `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${parts[2]}`;
       }
     }
   }
 
-  // DD/MM/YYYY or MM/DD/YYYY
   if (str.includes('/')) {
     const parts = str.split(' ')[0].split('/');
     if (parts.length === 3) {
@@ -60,9 +50,6 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
   return str;
 };
 
-/**
- * Convert normalized "D/M/YYYY" to timestamp for accurate max date comparison
- */
 const dateToTimestamp = (dateStr: string): number => {
   const parts = dateStr.split('/');
   if (parts.length === 3) {
@@ -75,7 +62,7 @@ const dateToTimestamp = (dateStr: string): number => {
 };
 
 // ---------------------------------------------------------------------------
-// Main Generator Function
+// Main Export Function
 // ---------------------------------------------------------------------------
 
 export const generateLastDayStationReportWorkbook = (
@@ -123,10 +110,14 @@ export const generateLastDayStationReportWorkbook = (
     return;
   }
 
-  // Station Code to Outlet mapping helper from master outlets
+  // 3. Mapping Maps Build Up:
+  // - Order ID -> Station Code (From Master / IRCTC)
+  // - Outlet ID -> Station Code
+  const orderToStationMap: Record<string, string> = {};
   const outletToStationMap: Record<string, string> = {};
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
 
+  // Master Outlets info se map
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
     const stCode = String(out?.station || out?.stationCode || '').trim().toUpperCase();
     const outId = String(out?.outletId || out?.restaurantId || '').trim();
@@ -139,43 +130,42 @@ export const generateLastDayStationReportWorkbook = (
     }
   });
 
+  // Master / IRCTC Data se Order ID -> Station Code map
   masterData.forEach((r) => {
+    const orderId = String(
+      r['Order ID'] || r['Order Id'] || r['order_id'] || r['IRCTC Order ID'] || r['Booking ID'] || ''
+    ).trim();
+    const stCode = String(r['Station Code'] || r['station_code'] || r['Station'] || '').trim().toUpperCase();
     const outId = String(r['Outlet ID'] || r['outlet_id'] || '').trim();
-    const stCode = String(r['Station Code'] || r['station_code'] || '').trim().toUpperCase();
+
+    if (orderId && stCode) {
+      orderToStationMap[orderId] = stCode;
+    }
     if (outId && stCode && !outletToStationMap[outId]) {
       outletToStationMap[outId] = stCode;
     }
   });
 
-  // 3. Process Feedback Data (Station Code Wise on Last Delivery Date)
+  // 4. Feedback & Complaint Logic (Order ID wise match karke Station Code nikalna)
   const feedbackStationMap: Record<string, { goodCount: number; badCount: number }> = {};
 
   if (Array.isArray(feedbackData) && feedbackData.length > 0) {
     feedbackData.forEach((fb) => {
-      const fbDateStr = normalizeToDeliveryDate(
-        fb['Delivery Date'] ||
-        fb['Delivery date'] ||
-        fb['Order Date'] ||
-        fb['Feedback Date'] ||
-        fb['Date'] ||
-        ''
-      );
+      const fbOrderId = String(
+        fb['Order ID'] || fb['Order Id'] || fb['order_id'] || fb['Booking ID'] || fb['IRCTC Order ID'] || ''
+      ).trim();
 
-      // Match last day date if date exists in feedback row
-      if (fbDateStr && fbDateStr !== lastDeliveryDateStr) {
-        return;
-      }
+      const fbOutletId = String(
+        fb['Outlet ID'] || fb['outlet_id'] || fb['Restaurant ID'] || ''
+      ).trim();
 
-      let stCode = String(
-        fb['Station Code'] ||
-        fb['Station'] ||
-        fb['STATION CODE'] ||
-        fb['stn_code'] ||
-        ''
-      ).trim().toUpperCase();
-
-      const fbOutletId = String(fb['Outlet ID'] || fb['outlet_id'] || fb['Restaurant ID'] || '').trim();
-      if (!stCode && fbOutletId && outletToStationMap[fbOutletId]) {
+      // Station Code find out karna (Pehle Order ID se, fir Station Code column se, fir Outlet ID se)
+      let stCode = '';
+      if (fbOrderId && orderToStationMap[fbOrderId]) {
+        stCode = orderToStationMap[fbOrderId];
+      } else if (fb['Station Code'] || fb['Station'] || fb['STATION CODE'] || fb['stn_code']) {
+        stCode = String(fb['Station Code'] || fb['Station'] || fb['STATION CODE'] || fb['stn_code']).trim().toUpperCase();
+      } else if (fbOutletId && outletToStationMap[fbOutletId]) {
         stCode = outletToStationMap[fbOutletId];
       }
 
@@ -185,40 +175,36 @@ export const generateLastDayStationReportWorkbook = (
         feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
       }
 
-      const rating = parseSafeNumber(fb['Rating'] || fb['rating'] || fb['Stars'], 0);
-      const feedbackType = String(
-        fb['Feedback Type'] ||
-        fb['Feedback'] ||
-        fb['Status'] ||
-        fb['Customer Feedback'] ||
-        fb['Remark'] ||
-        ''
+      // Check 'Type' column (feedback vs complaint)
+      const typeVal = String(
+        fb['Type'] || fb['type'] || fb['Feedback Type'] || fb['Feedback'] || fb['Remark'] || ''
       ).trim().toLowerCase();
 
-      const isGood =
-        rating >= 4 ||
-        feedbackType.includes('good') ||
-        feedbackType.includes('positive') ||
-        feedbackType.includes('excellent') ||
-        feedbackType.includes('satisfied');
+      const rating = parseSafeNumber(fb['Rating'] || fb['rating'] || fb['Stars'], 0);
 
-      const isBad =
-        (rating > 0 && rating <= 3) ||
-        feedbackType.includes('bad') ||
-        feedbackType.includes('negative') ||
-        feedbackType.includes('poor') ||
-        feedbackType.includes('complaint') ||
-        feedbackType.includes('dissatisfied');
+      const isComplaint =
+        typeVal.includes('complaint') ||
+        typeVal.includes('bad') ||
+        typeVal.includes('negative') ||
+        typeVal.includes('poor') ||
+        (rating > 0 && rating <= 3);
 
-      if (isGood) {
-        feedbackStationMap[stCode].goodCount += 1;
-      } else if (isBad) {
+      const isFeedback =
+        typeVal.includes('feedback') ||
+        typeVal.includes('good') ||
+        typeVal.includes('positive') ||
+        typeVal.includes('satisfied') ||
+        rating >= 4;
+
+      if (isComplaint) {
         feedbackStationMap[stCode].badCount += 1;
+      } else if (isFeedback) {
+        feedbackStationMap[stCode].goodCount += 1;
       }
     });
   }
 
-  // 4. Group Master Data by Station Code
+  // 5. Group Master Data by Station Code for Last Day
   const stationMap: Record<
     string,
     {
@@ -406,7 +392,7 @@ export const generateLastDayStationReportWorkbook = (
       ? `${((sumPpd / sumFinalSellingPrice) * 100).toFixed(2)}%`
       : '0.00%';
 
-  // Row 1: Top Summary Row
+  // Summary Row (Top)
   const topSummaryRow = [
     '', '', '', '',
     Number(sumVendorPrice.toFixed(2)),
@@ -436,7 +422,7 @@ export const generateLastDayStationReportWorkbook = (
     sumStationVendors,
   ];
 
-  // Row 2: Headers
+  // Table Headers
   const headers = [
     'Station Code',
     'Rank',
@@ -469,7 +455,7 @@ export const generateLastDayStationReportWorkbook = (
     'Total Station Vendors',
   ];
 
-  // Build rows data
+  // Rows Data
   const rowsData: any[][] = sortedStations.map((st, index) => {
     const vPrice = Number(st.vendorPrice.toFixed(2));
     const bPrice = Number(st.finalBasePrice.toFixed(2));
