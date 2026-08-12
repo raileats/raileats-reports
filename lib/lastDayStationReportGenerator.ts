@@ -1,21 +1,53 @@
 import * as XLSX from 'xlsx';
 
-// Universal date normalizer
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Safely parse numbers from dirty strings, floats, and comma formatted numbers
+ */
+const parseSafeNumber = (val: any, fallback = 0): number => {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (typeof val === 'number') return isNaN(val) ? fallback : val;
+  const sanitized = String(val).replace(/,/g, '').trim();
+  const num = parseFloat(sanitized);
+  return isNaN(num) ? fallback : num;
+};
+
+/**
+ * Universal date normalizer supporting Excel serial numbers, ISO strings, YYYY-MM-DD, DD/MM/YYYY
+ */
 const normalizeToDeliveryDate = (dateVal: any): string => {
   if (!dateVal) return '';
+
+  // Handle Excel Serial Number (e.g. 45280)
+  if (typeof dateVal === 'number' || (!isNaN(Number(dateVal)) && !String(dateVal).includes('-') && !String(dateVal).includes('/'))) {
+    const serial = Number(dateVal);
+    if (serial > 30000 && serial < 60000) {
+      const utcDays = serial - 25569;
+      const dateObj = new Date(utcDays * 86400 * 1000);
+      return `${dateObj.getUTCDate()}/${dateObj.getUTCMonth() + 1}/${dateObj.getUTCFullYear()}`;
+    }
+  }
+
   const str = String(dateVal).trim();
 
+  // YYYY-MM-DD or DD-MM-YYYY
   if (str.includes('-')) {
-    const parts = str.split(' ')[0].split('-');
+    const parts = str.split(' ')[0].split('T')[0].split('-');
     if (parts.length === 3) {
       if (parts[0].length === 4) {
+        // YYYY-MM-DD
         return `${parseInt(parts[2], 10)}/${parseInt(parts[1], 10)}/${parts[0]}`;
       } else {
+        // DD-MM-YYYY
         return `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${parts[2]}`;
       }
     }
   }
 
+  // DD/MM/YYYY or MM/DD/YYYY
   if (str.includes('/')) {
     const parts = str.split(' ')[0].split('/');
     if (parts.length === 3) {
@@ -28,7 +60,9 @@ const normalizeToDeliveryDate = (dateVal: any): string => {
   return str;
 };
 
-// Convert "D/M/YYYY" or "DD/MM/YYYY" to timestamp
+/**
+ * Convert normalized "D/M/YYYY" to timestamp for accurate max date comparison
+ */
 const dateToTimestamp = (dateStr: string): number => {
   const parts = dateStr.split('/');
   if (parts.length === 3) {
@@ -39,6 +73,10 @@ const dateToTimestamp = (dateStr: string): number => {
   }
   return 0;
 };
+
+// ---------------------------------------------------------------------------
+// Main Generator Function
+// ---------------------------------------------------------------------------
 
 export const generateLastDayStationReportWorkbook = (
   masterData: any[],
@@ -55,7 +93,9 @@ export const generateLastDayStationReportWorkbook = (
   let lastDeliveryDateStr = '';
 
   masterData.forEach((row) => {
-    const dStr = normalizeToDeliveryDate(row['Delivery Date'] || row['Booking Date'] || '');
+    const dStr = normalizeToDeliveryDate(
+      row['Delivery Date'] || row['delivery_date'] || row['Booking Date'] || row['booking_date'] || ''
+    );
     if (dStr) {
       const ts = dateToTimestamp(dStr);
       if (ts > maxTimestamp) {
@@ -72,7 +112,9 @@ export const generateLastDayStationReportWorkbook = (
 
   // 2. Filter rows belonging ONLY to the last delivery date
   const lastDayRows = masterData.filter((row) => {
-    const dStr = normalizeToDeliveryDate(row['Delivery Date'] || row['Booking Date'] || '');
+    const dStr = normalizeToDeliveryDate(
+      row['Delivery Date'] || row['delivery_date'] || row['Booking Date'] || row['booking_date'] || ''
+    );
     return dStr === lastDeliveryDateStr;
   });
 
@@ -84,19 +126,22 @@ export const generateLastDayStationReportWorkbook = (
   // Station Code to Outlet mapping helper from master outlets
   const outletToStationMap: Record<string, string> = {};
   const stationTotalOutletsMap: Record<string, Set<string>> = {};
+
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const stCode = String(out?.station || '').trim().toUpperCase();
-    const outId = String(out?.outletId || '').trim();
+    const stCode = String(out?.station || out?.stationCode || '').trim().toUpperCase();
+    const outId = String(out?.outletId || out?.restaurantId || '').trim();
     if (stCode && outId) {
       outletToStationMap[outId] = stCode;
-      if (!stationTotalOutletsMap[stCode]) stationTotalOutletsMap[stCode] = new Set();
+      if (!stationTotalOutletsMap[stCode]) {
+        stationTotalOutletsMap[stCode] = new Set<string>();
+      }
       stationTotalOutletsMap[stCode].add(outId);
     }
   });
 
   masterData.forEach((r) => {
-    const outId = String(r['Outlet ID'] || '').trim();
-    const stCode = String(r['Station Code'] || '').trim().toUpperCase();
+    const outId = String(r['Outlet ID'] || r['outlet_id'] || '').trim();
+    const stCode = String(r['Station Code'] || r['station_code'] || '').trim().toUpperCase();
     if (outId && stCode && !outletToStationMap[outId]) {
       outletToStationMap[outId] = stCode;
     }
@@ -104,7 +149,7 @@ export const generateLastDayStationReportWorkbook = (
 
   // 3. Process Feedback Data (Station Code Wise on Last Delivery Date)
   const feedbackStationMap: Record<string, { goodCount: number; badCount: number }> = {};
-  
+
   if (Array.isArray(feedbackData) && feedbackData.length > 0) {
     feedbackData.forEach((fb) => {
       const fbDateStr = normalizeToDeliveryDate(
@@ -116,7 +161,7 @@ export const generateLastDayStationReportWorkbook = (
         ''
       );
 
-      // Match last day date if date exists in row
+      // Match last day date if date exists in feedback row
       if (fbDateStr && fbDateStr !== lastDeliveryDateStr) {
         return;
       }
@@ -140,7 +185,7 @@ export const generateLastDayStationReportWorkbook = (
         feedbackStationMap[stCode] = { goodCount: 0, badCount: 0 };
       }
 
-      const rating = Number(fb['Rating'] || fb['rating'] || fb['Stars'] || 0);
+      const rating = parseSafeNumber(fb['Rating'] || fb['rating'] || fb['Stars'], 0);
       const feedbackType = String(
         fb['Feedback Type'] ||
         fb['Feedback'] ||
@@ -205,11 +250,11 @@ export const generateLastDayStationReportWorkbook = (
   > = {};
 
   lastDayRows.forEach((r) => {
-    const stationCode = String(r['Station Code'] || 'UNKNOWN').trim().toUpperCase();
-    const stationName = String(r['Station Name'] || r['Station'] || stationCode).trim().toUpperCase();
-    const outletId = String(r['Outlet ID'] || '').trim();
-    
-    const finalStatus = String(r['Final Status'] || '').trim().toLowerCase();
+    const stationCode = String(r['Station Code'] || r['station_code'] || 'UNKNOWN').trim().toUpperCase();
+    const stationName = String(r['Station Name'] || r['station_name'] || r['Station'] || stationCode).trim().toUpperCase();
+    const outletId = String(r['Outlet ID'] || r['outlet_id'] || '').trim();
+
+    const finalStatus = String(r['Final Status'] || r['status'] || '').trim().toLowerCase();
     const irctcStatus = String(r['IRCTC Status'] || '').trim().toLowerCase();
     const rfStatus = String(r['RF Status'] || '').trim().toLowerCase();
 
@@ -249,7 +294,9 @@ export const generateLastDayStationReportWorkbook = (
         feedbackGoodCount: fbCounts.goodCount,
         feedbackBadCount: fbCounts.badCount,
         deliveredOutlets: new Set<string>(),
-        stationAllOutlets: stationTotalOutletsMap[stationCode] || new Set<string>(),
+        stationAllOutlets: stationTotalOutletsMap[stationCode]
+          ? new Set<string>(stationTotalOutletsMap[stationCode])
+          : new Set<string>(),
       };
     }
 
@@ -263,23 +310,24 @@ export const generateLastDayStationReportWorkbook = (
     }
 
     if (isDelivered) {
-      st.vendorPrice += parseFloat(r['Final Vendor Price'] || r['Vendor Price'] || 0) || 0;
-      st.finalBasePrice += parseFloat(r['Final Base Price'] || r['Base Price'] || 0) || 0;
-      st.finalTotalComm += parseFloat(r['Final Total Commission'] || r['Total Commission'] || 0) || 0;
-      st.finalIrctcComm += parseFloat(r['Final IRCTC Commission'] || r['IRCTC Comm'] || 0) || 0;
-      st.finalRfComm += parseFloat(r['Final RF Commission'] || r['RF Commission'] || 0) || 0;
-      st.finalGst += parseFloat(r['Final GST'] || r['GST'] || 0) || 0;
-      st.finalDiscount += parseFloat(r['Final Total Discount'] || r['Discount'] || 0) || 0;
-      st.finalVendorDiscount += parseFloat(r['Final Vendor Discount'] || r['Vendor Discount'] || 0) || 0;
-      st.finalRfDiscount += parseFloat(r['Final RF Discount'] || r['RF Discount'] || 0) || 0;
-      st.deliveryCharges += parseFloat(r['Delivery Charges'] || 0) || 0;
-      st.finalSellingPrice += parseFloat(r['Final Selling Price'] || r['Selling Price'] || 0) || 0;
-      st.finalOrderTotal += parseFloat(r['Final Order Total'] || r['Order Total'] || 0) || 0;
-      st.discountedBasePrice += parseFloat(r['Discounted Base Price'] || 0) || 0;
-      st.ppd += parseFloat(r['PPD'] || 0) || 0;
-      st.cod += parseFloat(r['COD'] || 0) || 0;
-      st.meals += parseInt(r['Meals'] || '1', 10) || 1;
+      st.vendorPrice += parseSafeNumber(r['Final Vendor Price'] || r['Vendor Price']);
+      st.finalBasePrice += parseSafeNumber(r['Final Base Price'] || r['Base Price']);
+      st.finalTotalComm += parseSafeNumber(r['Final Total Commission'] || r['Total Commission']);
+      st.finalIrctcComm += parseSafeNumber(r['Final IRCTC Commission'] || r['IRCTC Comm']);
+      st.finalRfComm += parseSafeNumber(r['Final RF Commission'] || r['RF Commission']);
+      st.finalGst += parseSafeNumber(r['Final GST'] || r['GST']);
+      st.finalDiscount += parseSafeNumber(r['Final Total Discount'] || r['Discount']);
+      st.finalVendorDiscount += parseSafeNumber(r['Final Vendor Discount'] || r['Vendor Discount']);
+      st.finalRfDiscount += parseSafeNumber(r['Final RF Discount'] || r['RF Discount']);
+      st.deliveryCharges += parseSafeNumber(r['Delivery Charges']);
+      st.finalSellingPrice += parseSafeNumber(r['Final Selling Price'] || r['Selling Price']);
+      st.finalOrderTotal += parseSafeNumber(r['Final Order Total'] || r['Order Total']);
+      st.discountedBasePrice += parseSafeNumber(r['Discounted Base Price']);
+      st.ppd += parseSafeNumber(r['PPD']);
+      st.cod += parseSafeNumber(r['COD']);
+      st.meals += parseInt(String(r['Meals'] || '1'), 10) || 1;
       st.deliveredOrdersCount += 1;
+
       if (outletId) {
         st.deliveredOutlets.add(outletId);
         st.stationAllOutlets.add(outletId);
@@ -475,8 +523,8 @@ export const generateLastDayStationReportWorkbook = (
   const worksheet = XLSX.utils.aoa_to_sheet(fullSheetData);
 
   worksheet['!cols'] = [
-    { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 22 },
-    { wch: 14 }, { wch: 15 }, { wch: 22 }, { wch: 16 },
+    { wch: 14 }, { wch: 8 },  { wch: 14 }, { wch: 24 },
+    { wch: 14 }, { wch: 16 }, { wch: 22 }, { wch: 16 },
     { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 19 },
     { wch: 16 }, { wch: 15 }, { wch: 18 }, { wch: 16 },
     { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 10 },
