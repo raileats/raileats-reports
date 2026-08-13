@@ -1,417 +1,280 @@
-* {
-  box-sizing: border-box;
+import * as XLSX from 'xlsx';
+
+export interface ReportDayBlock {
+  dateLabel: string;
+  rawDate: string;
+  outletsCount: number;
+  dayTotal: RowMetrics;
+  mtdTotal: RowMetrics;
+  bySource: Record<string, { ftd: RowMetrics; mtd: RowMetrics }>;
 }
 
-.main-report-page {
-  width: 100%;
-  min-height: 100vh;
-  padding: 18px 22px;
-  background: #ffffff;
-  color: #172033;
-  font-family: Arial, Helvetica, sans-serif;
+export interface RowMetrics {
+  orders: number;
+  deliveredOrders: number;
+  meals: number;
+  value: number;
+  prepaidValue: number;
+  discount: number;
+  revenue: number;
+  complaints: number;
+  feedback: number;
+  undelivered: number;
 }
 
-/* =========================
-   TOP TOOLBAR
-========================= */
-
-.report-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #d9dee8;
-}
-
-.report-toolbar h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-}
-
-.report-toolbar p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.toolbar-actions button {
-  border: 0;
-  border-radius: 9px;
-  padding: 9px 14px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  background: #111827;
-  color: white;
-}
-
-.toolbar-actions .excel-btn {
-  background: #009f63;
-}
-
-.toolbar-actions .pdf-btn {
-  background: #ef1235;
-}
-
-.toolbar-actions .upload-btn {
-  background: #5138ee;
-}
-
-/* =========================
-   INFO
-========================= */
-
-.report-info {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin: 14px 0;
-  font-size: 13px;
-}
-
-.report-info b {
-  color: #00a66a;
-}
-
-.view-badge {
-  border: 1px solid #aebcff;
-  border-radius: 7px;
-  padding: 6px 12px;
-  color: #6077d9;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.search {
-  margin-left: auto;
-  width: 280px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid #d7dce5;
-  border-radius: 7px;
-  outline: none;
-}
-
-/* =========================
-   IMPORTANT:
-   BOTH AXIS SCROLL
-========================= */
-
-.matrix-scroll {
-  width: 100%;
-  max-width: 100%;
-  height: calc(100vh - 185px);
-  overflow: auto;
-
-  /* touchpad / trackpad */
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-}
-
-/*
-  This is important for touchpad horizontal scrolling.
-*/
-.matrix-scroll {
-  overflow-x: auto;
-  overflow-y: auto;
-}
-
-/* =========================
-   DAY BLOCK
-========================= */
-
-.day-block {
-  min-width: 1450px;
-  margin-bottom: 8px;
-}
-
-.date-bar {
-  height: 27px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  background: #ff0808;
-  color: white;
-
-  font-size: 17px;
-  font-weight: 800;
-
-  border-left: 1px solid #ff0808;
-  border-right: 1px solid #ff0808;
-}
-
-/* =========================
-   TABLE
-========================= */
-
-.matrix-table {
-  width: max-content;
-  min-width: 1450px;
-
-  border-collapse: collapse;
-  table-layout: fixed;
-
-  font-size: 9px;
-}
-
-.matrix-table th,
-.matrix-table td {
-  border: 1px solid #7c8794;
-  padding: 2px 3px;
-
-  height: 17px;
-  line-height: 13px;
-
-  text-align: center;
-  white-space: nowrap;
-}
-
-/* =========================
-   SOURCE
-========================= */
-
-.source-header {
-  width: 105px;
-  min-width: 105px;
-  max-width: 105px;
-
-  background: #050505;
-  color: white;
-
-  font-size: 11px;
-}
-
-.source-cell {
-  width: 105px;
-  min-width: 105px;
-  max-width: 105px;
-
-  font-size: 9px;
-  font-weight: 700;
-
-  background: #ffffff;
-}
-
-.total-row .source-cell {
-  background: #000000;
-  color: white;
-}
-
-/* =========================
-   GROUP HEADERS
-========================= */
-
-.group-header {
-  height: 25px;
-
-  font-size: 12px;
-  font-weight: 800;
-
-  color: #111827;
-}
-
-.sub-header {
-  height: 20px;
-
-  font-size: 9px;
-  font-weight: 800;
-}
-
-/* =========================
-   GROUP COLORS
-========================= */
-
-.orders {
-  background: #b9e5ef;
-}
-
-.meals {
-  background: #c6df96;
-}
-
-.value {
-  background: #f5c59d;
-}
-
-.prepaid {
-  background: #9dc9e4;
-}
-
-.discount {
-  background: #d99a9e;
-}
-
-.revenue {
-  background: #b4b0a9;
-}
-
-.complaints {
-  background: #5b8dce;
-}
-
-.feedback {
-  background: #8acb48;
-}
-
-.undelivered {
-  background: #4d4d4d;
-  color: white;
-}
-
-/* =========================
-   SOURCE ROW COLORS
-========================= */
-
-.matrix-table tbody tr:nth-child(even) td {
-  filter: brightness(0.98);
-}
-
-.matrix-table tbody tr:hover td {
-  outline: 1px solid #2563eb;
-  background-color: #e7f0ff !important;
-}
-
-/* TOTAL */
-.total-row td {
-  font-weight: 800;
-}
-
-/* SOURCE COLORS */
-.matrix-table tbody tr:not(.total-row) .source-cell {
-  background: #ef1818;
-  color: white;
-}
-
-.matrix-table tbody tr:nth-child(3) .source-cell {
-  background: #ef1818;
-}
-
-.matrix-table tbody tr:nth-child(4) .source-cell {
-  background: #ef1818;
-}
-
-.matrix-table tbody tr:nth-child(5) .source-cell {
-  background: #ef1818;
-}
-
-/* =========================
-   OUTLETS
-========================= */
-
-.outlets-header,
-.outlet-cell {
-  width: 38px;
-  min-width: 38px;
-  max-width: 38px;
-
-  background: #fff000;
-  font-weight: 800;
-}
-
-.outlets-header {
-  background: #ff9f00;
-  color: white;
-}
-
-/* =========================
-   STICKY SOURCE COLUMN
-========================= */
-
-.sticky-source {
-  position: sticky;
-  left: 0;
-  z-index: 5;
-}
-
-thead .sticky-source {
-  z-index: 20;
-}
-
-tbody .sticky-source {
-  box-shadow: 3px 0 5px rgba(0, 0, 0, 0.12);
-}
-
-/* =========================
-   DATE STAYS VISIBLE
-========================= */
-
-.date-bar {
-  position: sticky;
-  left: 0;
-  z-index: 15;
-}
-
-/* =========================
-   NOTE
-========================= */
-
-.report-note {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #64748b;
-}
-
-/* =========================
-   SCROLLBAR
-========================= */
-
-.matrix-scroll::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-
-.matrix-scroll::-webkit-scrollbar-track {
-  background: #eef1f5;
-}
-
-.matrix-scroll::-webkit-scrollbar-thumb {
-  background: #8b95a5;
-  border-radius: 8px;
-}
-
-.matrix-scroll::-webkit-scrollbar-thumb:hover {
-  background: #5c6675;
-}
-
-/* Firefox */
-.matrix-scroll {
-  scrollbar-width: auto;
-  scrollbar-color: #8b95a5 #eef1f5;
-}
-
-/* =========================
-   MOBILE
-========================= */
-
-@media (max-width: 900px) {
-  .report-toolbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-  }
-
-  .search {
-    width: 200px;
-  }
-
-  .matrix-scroll {
-    height: calc(100vh - 230px);
-  }
-}
+const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
+
+const createEmptyMetrics = (): RowMetrics => ({
+  orders: 0,
+  deliveredOrders: 0,
+  meals: 0,
+  value: 0,
+  prepaidValue: 0,
+  discount: 0,
+  revenue: 0,
+  complaints: 0,
+  feedback: 0,
+  undelivered: 0,
+});
+
+const getSource = (row: any): string => {
+  const channel = String(row['Source'] || row['Channel'] || row['Booking Channel'] || '').toUpperCase();
+  const orderId = String(row['IRCTC Order ID'] || row['Order ID'] || '').toUpperCase();
+
+  if (channel.includes('MMT') || channel.includes('MAKEMYTRIP')) return 'MakeMyTrip';
+  if (channel.includes('APP') || channel.includes('REL_APP')) return 'REL_Food_App';
+  if (channel.includes('WEB') || channel.includes('WEBSITE')) return 'RELFood_WEBSITE';
+  return 'RELFood_IRCTC';
+};
+
+const formatDisplayDate = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
+
+// 1. Core Data Transformer: Raw Master Orders -> Date-wise Aggregated Matrix
+export const processMainReportData = (masterData: any[]): ReportDayBlock[] => {
+  if (!masterData || masterData.length === 0) return [];
+
+  // Group by Date
+  const dateMap: Record<string, any[]> = {};
+  masterData.forEach((row) => {
+    const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
+    const dateKey = String(rawDate).split(' ')[0].split('T')[0];
+    if (!dateMap[dateKey]) dateMap[dateKey] = [];
+    dateMap[dateKey].push(row);
+  });
+
+  const sortedDates = Object.keys(dateMap).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+  // Running MTD Accumulators
+  const mtdCumulativeBySource: Record<string, RowMetrics> = {};
+  SOURCES.forEach((s) => (mtdCumulativeBySource[s] = createEmptyMetrics()));
+  const mtdGrandTotal = createEmptyMetrics();
+
+  return sortedDates.map((dateKey) => {
+    const rows = dateMap[dateKey];
+    const outletsSet = new Set<string>();
+
+    const dayStatsBySource: Record<string, RowMetrics> = {};
+    SOURCES.forEach((s) => (dayStatsBySource[s] = createEmptyMetrics()));
+    const dayTotal = createEmptyMetrics();
+
+    rows.forEach((r) => {
+      const src = getSource(r);
+      const isDelivered = r['Final Status'] === 'Delivered';
+      const isUndelivered = r['Final Status'] === 'Not Delivered' || String(r['IRCTC Status'] || '').toUpperCase().includes('UNDELIVERED');
+      const sellingPrice = parseFloat(r['Final Selling Price'] || r['Selling Price'] || 0) || 0;
+      const discount = parseFloat(r['Final Total Discount'] || r['Total Discount'] || 0) || 0;
+      const rfComm = parseFloat(r['Final RF Commission'] || r['RF Comm'] || 0) || 0;
+      const prepaid = parseFloat(r['PPD'] || r['Prepaid'] || 0) || 0;
+      const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
+      const outletId = String(r['Outlet ID'] || '').trim();
+
+      const st = dayStatsBySource[src] || dayStatsBySource['RELFood_IRCTC'];
+      st.orders += 1;
+      if (isDelivered) st.deliveredOrders += 1;
+      if (isUndelivered) st.undelivered += 1;
+      st.meals += mealCount;
+      st.value += sellingPrice;
+      st.prepaidValue += prepaid;
+      st.discount += discount;
+      st.revenue += rfComm;
+
+      if (r['Rating'] && parseFloat(r['Rating']) > 0) st.feedback += 1;
+      if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) st.complaints += 1;
+      if (outletId) outletsSet.add(outletId);
+    });
+
+    // Accumulate to Day Total & MTD
+    const bySourcePayload: Record<string, { ftd: RowMetrics; mtd: RowMetrics }> = {};
+
+    SOURCES.forEach((s) => {
+      const st = dayStatsBySource[s];
+      dayTotal.orders += st.orders;
+      dayTotal.deliveredOrders += st.deliveredOrders;
+      dayTotal.meals += st.meals;
+      dayTotal.value += st.value;
+      dayTotal.prepaidValue += st.prepaidValue;
+      dayTotal.discount += st.discount;
+      dayTotal.revenue += st.revenue;
+      dayTotal.complaints += st.complaints;
+      dayTotal.feedback += st.feedback;
+      dayTotal.undelivered += st.undelivered;
+
+      const m = mtdCumulativeBySource[s];
+      m.orders += st.orders;
+      m.deliveredOrders += st.deliveredOrders;
+      m.meals += st.meals;
+      m.value += st.value;
+      m.prepaidValue += st.prepaidValue;
+      m.discount += st.discount;
+      m.revenue += st.revenue;
+      m.complaints += st.complaints;
+      m.feedback += st.feedback;
+      m.undelivered += st.undelivered;
+
+      bySourcePayload[s] = {
+        ftd: { ...st },
+        mtd: { ...m },
+      };
+    });
+
+    mtdGrandTotal.orders += dayTotal.orders;
+    mtdGrandTotal.deliveredOrders += dayTotal.deliveredOrders;
+    mtdGrandTotal.meals += dayTotal.meals;
+    mtdGrandTotal.value += dayTotal.value;
+    mtdGrandTotal.prepaidValue += dayTotal.prepaidValue;
+    mtdGrandTotal.discount += dayTotal.discount;
+    mtdGrandTotal.revenue += dayTotal.revenue;
+    mtdGrandTotal.complaints += dayTotal.complaints;
+    mtdGrandTotal.feedback += dayTotal.feedback;
+    mtdGrandTotal.undelivered += dayTotal.undelivered;
+
+    return {
+      dateLabel: formatDisplayDate(dateKey),
+      rawDate: dateKey,
+      outletsCount: outletsSet.size,
+      dayTotal: { ...dayTotal },
+      mtdTotal: { ...mtdGrandTotal },
+      bySource: bySourcePayload,
+    };
+  });
+};
+
+// 2. Export Date-Wise Formatted Excel (Matches Screenshot Exactly)
+export const exportMainReportToExcel = (masterData: any[], fileName?: string) => {
+  const blocks = processMainReportData(masterData);
+  if (blocks.length === 0) return;
+
+  const excelRows: any[][] = [];
+  const merges: XLSX.Range[] = [];
+  let rIdx = 0;
+
+  const buildRow = (label: string, ftd: RowMetrics, mtd: RowMetrics, outlets: string | number = '') => {
+    const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
+    const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(0)}%` : '0%';
+    const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
+    const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
+    const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
+    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
+
+    return [
+      label,
+      ftd.orders, mtd.orders, 0, orderAsp, delPct,
+      ftd.meals, mtd.meals, 0, mealAsp, mpo,
+      Math.round(ftd.value), Math.round(mtd.value), 0,
+      Math.round(ftd.prepaidValue), Math.round(mtd.prepaidValue), 0, prepaidPct,
+      Math.round(ftd.discount), Math.round(mtd.discount), 0, discountPct,
+      Math.round(ftd.revenue), Math.round(mtd.revenue), 0, revenuePct,
+      ftd.complaints, mtd.complaints, 0, complaintPct,
+      ftd.feedback, mtd.feedback, 0, feedbackPct,
+      ftd.undelivered, mtd.undelivered, 0, undeliveredPct,
+      outlets,
+    ];
+  };
+
+  blocks.forEach((blk) => {
+    // 1. Red Date Banner Row
+    const dateRow = new Array(39).fill('');
+    dateRow[0] = blk.dateLabel;
+    excelRows.push(dateRow);
+    merges.push({ s: { r: rIdx, c: 0 }, e: { r: rIdx, c: 38 } });
+    rIdx++;
+
+    // 2. Group Headers
+    excelRows.push([
+      'Source',
+      'ORDERS', '', '', '', '',
+      'MEALS', '', '', '', '',
+      'VALUE', '', '',
+      'PREPAID', '', '', '',
+      'DISCOUNT', '', '', '',
+      'REVENUE', '', '', '',
+      'Complaints', '', '', '',
+      'Feedback', '', '', '',
+      'IRCTC Undelivered', '', '', '',
+      'Outlets',
+    ]);
+    merges.push({ s: { r: rIdx, c: 1 }, e: { r: rIdx, c: 5 } });
+    merges.push({ s: { r: rIdx, c: 6 }, e: { r: rIdx, c: 10 } });
+    merges.push({ s: { r: rIdx, c: 11 }, e: { r: rIdx, c: 13 } });
+    merges.push({ s: { r: rIdx, c: 14 }, e: { r: rIdx, c: 17 } });
+    merges.push({ s: { r: rIdx, c: 18 }, e: { r: rIdx, c: 21 } });
+    merges.push({ s: { r: rIdx, c: 22 }, e: { r: rIdx, c: 25 } });
+    merges.push({ s: { r: rIdx, c: 26 }, e: { r: rIdx, c: 29 } });
+    merges.push({ s: { r: rIdx, c: 30 }, e: { r: rIdx, c: 33 } });
+    merges.push({ s: { r: rIdx, c: 34 }, e: { r: rIdx, c: 37 } });
+    rIdx++;
+
+    // 3. Sub-headers
+    excelRows.push([
+      '',
+      'FTD', 'MTD', 'LMTD', 'ASP', 'Del%',
+      'FTD', 'MTD', 'LMTD', 'ASP', 'MPO',
+      'FTD', 'MTD', 'LMTD',
+      'FTD', 'MTD', 'LMTD', '%',
+      'FTD', 'MTD', 'LMTD', '%',
+      'FTD', 'MTD', 'LMTD', '%',
+      'FTD', 'MTD', 'LMTD', '%',
+      'FTD', 'MTD', 'LMTD', '%',
+      'FTD', 'MTD', 'LMTD', '%',
+      '',
+    ]);
+    rIdx++;
+
+    // 4. Total Row
+    excelRows.push(buildRow('Total', blk.dayTotal, blk.mtdTotal, blk.outletsCount));
+    rIdx++;
+
+    // 5. Source Rows
+    SOURCES.forEach((s) => {
+      const srcData = blk.bySource[s];
+      excelRows.push(buildRow(s, srcData.ftd, srcData.mtd, ''));
+      rIdx++;
+    });
+
+    // Merge Outlets cell vertically across all rows of this date block
+    merges.push({ s: { r: rIdx - 5, c: 38 }, e: { r: rIdx - 1, c: 38 } });
+
+    // Spacer
+    excelRows.push(new Array(39).fill(''));
+    rIdx++;
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(excelRows);
+  ws['!merges'] = merges;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Main Report');
+  XLSX.writeFile(wb, fileName || `Main_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
