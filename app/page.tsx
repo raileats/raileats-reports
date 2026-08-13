@@ -173,6 +173,9 @@ export default function Page() {
   const [penaltyRawRecords, setPenaltyRawRecords] = useState<any[]>([]);
   const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
   const [outletsMasterInfo, setOutletsMasterInfo] = useState<Record<string, any>>({});
+  // Raw IRCTC data is kept separately because Station Report feedback counts
+  // must be calculated from the complete IRCTC report (Delivery Station + Feedback Type).
+  const [irctcRawData, setIrctcRawData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -196,6 +199,7 @@ export default function Page() {
         const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
         const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
         const storedOutletsInfo = await loadFromDB('OUTLET_MASTER_INFO');
+        const storedIrctcData = await loadFromDB('CURRENT_IRCTC_DATA');
 
         if (Array.isArray(storedMaster) && storedMaster.length > 0) setData(storedMaster);
         if (storedPenalty && typeof storedPenalty === 'object') {
@@ -207,6 +211,9 @@ export default function Page() {
         }
         if (storedOutletsInfo && typeof storedOutletsInfo === 'object') {
           setOutletsMasterInfo(storedOutletsInfo);
+        }
+        if (Array.isArray(storedIrctcData) && storedIrctcData.length > 0) {
+          setIrctcRawData(storedIrctcData);
         }
       } catch (err) {
         console.error('Failed to load DB:', err);
@@ -225,6 +232,7 @@ export default function Page() {
       setPenaltyRawRecords([]);
       setCurrentMonthRecords([]);
       setOutletsMasterInfo({});
+      setIrctcRawData([]);
     }
   };
 
@@ -298,6 +306,12 @@ export default function Page() {
         setStatusText('Reading Feedback Report...');
         feedbackData = await parseAnyFile(feedbackFile);
       }
+
+      // IMPORTANT: Keep the COMPLETE IRCTC raw report. Station Report feedback
+      // counts are based on IRCTC Delivery Station + Feedback Type, not on the
+      // separately uploaded Feedback report and not only on matched master rows.
+      await saveToDB('CURRENT_IRCTC_DATA', irctcData);
+      setIrctcRawData(irctcData);
 
       const penaltyOutletMap: Record<string, number> = {};
       const penaltyRawFilteredList: any[] = [];
@@ -713,7 +727,7 @@ export default function Page() {
         generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
         break;
       case 'STATION_REPORT':
-        generateStationReportWorkbook(data, outletsMasterInfo);
+        generateStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
         break;
       case 'VENDOR_REPORT':
         generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary);
