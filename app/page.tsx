@@ -461,6 +461,10 @@ export default function Page() {
           'Outlet ID': outletId,
           'Vendor Name': rf['Vendor Name'] || irctc['Vendor Name'] || '',
           'Station Code': rf['Station Code'] || irctc['Delivery Station'] || '',
+          // Preserve the exact IRCTC feedback source inside master data.
+          // This makes Station Report independent of IndexedDB raw-data state.
+          'Delivery Station': irctc['Delivery Station'] || '',
+          'Feedback Type': irctc['Feedback Type'] || '',
           'State': outletInfo.state || '',
           'GST No': outletInfo.gst || '',
           'Outlet IRCTC Status': outletInfo.irctcStatus || '',
@@ -649,19 +653,71 @@ export default function Page() {
       map[stn].gst += r['Final GST'] || 0;
     });
 
-    // Exact source mapping: IRCTC Delivery Station + Feedback Type.
-    (irctcRawData || []).forEach((r) => {
-      const station = String(r['Delivery Station'] ?? '').trim().toUpperCase();
-      const type = String(r['Feedback Type'] ?? '').trim().toUpperCase();
+    // Exact source mapping:
+    // Delivery Station + Feedback Type
+    //
+    // First count from master data because it is now guaranteed to preserve
+    // the IRCTC fields. If a station is not present in master data, use the
+    // raw IRCTC data as a fallback.
+    const countedStations = new Set<string>();
+
+    data.forEach((r) => {
+      const station = String(
+        r['Delivery Station'] || r['Station Code'] || ''
+      ).trim().toUpperCase();
+      const type = String(r['Feedback Type'] || '').trim().toUpperCase();
+
       if (!station || !['FEEDBACK', 'COMPLAIN'].includes(type)) return;
 
       if (!map[station]) {
         map[station] = {
-          station, state: '', totalOrders: 0, delivered: 0, cancelled: 0,
-          sellingPrice: 0, vendorPrice: 0, rfComm: 0, gst: 0,
-          feedbackGood: 0, feedbackBad: 0,
+          station,
+          state: r['State'] || '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
         };
       }
+
+      if (type === 'FEEDBACK') map[station].feedbackGood += 1;
+      if (type === 'COMPLAIN') map[station].feedbackBad += 1;
+      countedStations.add(station);
+    });
+
+    // Raw IRCTC fallback only for stations that have not already been counted
+    // from master data.
+    (irctcRawData || []).forEach((r) => {
+      const station = String(r['Delivery Station'] ?? '').trim().toUpperCase();
+      const type = String(r['Feedback Type'] ?? '').trim().toUpperCase();
+
+      if (
+        !station ||
+        !['FEEDBACK', 'COMPLAIN'].includes(type) ||
+        countedStations.has(station)
+      ) return;
+
+      if (!map[station]) {
+        map[station] = {
+          station,
+          state: '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
+        };
+      }
+
       if (type === 'FEEDBACK') map[station].feedbackGood += 1;
       if (type === 'COMPLAIN') map[station].feedbackBad += 1;
     });
