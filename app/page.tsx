@@ -1307,6 +1307,7 @@ export default function Page() {
     irctcRawData,
     outletsMasterInfo,
     oldRatingsRawData,
+    data,
   ]);
 
   // Vendor RDS screen must use the EXACT same 41-column aggregation engine
@@ -1437,17 +1438,47 @@ export default function Page() {
         s['Feedback Bad'] || 0,
       ]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
-      head = [['Vendor Name', 'Outlet ID', 'State', 'Total Orders', 'Delivered', 'Selling Amount', 'Vendor Payout', 'RF Commission', 'Penalty Total']];
+      // Vendor Report / Vendor RDS uses the same named fields as the
+      // Vendor Excel generator. Do not use the old simplified property
+      // names (vendor/outletId/state/etc.) here because VendorReportRow
+      // is column-name based.
+      head = [[
+        'Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name',
+        'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission',
+        'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount',
+        'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges',
+        'Final Selling Price', 'Final Order Total', 'Discounted Base Price',
+        'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders',
+        'Not Delivered', 'Not Delivered %', 'Prepaid %'
+      ]];
       body = vendorSummary.map((v) => [
-        String(v.vendor).substring(0, 22),
-        v.outletId,
-        v.state || '-',
-        v.totalOrders,
-        v.delivered,
-        `₹${v.sellingPrice.toFixed(2)}`,
-        `₹${v.vendorPrice.toFixed(2)}`,
-        `₹${v.rfComm.toFixed(2)}`,
-        `₹${v.penalty.toFixed(2)}`,
+        v['Aggregator Outlet ID'],
+        v['Station Code'],
+        v['Rank'],
+        v['Station Name'],
+        String(v['Vendor Name'] || '').substring(0, 22),
+        `₹${Number(v['Vendor Price'] || 0).toFixed(2)}`,
+        `₹${Number(v['Net Payment'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Base Price'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Total Commission'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final IRCTC Comm'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final RF Commission'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final GST'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Discount'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Vendor Discount'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final RF Discount'] || 0).toFixed(2)}`,
+        `₹${Number(v['Delivery Charges'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Selling Price'] || 0).toFixed(2)}`,
+        `₹${Number(v['Final Order Total'] || 0).toFixed(2)}`,
+        `₹${Number(v['Discounted Base Price'] || 0).toFixed(2)}`,
+        `₹${Number(v['PPD'] || 0).toFixed(2)}`,
+        `₹${Number(v['COD'] || 0).toFixed(2)}`,
+        `₹${Number(v['Meals'] || 0).toFixed(2)}`,
+        v['Check'] || '-',
+        v['Count of Delivered Orders'] || 0,
+        v['Count of Not_Delivered As per IRCTC Status'] || 0,
+        v['Not_Delivered %'] || '0.00%',
+        v['Prepaid %'] || '0.00%',
       ]);
     } else if (selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') {
       head = [['Date', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Price', 'RF Commission']];
