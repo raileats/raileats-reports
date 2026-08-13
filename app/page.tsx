@@ -627,30 +627,43 @@ export default function Page() {
 
   // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
-    // IMPORTANT: Feedback counts come ONLY from the raw IRCTC report:
-    // Delivery Station + Feedback Type.
-    // FEEDBACK => Feedback Good
-    // COMPLAIN => Feedback Bad
+    // EXACT IRCTC FEEDBACK MAPPING:
+    // Delivery Station -> Station Code
+    // Feedback Type = FEEDBACK -> Feedback Good
+    // Feedback Type = COMPLAIN -> Feedback Bad
+    const normalizeStation = (value: any): string => {
+      let v = String(value ?? '').trim().toUpperCase();
+      if (!v) return '';
+      if (v.includes('-')) v = v.split('-')[0].trim();
+      if (v.includes('(')) v = v.split('(')[0].trim();
+      if (v.includes('/')) v = v.split('/')[0].trim();
+      return v.replace(/[^A-Z0-9]/g, '');
+    };
+
     const feedbackMap: Record<string, { good: number; bad: number }> = {};
 
     (irctcRawData || []).forEach((r: any) => {
-      const station = String(
+      const station = normalizeStation(
         r['Delivery Station'] ?? r['DeliveryStation'] ?? ''
-      ).trim().toUpperCase();
+      );
       const type = String(
-        r['Feedback Type'] ?? r['FeedbackType'] ?? ''
+        r['Feedback Type'] ?? r['FeedbackType'] ?? r['FEEDBACK TYPE'] ?? ''
       ).trim().toUpperCase();
 
       if (!station) return;
       if (!feedbackMap[station]) feedbackMap[station] = { good: 0, bad: 0 };
 
       if (type === 'FEEDBACK') feedbackMap[station].good += 1;
-      if (type === 'COMPLAIN') feedbackMap[station].bad += 1;
+      else if (type === 'COMPLAIN') feedbackMap[station].bad += 1;
     });
 
     const map: Record<string, any> = {};
-    data.forEach((r) => {
-      const stn = String(r['Station Code'] || 'UNKNOWN').trim().toUpperCase();
+
+    // First create rows from master/order data.
+    (data || []).forEach((r) => {
+      const stn = normalizeStation(r['Station Code'] || r['Delivery Station'] || '');
+      if (!stn) return;
+
       if (!map[stn]) {
         map[stn] = {
           station: stn,
@@ -666,6 +679,7 @@ export default function Page() {
           feedbackBad: feedbackMap[stn]?.bad || 0,
         };
       }
+
       map[stn].totalOrders += 1;
       if (r['Final Status'] === 'Delivered') map[stn].delivered += 1;
       if (r['Final Status'] === 'Cancelled') map[stn].cancelled += 1;
@@ -674,6 +688,30 @@ export default function Page() {
       map[stn].rfComm += Number(r['Final RF Commission'] || 0);
       map[stn].gst += Number(r['Final GST'] || 0);
     });
+
+    // Also add any IRCTC station that has feedback but is missing from master data.
+    Object.keys(feedbackMap).forEach((stn) => {
+      if (!map[stn]) {
+        map[stn] = {
+          station: stn,
+          state: '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: feedbackMap[stn].good,
+          feedbackBad: feedbackMap[stn].bad,
+        };
+      } else {
+        // Always overwrite from raw IRCTC map so counts cannot be lost.
+        map[stn].feedbackGood = feedbackMap[stn].good;
+        map[stn].feedbackBad = feedbackMap[stn].bad;
+      }
+    });
+
     return Object.values(map);
   }, [data, irctcRawData]);
 
@@ -749,9 +787,35 @@ export default function Page() {
       case 'VENDOR_RDS':
         generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
         break;
-      case 'STATION_REPORT':
-        generateStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
+      case 'STATION_REPORT': {
+        if (!stationSummary.length) {
+          alert('Station Report ke liye data available nahi hai!');
+          break;
+        }
+
+        // DIRECT EXPORT: feedback counts yahin se export honge, so they do not
+        // depend on a separate stationReportGenerator.ts file being updated.
+        const stationExportRows = stationSummary.map((r: any, index: number) => ({
+          'Station Code': r.station,
+          'Rank': index + 1,
+          'State': r.state || '',
+          'Total Orders': r.totalOrders,
+          'Delivered': r.delivered,
+          'Cancelled': r.cancelled,
+          'Selling Amount': Number(r.sellingPrice.toFixed(2)),
+          'Vendor Payout': Number(r.vendorPrice.toFixed(2)),
+          'RF Commission': Number(r.rfComm.toFixed(2)),
+          'GST (5%)': Number(r.gst.toFixed(2)),
+          'Feedback Good': r.feedbackGood,
+          'Feedback Bad': r.feedbackBad,
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(stationExportRows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Station Report');
+        XLSX.writeFile(wb, `STATION_REPORT_${new Date().toISOString().slice(0, 10)}.xlsx`);
         break;
+      }
       case 'VENDOR_REPORT':
         generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary);
         break;
@@ -1272,6 +1336,12 @@ export default function Page() {
                 )}
 
                 {/* 2. STATION / LAST DAY STATION VIEW */}
+                {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
+                  <div className="mb-3 px-3 py-2 rounded-lg bg-indigo-950/40 border border-indigo-700/40 text-xs text-indigo-200">
+                    Feedback source: <b>IRCTC Report → Delivery Station + Feedback Type</b> | FEEDBACK = Good, COMPLAIN = Bad
+                  </div>
+                )}
+
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
                   <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
