@@ -82,7 +82,8 @@ const getValue = (row: any, keys: string[]): any => {
 
 export const generateLastDayStationReportWorkbook = (
   masterData: any[],
-  outletsMasterInfo: Record<string, any> = {}
+  outletsMasterInfo: Record<string, any> = {},
+  irctcOrders: any[] = []
 ) => {
   if (!masterData || masterData.length === 0) {
     alert('Master Data khali hai! Pehle reports process karein.');
@@ -114,6 +115,49 @@ export const generateLastDayStationReportWorkbook = (
   const lastDayRows = masterData.filter((row) => {
     const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'Date of Booking', 'Date']);
     return normalizeToDeliveryDate(rawDate) === lastDeliveryDateStr;
+  });
+
+  // -------------------------------------------------------------------------
+  // Raw IRCTC feedback map.
+  // Delivery Station + Feedback Type:
+  // FEEDBACK -> Feedback Good
+  // COMPLAIN -> Feedback Bad
+  // -------------------------------------------------------------------------
+  const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
+
+  const normalizeStationCode = (val: any): string => {
+    if (val === null || val === undefined) return '';
+    let s = String(val).trim().toUpperCase();
+    if (!s) return '';
+    if (s.includes('-')) s = s.split('-')[0].trim();
+    if (s.includes('(')) s = s.split('(')[0].trim();
+    if (s.includes('/')) s = s.split('/')[0].trim();
+    return s.replace(/[^A-Z0-9]/g, '');
+  };
+
+  (irctcOrders || []).forEach((row: any) => {
+    const station = normalizeStationCode(
+      getValue(row, ['Delivery Station', 'DeliveryStation', 'Station Code', 'StationCode', 'Station'])
+    );
+    if (!station) return;
+
+    const type = String(
+      getValue(row, ['Feedback Type', 'FeedbackType', 'AD Feedback Type']) || ''
+    ).trim().toUpperCase();
+
+    if (type !== 'FEEDBACK' && type !== 'COMPLAIN') return;
+
+    const rawDate = getValue(row, ['Delivery Date', 'DeliveryDate', 'Booking Date', 'Date of Booking', 'Date']);
+    const irctcDate = normalizeToDeliveryDate(rawDate);
+
+    if (irctcDate && irctcDate !== lastDeliveryDateStr) return;
+
+    if (!irctcFeedbackMap[station]) {
+      irctcFeedbackMap[station] = { good: 0, bad: 0 };
+    }
+
+    if (type === 'FEEDBACK') irctcFeedbackMap[station].good += 1;
+    if (type === 'COMPLAIN') irctcFeedbackMap[station].bad += 1;
   });
 
   // 3. Map Master Outlets
@@ -226,17 +270,18 @@ export const generateLastDayStationReportWorkbook = (
 
     const st = stationMap[stationCode];
 
-    // --- ACCURATE FEEDBACK & COMPLAINT COUNTS ---
-    const feedbackVal = String(getValue(r, ['Feedback', 'feedback', 'Customer Feedback']) || '').trim();
-    const complaintVal = String(getValue(r, ['Complaint', 'complaint', 'Complaint Comment', 'Comment']) || '').trim();
+    // --- EXACT FEEDBACK TYPE MAPPING ---
+    // FEEDBACK  -> Feedback Good
+    // COMPLAIN  -> Feedback Bad
+    const feedbackType = String(
+      getValue(r, ['Feedback Type', 'FeedbackType', 'AD Feedback Type']) || ''
+    ).trim().toUpperCase();
 
-    // If row has text in Feedback column -> Count in Feedback Good
-    if (feedbackVal.length > 0) {
+    if (feedbackType === 'FEEDBACK') {
       st.feedbackGoodCount += 1;
     }
 
-    // If row has text in Complaint column -> Count in Feedback Bad
-    if (complaintVal.length > 0) {
+    if (feedbackType === 'COMPLAIN') {
       st.feedbackBadCount += 1;
     }
 
@@ -268,6 +313,42 @@ export const generateLastDayStationReportWorkbook = (
         st.stationAllOutlets.add(outletId);
       }
     }
+  });
+
+  // Raw IRCTC counts are authoritative when supplied.
+  Object.entries(irctcFeedbackMap).forEach(([station, counts]) => {
+    if (!stationMap[station]) {
+      stationMap[station] = {
+        stationCode: station,
+        stationName: station,
+        vendorPrice: 0,
+        finalBasePrice: 0,
+        finalTotalComm: 0,
+        finalIrctcComm: 0,
+        finalRfComm: 0,
+        finalGst: 0,
+        finalDiscount: 0,
+        finalVendorDiscount: 0,
+        finalRfDiscount: 0,
+        deliveryCharges: 0,
+        finalSellingPrice: 0,
+        finalOrderTotal: 0,
+        discountedBasePrice: 0,
+        ppd: 0,
+        cod: 0,
+        meals: 0,
+        deliveredOrdersCount: 0,
+        notDeliveredOrdersCount: 0,
+        feedbackGoodCount: 0,
+        feedbackBadCount: 0,
+        deliveredOutlets: new Set<string>(),
+        stationAllOutlets: stationTotalOutletsMap[station]
+          ? new Set<string>(stationTotalOutletsMap[station])
+          : new Set<string>(),
+      };
+    }
+    stationMap[station].feedbackGoodCount = counts.good;
+    stationMap[station].feedbackBadCount = counts.bad;
   });
 
   // Sort descending by Final Base Price
