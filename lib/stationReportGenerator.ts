@@ -88,10 +88,18 @@ export const generateStationWiseData = (
     }
   });
 
-  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana
+  // B. STEP 1: Feedback Good/Bad map.
+  // Primary source = raw IRCTC file.
+  // Fallback = master rows, which also carry Delivery Station + Feedback Type.
+  // This prevents zero counts when the raw IRCTC array is not persisted.
   const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
 
-  (irctcOrders || []).forEach((row: any) => {
+  const feedbackSource =
+    Array.isArray(irctcOrders) && irctcOrders.length > 0
+      ? irctcOrders
+      : (masterOrders || []);
+
+  feedbackSource.forEach((row: any) => {
     const rawStation = getVal(row, [
       'Delivery Station',
       'DeliveryStation',
