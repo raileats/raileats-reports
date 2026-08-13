@@ -368,10 +368,10 @@ const buildFeedbackReport = (
   });
 
   // IMPORTANT:
-  // Old Ratings are used ONLY as historical values for Outlet IDs that are
-  // already present in the current IRCTC-matched report.
-  //
-  // Do NOT add Old-Ratings-only outlets to the final report.
+  // Old Ratings / Old Feedback is the FINAL OUTLET MASTER for this report.
+  // Every Outlet ID present here will appear in the final report.
+  // Current Feedback/IRCTC data only fills Complaint and Feedback counts
+  // when a current match exists.
   Object.values(oldMap).forEach((old) => {
     const current = outletMap[old.outletId];
     if (!current) return;
@@ -388,15 +388,63 @@ const buildFeedbackReport = (
     current['Old Sum'] = old.oldSum;
   });
 
-  // STEP 7: Rating calculations.
+  // STEP 7: Build the FINAL outlet list.
+  //
+  // IMPORTANT BUSINESS RULE:
+  // The final Feedback Report's Outlet ID list MUST come from the
+  // Old Feedback / Old Ratings file.
+  //
+  // Current Feedback + IRCTC data only supplies the current
+  // Complaint / Feedback counts for those Outlet IDs.
+  //
+  // Therefore:
+  //   Old Ratings Outlet IDs = FINAL BASE ROWS
+  //   Current matched counts = attached to those rows
+  //
+  // Current-only / IRCTC-only outlets are NOT added to this report.
+  const finalOutletMap: Record<string, FeedbackReportRow> = {};
+
+  if (Object.keys(oldMap).length > 0) {
+    Object.values(oldMap).forEach((old) => {
+      const current = outletMap[old.outletId];
+
+      finalOutletMap[old.outletId] = {
+        'Outlet Id': old.outletId,
+        'Outlet Name': old.outletName || current?.['Outlet Name'] || '',
+        'Station Code': old.stationCode || current?.['Station Code'] || '',
+        Complaint: current?.Complaint || 0,
+        Feedback: current?.Feedback || 0,
+        'Current Count': 0,
+        'Current Rating': 0,
+        'Current Sum': 0,
+        'Old Count': old.oldCount,
+        'Old Ratings': old.oldRatings,
+        'Old Sum': old.oldSum,
+        'Total Count': 0,
+        'Total Rating Sum': 0,
+        'Total Rating': 0,
+      };
+    });
+  } else {
+    // If Old Feedback / Old Ratings has not been uploaded, preserve the
+    // existing current-report behavior rather than returning an empty report.
+    Object.entries(outletMap).forEach(([outletId, row]) => {
+      finalOutletMap[outletId] = row;
+    });
+  }
+
+  // STEP 8: Rating calculations.
   //
   // Current Rating = Feedback * 5 / (Feedback + Complaint)
   //
-  // Total Rating = (Old Sum + Feedback * 5)
-  //                / (Old Count + Feedback + Complaint)
+  // Current Sum = Current Count * Current Rating
+  //
+  // Till Date Ratings =
+  //   (Old Sum + Current Sum)
+  //   / (Old Count + Current Count)
   //
   // Complaint contributes to count but gives 0 rating points.
-  return Object.values(outletMap)
+  return Object.values(finalOutletMap)
     .map((row) => {
       const currentCount = row.Complaint + row.Feedback;
 
