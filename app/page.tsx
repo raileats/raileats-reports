@@ -169,13 +169,13 @@ type ReportType =
 
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
+  // Raw IRCTC report is kept separately so Station Report can count
+  // Delivery Station + Feedback Type directly from the source file.
+  const [irctcRawData, setIrctcRawData] = useState<any[]>([]);
   const [penaltySummary, setPenaltySummary] = useState<Record<string, number>>({});
   const [penaltyRawRecords, setPenaltyRawRecords] = useState<any[]>([]);
   const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
   const [outletsMasterInfo, setOutletsMasterInfo] = useState<Record<string, any>>({});
-  // Raw IRCTC data is kept separately because Station Report feedback counts
-  // must be calculated from the complete IRCTC report (Delivery Station + Feedback Type).
-  const [irctcRawData, setIrctcRawData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -196,12 +196,13 @@ export default function Page() {
     const fetchStoredData = async () => {
       try {
         const storedMaster = await loadFromDB('CURRENT_MASTER_DATA');
+        const storedIrctc = await loadFromDB('CURRENT_IRCTC_DATA');
         const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
         const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
         const storedOutletsInfo = await loadFromDB('OUTLET_MASTER_INFO');
-        const storedIrctcData = await loadFromDB('CURRENT_IRCTC_DATA');
 
         if (Array.isArray(storedMaster) && storedMaster.length > 0) setData(storedMaster);
+        if (Array.isArray(storedIrctc) && storedIrctc.length > 0) setIrctcRawData(storedIrctc);
         if (storedPenalty && typeof storedPenalty === 'object') {
           setPenaltySummary(storedPenalty.outletTotals || {});
           setPenaltyRawRecords(storedPenalty.records || []);
@@ -211,9 +212,6 @@ export default function Page() {
         }
         if (storedOutletsInfo && typeof storedOutletsInfo === 'object') {
           setOutletsMasterInfo(storedOutletsInfo);
-        }
-        if (Array.isArray(storedIrctcData) && storedIrctcData.length > 0) {
-          setIrctcRawData(storedIrctcData);
         }
       } catch (err) {
         console.error('Failed to load DB:', err);
@@ -232,7 +230,6 @@ export default function Page() {
       setPenaltyRawRecords([]);
       setCurrentMonthRecords([]);
       setOutletsMasterInfo({});
-      setIrctcRawData([]);
     }
   };
 
@@ -300,18 +297,15 @@ export default function Page() {
 
       setStatusText('Reading IRCTC Report...');
       const irctcData = await parseAnyFile(irctcFile);
+      // IMPORTANT: preserve the complete raw IRCTC source for Station Report feedback counts.
+      await saveToDB('CURRENT_IRCTC_DATA', irctcData);
+      setIrctcRawData(irctcData);
 
       let feedbackData: any[] = [];
       if (feedbackFile) {
         setStatusText('Reading Feedback Report...');
         feedbackData = await parseAnyFile(feedbackFile);
       }
-
-      // IMPORTANT: Keep the COMPLETE IRCTC raw report. Station Report feedback
-      // counts are based on IRCTC Delivery Station + Feedback Type, not on the
-      // separately uploaded Feedback report and not only on matched master rows.
-      await saveToDB('CURRENT_IRCTC_DATA', irctcData);
-      setIrctcRawData(irctcData);
 
       const penaltyOutletMap: Record<string, number> = {};
       const penaltyRawFilteredList: any[] = [];
@@ -627,43 +621,10 @@ export default function Page() {
 
   // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
-    // EXACT IRCTC FEEDBACK MAPPING:
-    // Delivery Station -> Station Code
-    // Feedback Type = FEEDBACK -> Feedback Good
-    // Feedback Type = COMPLAIN -> Feedback Bad
-    const normalizeStation = (value: any): string => {
-      let v = String(value ?? '').trim().toUpperCase();
-      if (!v) return '';
-      if (v.includes('-')) v = v.split('-')[0].trim();
-      if (v.includes('(')) v = v.split('(')[0].trim();
-      if (v.includes('/')) v = v.split('/')[0].trim();
-      return v.replace(/[^A-Z0-9]/g, '');
-    };
-
-    const feedbackMap: Record<string, { good: number; bad: number }> = {};
-
-    (irctcRawData || []).forEach((r: any) => {
-      const station = normalizeStation(
-        r['Delivery Station'] ?? r['DeliveryStation'] ?? ''
-      );
-      const type = String(
-        r['Feedback Type'] ?? r['FeedbackType'] ?? r['FEEDBACK TYPE'] ?? ''
-      ).trim().toUpperCase();
-
-      if (!station) return;
-      if (!feedbackMap[station]) feedbackMap[station] = { good: 0, bad: 0 };
-
-      if (type === 'FEEDBACK') feedbackMap[station].good += 1;
-      else if (type === 'COMPLAIN') feedbackMap[station].bad += 1;
-    });
-
     const map: Record<string, any> = {};
-
-    // First create rows from master/order data.
-    (data || []).forEach((r) => {
-      const stn = normalizeStation(r['Station Code'] || r['Delivery Station'] || '');
-      if (!stn) return;
-
+    // First build the normal station report from master data.
+    data.forEach((r) => {
+      const stn = r['Station Code'] || 'UNKNOWN';
       if (!map[stn]) {
         map[stn] = {
           station: stn,
@@ -675,41 +636,34 @@ export default function Page() {
           vendorPrice: 0,
           rfComm: 0,
           gst: 0,
-          feedbackGood: feedbackMap[stn]?.good || 0,
-          feedbackBad: feedbackMap[stn]?.bad || 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
         };
       }
-
       map[stn].totalOrders += 1;
       if (r['Final Status'] === 'Delivered') map[stn].delivered += 1;
       if (r['Final Status'] === 'Cancelled') map[stn].cancelled += 1;
-      map[stn].sellingPrice += Number(r['Final Selling Price'] || 0);
-      map[stn].vendorPrice += Number(r['Final Vendor Price'] || 0);
-      map[stn].rfComm += Number(r['Final RF Commission'] || 0);
-      map[stn].gst += Number(r['Final GST'] || 0);
+      map[stn].sellingPrice += r['Final Selling Price'] || 0;
+      map[stn].vendorPrice += r['Final Vendor Price'] || 0;
+      map[stn].rfComm += r['Final RF Commission'] || 0;
+      map[stn].gst += r['Final GST'] || 0;
     });
 
-    // Also add any IRCTC station that has feedback but is missing from master data.
-    Object.keys(feedbackMap).forEach((stn) => {
-      if (!map[stn]) {
-        map[stn] = {
-          station: stn,
-          state: '',
-          totalOrders: 0,
-          delivered: 0,
-          cancelled: 0,
-          sellingPrice: 0,
-          vendorPrice: 0,
-          rfComm: 0,
-          gst: 0,
-          feedbackGood: feedbackMap[stn].good,
-          feedbackBad: feedbackMap[stn].bad,
+    // Exact source mapping: IRCTC Delivery Station + Feedback Type.
+    (irctcRawData || []).forEach((r) => {
+      const station = String(r['Delivery Station'] ?? '').trim().toUpperCase();
+      const type = String(r['Feedback Type'] ?? '').trim().toUpperCase();
+      if (!station || !['FEEDBACK', 'COMPLAIN'].includes(type)) return;
+
+      if (!map[station]) {
+        map[station] = {
+          station, state: '', totalOrders: 0, delivered: 0, cancelled: 0,
+          sellingPrice: 0, vendorPrice: 0, rfComm: 0, gst: 0,
+          feedbackGood: 0, feedbackBad: 0,
         };
-      } else {
-        // Always overwrite from raw IRCTC map so counts cannot be lost.
-        map[stn].feedbackGood = feedbackMap[stn].good;
-        map[stn].feedbackBad = feedbackMap[stn].bad;
       }
+      if (type === 'FEEDBACK') map[station].feedbackGood += 1;
+      if (type === 'COMPLAIN') map[station].feedbackBad += 1;
     });
 
     return Object.values(map);
@@ -787,35 +741,9 @@ export default function Page() {
       case 'VENDOR_RDS':
         generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
         break;
-      case 'STATION_REPORT': {
-        if (!stationSummary.length) {
-          alert('Station Report ke liye data available nahi hai!');
-          break;
-        }
-
-        // DIRECT EXPORT: feedback counts yahin se export honge, so they do not
-        // depend on a separate stationReportGenerator.ts file being updated.
-        const stationExportRows = stationSummary.map((r: any, index: number) => ({
-          'Station Code': r.station,
-          'Rank': index + 1,
-          'State': r.state || '',
-          'Total Orders': r.totalOrders,
-          'Delivered': r.delivered,
-          'Cancelled': r.cancelled,
-          'Selling Amount': Number(r.sellingPrice.toFixed(2)),
-          'Vendor Payout': Number(r.vendorPrice.toFixed(2)),
-          'RF Commission': Number(r.rfComm.toFixed(2)),
-          'GST (5%)': Number(r.gst.toFixed(2)),
-          'Feedback Good': r.feedbackGood,
-          'Feedback Bad': r.feedbackBad,
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(stationExportRows);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Station Report');
-        XLSX.writeFile(wb, `STATION_REPORT_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      case 'STATION_REPORT':
+        generateStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
         break;
-      }
       case 'VENDOR_REPORT':
         generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary);
         break;
@@ -1336,12 +1264,6 @@ export default function Page() {
                 )}
 
                 {/* 2. STATION / LAST DAY STATION VIEW */}
-                {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <div className="mb-3 px-3 py-2 rounded-lg bg-indigo-950/40 border border-indigo-700/40 text-xs text-indigo-200">
-                    Feedback source: <b>IRCTC Report → Delivery Station + Feedback Type</b> | FEEDBACK = Good, COMPLAIN = Bad
-                  </div>
-                )}
-
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
                   <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
