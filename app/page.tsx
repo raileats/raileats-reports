@@ -627,9 +627,30 @@ export default function Page() {
 
   // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
+    // IMPORTANT: Feedback counts come ONLY from the raw IRCTC report:
+    // Delivery Station + Feedback Type.
+    // FEEDBACK => Feedback Good
+    // COMPLAIN => Feedback Bad
+    const feedbackMap: Record<string, { good: number; bad: number }> = {};
+
+    (irctcRawData || []).forEach((r: any) => {
+      const station = String(
+        r['Delivery Station'] ?? r['DeliveryStation'] ?? ''
+      ).trim().toUpperCase();
+      const type = String(
+        r['Feedback Type'] ?? r['FeedbackType'] ?? ''
+      ).trim().toUpperCase();
+
+      if (!station) return;
+      if (!feedbackMap[station]) feedbackMap[station] = { good: 0, bad: 0 };
+
+      if (type === 'FEEDBACK') feedbackMap[station].good += 1;
+      if (type === 'COMPLAIN') feedbackMap[station].bad += 1;
+    });
+
     const map: Record<string, any> = {};
     data.forEach((r) => {
-      const stn = r['Station Code'] || 'UNKNOWN';
+      const stn = String(r['Station Code'] || 'UNKNOWN').trim().toUpperCase();
       if (!map[stn]) {
         map[stn] = {
           station: stn,
@@ -641,18 +662,20 @@ export default function Page() {
           vendorPrice: 0,
           rfComm: 0,
           gst: 0,
+          feedbackGood: feedbackMap[stn]?.good || 0,
+          feedbackBad: feedbackMap[stn]?.bad || 0,
         };
       }
       map[stn].totalOrders += 1;
       if (r['Final Status'] === 'Delivered') map[stn].delivered += 1;
       if (r['Final Status'] === 'Cancelled') map[stn].cancelled += 1;
-      map[stn].sellingPrice += r['Final Selling Price'] || 0;
-      map[stn].vendorPrice += r['Final Vendor Price'] || 0;
-      map[stn].rfComm += r['Final RF Commission'] || 0;
-      map[stn].gst += r['Final GST'] || 0;
+      map[stn].sellingPrice += Number(r['Final Selling Price'] || 0);
+      map[stn].vendorPrice += Number(r['Final Vendor Price'] || 0);
+      map[stn].rfComm += Number(r['Final RF Commission'] || 0);
+      map[stn].gst += Number(r['Final GST'] || 0);
     });
     return Object.values(map);
-  }, [data]);
+  }, [data, irctcRawData]);
 
   const vendorSummary = useMemo(() => {
     const map: Record<string, any> = {};
@@ -796,7 +819,7 @@ export default function Page() {
         `${r['Margin %']}%`,
       ]);
     } else if (selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') {
-      head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)']];
+      head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)', 'Feedback Good', 'Feedback Bad']];
       body = stationSummary.map((s) => [
         s.station,
         s.state || '-',
@@ -807,6 +830,8 @@ export default function Page() {
         `₹${s.vendorPrice.toFixed(2)}`,
         `₹${s.rfComm.toFixed(2)}`,
         `₹${s.gst.toFixed(2)}`,
+        s.feedbackGood || 0,
+        s.feedbackBad || 0,
       ]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
       head = [['Vendor Name', 'Outlet ID', 'State', 'Total Orders', 'Delivered', 'Selling Amount', 'Vendor Payout', 'RF Commission', 'Penalty Total']];
@@ -1260,6 +1285,8 @@ export default function Page() {
                         <th className="p-3 font-semibold text-right">Vendor Payout</th>
                         <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
                         <th className="p-3 font-semibold text-right text-cyan-400">GST</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Feedback Good</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Feedback Bad</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -1276,6 +1303,8 @@ export default function Page() {
                             <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
                             <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
                             <td className="p-3 text-right text-cyan-400">₹{row.gst.toFixed(2)}</td>
+                            <td className="p-3 text-center font-bold text-emerald-400">{row.feedbackGood || 0}</td>
+                            <td className="p-3 text-center font-bold text-rose-400">{row.feedbackBad || 0}</td>
                           </tr>
                         ))}
                     </tbody>
