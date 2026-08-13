@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
-import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
+import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
@@ -620,6 +620,79 @@ type ReportType =
   | 'OUTLETS_MASTER'
   | 'PENALTIES'
   | 'FEEDBACK_REPORT';
+
+// EXACT column order used by lib/vendorRdsGenerator.ts / Vendor RDS Excel.
+// The first three columns are intentionally fixed in the on-screen table.
+const VENDOR_RDS_COLUMNS = [
+  'Outlet ID',
+  'Vendor Name',
+  'Station Code',
+  'GST Number',
+  'Vendor with Station Code',
+  'Invoice Number',
+  'Final Vendor Price',
+  'Final Base Price',
+  'Final RF Commission',
+  'Final IRCTC Commission',
+  'Final GST',
+  'Final Order Total',
+  'Final Total Commission',
+  'Penalty',
+  'Gross Commission',
+  'IGST',
+  'CGST',
+  'SGST',
+  'IGST+CGST+SGST',
+  'Total This Month',
+  'Paid to Vendors By Relfood',
+  'Delivery Charges',
+  'Previouse Balance',
+  'Final Selling Price',
+  'Final Total Discount',
+  'Final Vendor Discount',
+  'Payment Received from Vendor to Relfood',
+  'Credit Note to Vendor by Relfood',
+  'Final RF Discount',
+  'PPD',
+  'COD',
+  'ADD',
+  'Less',
+  'Net Payment',
+  'As per Reverse',
+  'Diff',
+  'Orders Count',
+  'Meals',
+  'State',
+  'Discounted Base Price',
+  'Margin %',
+] as const;
+
+const VENDOR_RDS_MONEY_COLUMNS = new Set([
+  'Final Vendor Price', 'Final Base Price', 'Final RF Commission',
+  'Final IRCTC Commission', 'Final GST', 'Final Order Total',
+  'Final Total Commission', 'Penalty', 'Gross Commission', 'IGST',
+  'CGST', 'SGST', 'IGST+CGST+SGST', 'Total This Month',
+  'Paid to Vendors By Relfood', 'Delivery Charges', 'Previouse Balance',
+  'Final Selling Price', 'Final Total Discount', 'Final Vendor Discount',
+  'Payment Received from Vendor to Relfood', 'Credit Note to Vendor by Relfood',
+  'Final RF Discount', 'PPD', 'COD', 'ADD', 'Less', 'Net Payment',
+  'As per Reverse', 'Diff', 'Discounted Base Price', 'Margin %',
+]);
+
+const VENDOR_RDS_FIXED_WIDTHS = {
+  outletId: 100,
+  vendorName: 350,
+  stationCode: 140,
+};
+
+const formatVendorRdsCell = (key: string, value: any): string => {
+  if (value === null || value === undefined || value === '') return '-';
+  if (VENDOR_RDS_MONEY_COLUMNS.has(key)) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : String(value);
+  }
+  return String(value);
+};
 
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
@@ -1328,6 +1401,26 @@ export default function Page() {
     oldRatingsRawData,
   ]);
 
+  // Vendor RDS screen must use the EXACT same 41-column aggregation engine
+  // as the Vendor RDS Excel export. This prevents the webpage from showing
+  // the old 9-column Vendor Summary while Excel contains 41 columns.
+  const vendorRdsRows = useMemo(() => {
+    if (selectedReport !== 'VENDOR_RDS') return [];
+
+    return generateVendorRdsData(
+      data,
+      penaltySummary,
+      currentMonthRecords,
+      outletsMasterInfo
+    );
+  }, [
+    selectedReport,
+    data,
+    penaltySummary,
+    currentMonthRecords,
+    outletsMasterInfo,
+  ]);
+
   // --- Exports ---
   const exportMasterExcel = () => {
     if (!data.length) return alert('No Data available!');
@@ -1938,12 +2031,12 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 3. VENDOR / VENDOR RDS VIEW */}
-                {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
-                  <table className="w-full min-w-[1300px] text-left border-collapse text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                {/* 3A. VENDOR REPORT VIEW */}
+                {selectedReport === 'VENDOR_REPORT' && (
+                  <table className="w-full min-w-[1300px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Vendor Name</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Vendor Name</th>
                         <th className="p-3 font-semibold">Outlet ID</th>
                         <th className="p-3 font-semibold">State</th>
                         <th className="p-3 font-semibold text-center">Total Orders</th>
@@ -1959,7 +2052,7 @@ export default function Page() {
                         .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
                           <tr key={i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.vendor}</td>
+                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.vendor}</td>
                             <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
                             <td className="p-3 text-center">{row.totalOrders}</td>
@@ -1968,6 +2061,90 @@ export default function Page() {
                             <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
                             <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
                             <td className="p-3 text-right text-rose-400 font-semibold">₹{row.penalty.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
+                {selectedReport === 'VENDOR_RDS' && (
+                  <table className="w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
+                      <tr>
+                        {VENDOR_RDS_COLUMNS.map((column, index) => {
+                          const sticky = index === 0
+                            ? 'sticky left-0 z-40'
+                            : index === 1
+                              ? 'sticky left-[100px] z-40'
+                              : index === 2
+                                ? 'sticky left-[450px] z-40'
+                                : '';
+                          const width = index === 0
+                            ? 'w-[100px] min-w-[100px] max-w-[100px]'
+                            : index === 1
+                              ? 'w-[350px] min-w-[350px] max-w-[350px]'
+                              : index === 2
+                                ? 'w-[140px] min-w-[140px] max-w-[140px]'
+                                : '';
+                          return (
+                            <th
+                              key={column}
+                              className={`p-3 font-semibold border-b border-slate-800 bg-slate-900 ${sticky} ${width} ${index >= 6 ? 'text-right' : ''}`}
+                            >
+                              {column}
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {vendorRdsRows
+                        .filter((row: any) => {
+                          const q = searchTerm.toLowerCase();
+                          return (
+                            String(row['Outlet ID'] ?? '').toLowerCase().includes(q) ||
+                            String(row['Vendor Name'] ?? '').toLowerCase().includes(q) ||
+                            String(row['Station Code'] ?? '').toLowerCase().includes(q) ||
+                            String(row['GST Number'] ?? '').toLowerCase().includes(q) ||
+                            String(row['Invoice Number'] ?? '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map((row: any) => (
+                          <tr key={`${row['Outlet ID']}-${row['Invoice Number']}`} className="hover:bg-slate-800/40">
+                            {VENDOR_RDS_COLUMNS.map((column, index) => {
+                              const sticky = index === 0
+                                ? 'sticky left-0 z-30'
+                                : index === 1
+                                  ? 'sticky left-[100px] z-30'
+                                  : index === 2
+                                    ? 'sticky left-[450px] z-30'
+                                    : '';
+                              const width = index === 0
+                                ? 'w-[100px] min-w-[100px] max-w-[100px]'
+                                : index === 1
+                                  ? 'w-[350px] min-w-[350px] max-w-[350px]'
+                                  : index === 2
+                                    ? 'w-[140px] min-w-[140px] max-w-[140px]'
+                                    : '';
+                              const align = index >= 6 ? 'text-right' : index === 0 ? 'font-mono' : '';
+                              const value = formatVendorRdsCell(column, row[column]);
+                              const color = index === 0
+                                ? 'font-bold text-indigo-300'
+                                : index === 1
+                                  ? 'font-medium text-white'
+                                  : index === 2
+                                    ? 'text-cyan-300 font-mono'
+                                    : '';
+                              return (
+                                <td
+                                  key={column}
+                                  className={`p-3 bg-slate-900/95 ${sticky} ${width} ${align} ${color}`}
+                                >
+                                  {value}
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
                     </tbody>
@@ -2042,12 +2219,12 @@ export default function Page() {
 
                 {/* 6. OUTLET-WISE FEEDBACK + RATING REPORT */}
                 {selectedReport === 'FEEDBACK_REPORT' && (
-                  <table className="w-full min-w-[1900px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1900px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
-                        <th className="p-3 font-semibold">Outlet Name</th>
-                        <th className="p-3 font-semibold">Station Code</th>
+                        <th className="p-3 font-semibold sticky left-0 z-40 bg-slate-900 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
+                        <th className="p-3 font-semibold sticky left-[100px] z-40 bg-slate-900 w-[300px] min-w-[300px] max-w-[300px]">Outlet Name</th>
+                        <th className="p-3 font-semibold sticky left-[400px] z-40 bg-slate-900 w-[140px] min-w-[140px] max-w-[140px]">Station Code</th>
                         <th className="p-3 font-semibold text-center">Old Count</th>
                         <th className="p-3 font-semibold text-center">Old Ratings</th>
                         <th className="p-3 font-semibold text-center">Old Sum</th>
@@ -2070,9 +2247,9 @@ export default function Page() {
                         )
                         .map((row) => (
                           <tr key={row['Outlet Id']} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
-                            <td className="p-3 font-medium text-white">{row['Outlet Name'] || '-'}</td>
-                            <td className="p-3 text-cyan-300 font-mono">{row['Station Code'] || '-'}</td>
+                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 z-30 bg-slate-900/95 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
+                            <td className="p-3 font-medium text-white sticky left-[100px] z-30 bg-slate-900/95 w-[300px] min-w-[300px] max-w-[300px]">{row['Outlet Name'] || '-'}</td>
+                            <td className="p-3 text-cyan-300 font-mono sticky left-[400px] z-30 bg-slate-900/95 w-[140px] min-w-[140px] max-w-[140px]">{row['Station Code'] || '-'}</td>
                             <td className="p-3 text-center">{row['Old Count']}</td>
                             <td className="p-3 text-center">{Number(row['Old Ratings'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center">{Number(row['Old Sum'] || 0).toFixed(2)}</td>
