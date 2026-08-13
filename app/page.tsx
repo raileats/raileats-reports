@@ -607,21 +607,32 @@ const parseReportDate = (dateVal: any): Date | null => {
     return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   }
 
-  // Never send DD/MM/YYYY through new Date(string).
+  // IMPORTANT SOURCE-DATE RULE:
+  // The uploaded reports use MM/DD/YYYY.
+  // Example:
+  //   08/01/2026 = 1 August 2026
+  //   08/02/2026 = 2 August 2026
+  //   08/08/2026 = 8 August 2026
+  //   08/10/2026 = 10 August 2026
+  //
+  // Therefore DO NOT use browser new Date("08/01/2026"), because
+  // date parsing must be controlled explicitly.
   const datePart = raw.split(/[T ]/)[0];
 
-  // DD/MM/YYYY or DD-MM-YYYY
+  // MM/DD/YYYY or MM-DD-YYYY (SOURCE FORMAT)
   let match = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
+    const month = Number(match[1]);
+    const day = Number(match[2]);
     const year = Number(match[3]);
     const d = new Date(year, month - 1, day);
+
     if (
       d.getFullYear() === year &&
       d.getMonth() === month - 1 &&
       d.getDate() === day
     ) return d;
+
     return null;
   }
 
@@ -650,6 +661,7 @@ const parseReportDate = (dateVal: any): Date | null => {
   );
 };
 
+// SOURCE FILE DATE CONVENTION: MM/DD/YYYY (not DD/MM/YYYY).
 const reportDateKey = (dateVal: any): string => {
   const d = parseReportDate(dateVal);
   if (!d) return 'UNKNOWN';
