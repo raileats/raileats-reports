@@ -1,17 +1,14 @@
 'use client';
 
-// UI BUILD: DAY/NIGHT THEME + ALL-REPORT HORIZONTAL SCROLL + 3 FROZEN COLUMNS + CLICK ROW HIGHLIGHT + EXCEL-ALIGNED DASHBOARD
-
 import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import MainReportMatrix from '../components/MainReportMatrix';
 import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
-import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRdsGenerator';
-import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/stationReportGenerator';
-import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vendorReportGenerator';
+import { generateVendorRDSWorkbook } from '@/lib/vendorRdsGenerator';
+import { generateStationReportWorkbook } from '@/lib/stationReportGenerator';
+import { generateVendorReportWorkbook } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
 import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
@@ -149,7 +146,6 @@ interface FeedbackReportRow {
   Feedback: number;
   'Current Count': number;
   'Current Rating': number;
-  'Current Sum': number;
   'Old Count': number;
   'Old Ratings': number;
   'Old Sum': number;
@@ -186,9 +182,8 @@ const buildFeedbackReport = (
     if (type === 'Feedback') orderCounts[orderId].feedback += 1;
   });
 
-  // STEP 2: Build IRCTC lookup maps.
-  // Order ID is the ONLY join key for current Feedback rows.
-  // Final Outlet ID always comes from IRCTC.
+  // STEP 2: Build several IRCTC lookup maps.
+  // Order ID is the primary key, Outlet ID is the fallback key.
   const irctcOrderMap = new Map<string, any>();
   const irctcOutletMap = new Map<string, any>();
 
@@ -211,44 +206,29 @@ const buildFeedbackReport = (
     if (outletId) masterOutletMap.set(outletId, row);
   });
 
-  // STEP 4: Build a direct Feedback Order ID -> first Feedback row map.
-  //
-  // IMPORTANT PERFORMANCE FIX:
-  // Never use feedbackRows.find() inside the orderCounts loop.
-  // With ~10,000 Feedback rows that becomes O(N²) and can perform
-  // 100+ million comparisons. A Map makes this O(1) per order.
-  const feedbackRowMap = new Map<string, any>();
-  feedbackRows.forEach((row) => {
-    const orderId = cleanOrderId(
-      row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']
-    );
-    if (orderId && !feedbackRowMap.has(orderId)) {
-      feedbackRowMap.set(orderId, row);
-    }
-  });
-
-  // STEP 5: Aggregate by Outlet ID.
+  // STEP 4: Aggregate by Outlet ID.
   const outletMap: Record<string, FeedbackReportRow> = {};
 
   Object.entries(orderCounts).forEach(([orderId, counts]) => {
-    const feedbackRow = feedbackRowMap.get(orderId);
+    const feedbackRow = feedbackRows.find((row) =>
+      cleanOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']) === orderId
+    );
+
     const irctc = irctcOrderMap.get(orderId);
 
-    // IMPORTANT:
-    // Final Feedback Report ka Outlet ID SIRF IRCTC report se liya jayega.
-    // Feedback file ka Outlet ID kabhi use nahi hoga.
-    //
-    // Primary join:
-    // Feedback Order ID -> IRCTC Order Id -> IRCTC Outlet Id
-    if (!irctc) return;
+    // Feedback source itself contains Outlet ID. Use it as fallback when an
+    // old/current IRCTC export does not contain the matching Order ID.
+    const feedbackOutletId = cleanOutletId(
+      feedbackRow?.['Outlet ID'] ?? feedbackRow?.['Outlet Id'] ?? feedbackRow?.['OutletId']
+    );
 
     const outletId = cleanOutletId(
-      irctc['Outlet Id'] ?? irctc['Outlet ID'] ?? irctc['OutletId']
+      irctc?.['Outlet Id'] ?? irctc?.['Outlet ID'] ?? irctc?.['OutletId'] ?? feedbackOutletId
     );
 
     if (!outletId) return;
 
-    const irctcOutlet = irctc;
+    const irctcOutlet = irctc || irctcOutletMap.get(outletId) || {};
     const masterOutlet = masterOutletMap.get(outletId) || {};
 
     const outletName = String(
@@ -276,7 +256,6 @@ const buildFeedbackReport = (
         Feedback: 0,
         'Current Count': 0,
         'Current Rating': 0,
-        'Current Sum': 0,
         'Old Count': 0,
         'Old Ratings': 0,
         'Old Sum': 0,
@@ -297,7 +276,7 @@ const buildFeedbackReport = (
     outletMap[outletId].Feedback += counts.feedback;
   });
 
-  // STEP 6: If Feedback file is not available in IndexedDB (for example the
+  // STEP 5: If Feedback file is not available in IndexedDB (for example the
   // user installed the new page after an older merge), recover the report from
   // the IRCTC Feedback Type data. This prevents the report from becoming blank
   // solely because the optional Feedback file was not persisted by the old build.
@@ -322,7 +301,6 @@ const buildFeedbackReport = (
           Feedback: 0,
           'Current Count': 0,
           'Current Rating': 0,
-          'Current Sum': 0,
           'Old Count': 0,
           'Old Ratings': 0,
           'Old Sum': 0,
@@ -338,9 +316,9 @@ const buildFeedbackReport = (
   }
 
 
-  // STEP 7: Merge historical Old Feedback / Old Ratings by Outlet ID.
-  // Old data is used only when the Outlet ID already exists in the current
-  // IRCTC-matched report. Old-only outlets are NOT added.
+  // STEP 6: Merge historical Old Feedback / Old Ratings by Outlet ID.
+  // Old-only outlets are also included, so final rows are the UNION of
+  // historical outlets + current feedback outlets.
   const oldMap: Record<string, {
     outletId: string;
     outletName: string;
@@ -383,109 +361,58 @@ const buildFeedbackReport = (
     };
   });
 
-  // IMPORTANT:
-  // Old Ratings / Old Feedback is the FINAL OUTLET MASTER for this report.
-  // Every Outlet ID present here will appear in the final report.
-  // Current Feedback/IRCTC data only fills Complaint and Feedback counts
-  // when a current match exists.
   Object.values(oldMap).forEach((old) => {
-    const current = outletMap[old.outletId];
-    if (!current) return;
-
-    if (!current['Outlet Name'] && old.outletName) {
-      current['Outlet Name'] = old.outletName;
-    }
-    if (!current['Station Code'] && old.stationCode) {
-      current['Station Code'] = old.stationCode;
-    }
-
-    current['Old Count'] = old.oldCount;
-    current['Old Ratings'] = old.oldRatings;
-    current['Old Sum'] = old.oldSum;
-  });
-
-  // STEP 8: Build the FINAL outlet list.
-  //
-  // IMPORTANT BUSINESS RULE:
-  // The final Feedback Report's Outlet ID list MUST come from the
-  // Old Feedback / Old Ratings file.
-  //
-  // Current Feedback + IRCTC data only supplies the current
-  // Complaint / Feedback counts for those Outlet IDs.
-  //
-  // Therefore:
-  //   Old Ratings Outlet IDs = FINAL BASE ROWS
-  //   Current matched counts = attached to those rows
-  //
-  // Current-only / IRCTC-only outlets are NOT added to this report.
-  const finalOutletMap: Record<string, FeedbackReportRow> = {};
-
-  if (Object.keys(oldMap).length > 0) {
-    Object.values(oldMap).forEach((old) => {
-      const current = outletMap[old.outletId];
-
-      finalOutletMap[old.outletId] = {
+    if (!outletMap[old.outletId]) {
+      outletMap[old.outletId] = {
         'Outlet Id': old.outletId,
-        'Outlet Name': old.outletName || current?.['Outlet Name'] || '',
-        'Station Code': old.stationCode || current?.['Station Code'] || '',
-        Complaint: current?.Complaint || 0,
-        Feedback: current?.Feedback || 0,
+        'Outlet Name': old.outletName,
+        'Station Code': old.stationCode,
+        Complaint: 0,
+        Feedback: 0,
         'Current Count': 0,
         'Current Rating': 0,
-        'Current Sum': 0,
-        'Old Count': old.oldCount,
-        'Old Ratings': old.oldRatings,
-        'Old Sum': old.oldSum,
+        'Old Count': 0,
+        'Old Ratings': 0,
+        'Old Sum': 0,
         'Total Count': 0,
         'Total Rating Sum': 0,
         'Total Rating': 0,
       };
-    });
-  } else {
-    // If Old Feedback / Old Ratings has not been uploaded, preserve the
-    // existing current-report behavior rather than returning an empty report.
-    Object.entries(outletMap).forEach(([outletId, row]) => {
-      finalOutletMap[outletId] = row;
-    });
-  }
+    }
 
-  // STEP 9: Rating calculations.
+    if (!outletMap[old.outletId]['Outlet Name'] && old.outletName) {
+      outletMap[old.outletId]['Outlet Name'] = old.outletName;
+    }
+    if (!outletMap[old.outletId]['Station Code'] && old.stationCode) {
+      outletMap[old.outletId]['Station Code'] = old.stationCode;
+    }
+
+    outletMap[old.outletId]['Old Count'] = old.oldCount;
+    outletMap[old.outletId]['Old Ratings'] = old.oldRatings;
+    outletMap[old.outletId]['Old Sum'] = old.oldSum;
+  });
+
+  // STEP 7: Rating calculations.
   //
   // Current Rating = Feedback * 5 / (Feedback + Complaint)
   //
-  // Current Sum = Current Count * Current Rating
-  //
-  // Till Date Ratings =
-  //   (Old Sum + Current Sum)
-  //   / (Old Count + Current Count)
+  // Total Rating = (Old Sum + Feedback * 5)
+  //                / (Old Count + Feedback + Complaint)
   //
   // Complaint contributes to count but gives 0 rating points.
-  return Object.values(finalOutletMap)
+  return Object.values(outletMap)
     .map((row) => {
       const currentCount = row.Complaint + row.Feedback;
-
-      // Current Rating = Feedback * 5 / (Feedback + Complaint)
       const currentRating = currentCount > 0
         ? Number(((row.Feedback * 5) / currentCount).toFixed(2))
         : 0;
 
-      // Current Sum = Current Count * Current Rating
-      // Uses the displayed/rounded Current Rating exactly as requested.
-      const currentSum = Number(
-        (currentCount * currentRating).toFixed(2)
-      );
-
-      // Total Count = Old Count + Current Count
+      const currentRatingSum = row.Feedback * 5;
       const totalCount = row['Old Count'] + currentCount;
-
-      // Total Rating Sum = Old Sum + Current Sum
       const totalRatingSum = Number(
-        (row['Old Sum'] + currentSum).toFixed(2)
+        (row['Old Sum'] + currentRatingSum).toFixed(2)
       );
-
-      // Till Date Ratings = (Old Sum + Current Sum)
-      //                    / (Old Count + Current Count)
-      const tillDateRatings = totalCount > 0
+      const totalRating = totalCount > 0
         ? Number((totalRatingSum / totalCount).toFixed(2))
         : 0;
 
@@ -493,10 +420,9 @@ const buildFeedbackReport = (
         ...row,
         'Current Count': currentCount,
         'Current Rating': currentRating,
-        'Current Sum': currentSum,
         'Total Count': totalCount,
         'Total Rating Sum': totalRatingSum,
-        'Total Rating': tillDateRatings,
+        'Total Rating': totalRating,
       };
     })
     .sort((a, b) => {
@@ -528,17 +454,16 @@ const generateFeedbackReportWorkbook = (rows: FeedbackReportRow[]) => {
     Feedback: r.Feedback,
     'Current Count': r['Current Count'],
     'Current Rating': r['Current Rating'],
-    'Current Sum': r['Current Sum'],
     'Total Count': r['Total Count'],
     'Total Rating Sum': r['Total Rating Sum'],
-    'Till Date Ratings': r['Total Rating'],
+    'Total Rating': r['Total Rating'],
   }));
 
   const ws = XLSX.utils.json_to_sheet(exportRows);
   ws['!cols'] = [
     { wch: 16 }, { wch: 42 }, { wch: 16 },
     { wch: 12 }, { wch: 13 }, { wch: 13 },
-    { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
+    { wch: 12 }, { wch: 12 }, { wch: 14 },
     { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 14 },
   ];
 
@@ -585,144 +510,23 @@ const getSourceChannel = (row: any): string => {
   return 'RELFood_IRCTC';
 };
 
-// --- Date Engine: DD/MM/YYYY-safe + Excel serial + ISO/Date support ---
-const parseReportDate = (dateVal: any): Date | null => {
-  if (dateVal === null || dateVal === undefined || dateVal === '') return null;
-
-  // IMPORTANT:
-  // The actual report is the 1-Aug-2026 to 10-Aug-2026 report.
-  // In the uploaded Excel, these dates can arrive through XLSX as Date/serial
-  // values that have already been interpreted as:
-  //   Jan 8 2026 -> source 08/01/2026 -> 1 Aug 2026
-  //   Feb 8 2026 -> source 08/02/2026 -> 2 Aug 2026
-  //   ...
-  //   Oct 8 2026 -> source 08/10/2026 -> 10 Aug 2026
-  //
-  // This happens because the source date is MM/DD/YYYY but an earlier parser
-  // interpreted it as DD/MM/YYYY. We correct that exact 2026 August pattern
-  // BEFORE any normal Date handling.
-
-  const correctAugustCorruptedDate = (year: number, monthIndex: number, day: number): Date | null => {
-    // Jan 8 through Oct 8 -> Aug 1 through Aug 10.
-    if (
-      year === 2026 &&
-      day === 8 &&
-      monthIndex >= 0 &&
-      monthIndex <= 9
-    ) {
-      return new Date(2026, 7, monthIndex + 1);
-    }
-    return null;
-  };
-
-  if (dateVal instanceof Date) {
-    if (isNaN(dateVal.getTime())) return null;
-
-    const year = dateVal.getFullYear();
-    const monthIndex = dateVal.getMonth();
-    const day = dateVal.getDate();
-
-    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
-    if (corrected) return corrected;
-
-    return new Date(year, monthIndex, day);
-  }
-
-  const raw = String(dateVal).trim();
-  if (!raw) return null;
-
-  // Excel serial date.
-  const numeric = Number(raw);
-  if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
-    const excelEpoch = Date.UTC(1899, 11, 30);
-    const d = new Date(excelEpoch + numeric * 86400000);
-
-    const year = d.getUTCFullYear();
-    const monthIndex = d.getUTCMonth();
-    const day = d.getUTCDate();
-
-    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
-    if (corrected) return corrected;
-
-    return new Date(year, monthIndex, day);
-  }
-
-  // SOURCE FORMAT IS MM/DD/YYYY.
-  // Examples:
-  //   08/01/2026 = 1 August 2026
-  //   08/02/2026 = 2 August 2026
-  //   ...
-  //   08/10/2026 = 10 August 2026
-  const datePart = raw.split(/[T ]/)[0];
-
-  let match = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-  if (match) {
-    const month = Number(match[1]);
-    const day = Number(match[2]);
-    const year = Number(match[3]);
-
-    const d = new Date(year, month - 1, day);
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
-    ) {
-      return d;
-    }
-    return null;
-  }
-
-  // YYYY-MM-DD / YYYY/MM/DD.
-  match = datePart.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
-  if (match) {
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-
-    const d = new Date(year, month - 1, day);
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
-    ) {
-      return d;
-    }
-    return null;
-  }
-
-  const fallback = new Date(raw);
-  if (isNaN(fallback.getTime())) return null;
-
-  const fallbackYear = fallback.getFullYear();
-  const fallbackMonth = fallback.getMonth();
-  const fallbackDay = fallback.getDate();
-
-  const corrected = correctAugustCorruptedDate(
-    fallbackYear,
-    fallbackMonth,
-    fallbackDay
-  );
-  if (corrected) return corrected;
-
-  return new Date(fallbackYear, fallbackMonth, fallbackDay);
-};
-
-// SOURCE FILE DATE CONVENTION: MM/DD/YYYY.
-// VENDOR DATE WISE CURRENT REPORT: 1-Aug-2026 through 10-Aug-2026.
-// SOURCE FILE DATE CONVENTION: MM/DD/YYYY (not DD/MM/YYYY).
-const reportDateKey = (dateVal: any): string => {
-  const d = parseReportDate(dateVal);
-  if (!d) return 'UNKNOWN';
-
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
+// --- Date Fix: Excel Serial Number & Regular Dates ---
 const formatFullDisplayDate = (dateVal: any): string => {
-  const d = parseReportDate(dateVal);
-  if (!d) return String(dateVal || 'Unknown Date');
+  if (!dateVal) return 'Unknown Date';
+  
+  const num = parseFloat(String(dateVal));
+  let d: Date;
+
+  // Check if it's an Excel serial date number like 46061.0001
+  if (!isNaN(num) && num > 30000 && num < 70000) {
+    const utcDays = Math.floor(num - 25569);
+    const utcValue = utcDays * 86400;
+    d = new Date(utcValue * 1000);
+  } else {
+    d = new Date(String(dateVal));
+  }
+
+  if (isNaN(d.getTime())) return String(dateVal);
 
   return d.toLocaleDateString('en-GB', {
     weekday: 'long',
@@ -745,79 +549,6 @@ type ReportType =
   | 'PENALTIES'
   | 'FEEDBACK_REPORT';
 
-// EXACT column order used by lib/vendorRdsGenerator.ts / Vendor RDS Excel.
-// The first three columns are intentionally fixed in the on-screen table.
-const VENDOR_RDS_COLUMNS = [
-  'Outlet ID',
-  'Vendor Name',
-  'Station Code',
-  'GST Number',
-  'Vendor with Station Code',
-  'Invoice Number',
-  'Final Vendor Price',
-  'Final Base Price',
-  'Final RF Commission',
-  'Final IRCTC Commission',
-  'Final GST',
-  'Final Order Total',
-  'Final Total Commission',
-  'Penalty',
-  'Gross Commission',
-  'IGST',
-  'CGST',
-  'SGST',
-  'IGST+CGST+SGST',
-  'Total This Month',
-  'Paid to Vendors By Relfood',
-  'Delivery Charges',
-  'Previouse Balance',
-  'Final Selling Price',
-  'Final Total Discount',
-  'Final Vendor Discount',
-  'Payment Received from Vendor to Relfood',
-  'Credit Note to Vendor by Relfood',
-  'Final RF Discount',
-  'PPD',
-  'COD',
-  'ADD',
-  'Less',
-  'Net Payment',
-  'As per Reverse',
-  'Diff',
-  'Orders Count',
-  'Meals',
-  'State',
-  'Discounted Base Price',
-  'Margin %',
-] as const;
-
-const VENDOR_RDS_MONEY_COLUMNS = new Set([
-  'Final Vendor Price', 'Final Base Price', 'Final RF Commission',
-  'Final IRCTC Commission', 'Final GST', 'Final Order Total',
-  'Final Total Commission', 'Penalty', 'Gross Commission', 'IGST',
-  'CGST', 'SGST', 'IGST+CGST+SGST', 'Total This Month',
-  'Paid to Vendors By Relfood', 'Delivery Charges', 'Previouse Balance',
-  'Final Selling Price', 'Final Total Discount', 'Final Vendor Discount',
-  'Payment Received from Vendor to Relfood', 'Credit Note to Vendor by Relfood',
-  'Final RF Discount', 'PPD', 'COD', 'ADD', 'Less', 'Net Payment',
-  'As per Reverse', 'Diff', 'Discounted Base Price', 'Margin %',
-]);
-
-const VENDOR_RDS_FIXED_WIDTHS = {
-  outletId: 100,
-  vendorName: 350,
-  stationCode: 140,
-};
-
-const formatVendorRdsCell = (key: string, value: any): string => {
-  if (value === null || value === undefined || value === '') return '-';
-  if (VENDOR_RDS_MONEY_COLUMNS.has(key)) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n.toFixed(2) : String(value);
-  }
-  return String(value);
-};
-
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
   // Raw IRCTC report is kept separately so Station Report can count
@@ -834,31 +565,6 @@ export default function Page() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedReport, setSelectedReport] = useState<ReportType>('MAIN_REPORT');
-  const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem('relfood-theme');
-    if (saved === 'night' || saved === 'day') setThemeMode(saved);
-  }, []);
-
-  const toggleTheme = () => {
-    setThemeMode((prev) => {
-      const next = prev === 'day' ? 'night' : 'day';
-      window.localStorage.setItem('relfood-theme', next);
-      return next;
-    });
-  };
-
-  const handleTableRowClick = (event: React.MouseEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement | null;
-    const row = target?.closest('tbody tr') as HTMLTableRowElement | null;
-    if (!row) return;
-
-    document.querySelectorAll('.portal-row-selected').forEach((el) => {
-      el.classList.remove('portal-row-selected');
-    });
-    row.classList.add('portal-row-selected');
-  };
 
   // Upload States
   const [rfFile, setRfFile] = useState<File | null>(null);
@@ -1036,8 +742,6 @@ export default function Page() {
       // later merge, keep the previously stored Old Feedback data.
       let oldRatingsData: any[] = oldRatingsRawData;
       if (oldFeedbackFile) {
-        // Old Ratings is only ~1k outlet rows; parsing/storage is lightweight.
-        // The expensive part was the Feedback Report calculation, not this file.
         setStatusText('Reading Old Feedback / Old Ratings...');
         oldRatingsData = await parseAnyFile(oldFeedbackFile);
         await saveToDB('CURRENT_OLD_RATINGS_DATA', oldRatingsData);
@@ -1271,15 +975,16 @@ export default function Page() {
     const dateMap: Record<string, any[]> = {};
     data.forEach((row) => {
       const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
-      const dateKey = reportDateKey(rawDate);
+      const dateKey = String(rawDate).split(' ')[0].split('T')[0];
       if (!dateMap[dateKey]) dateMap[dateKey] = [];
       dateMap[dateKey].push(row);
     });
 
     const sortedDates = Object.keys(dateMap).sort((a, b) => {
-      if (a === 'UNKNOWN') return 1;
-      if (b === 'UNKNOWN') return -1;
-      return a.localeCompare(b);
+      const numA = parseFloat(a);
+      const numB = parseFloat(b);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return new Date(a).getTime() - new Date(b).getTime();
     });
 
     const mtdBySource: Record<string, MetricStats> = {};
@@ -1358,7 +1063,7 @@ export default function Page() {
       mtdGrandTotal.undelivered += dayTotal.undelivered;
 
       return {
-        dateLabel: dateKey === 'UNKNOWN' ? 'Unknown Date' : formatFullDisplayDate(dateKey),
+        dateLabel: formatFullDisplayDate(dateKey),
         rawDate: dateKey,
         dayTotal: { ...dayTotal },
         dayStats: JSON.parse(JSON.stringify(dayStats)),
@@ -1371,25 +1076,140 @@ export default function Page() {
 
   // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
-    return generateStationWiseData(data, outletsMasterInfo, irctcRawData);
-  }, [data, outletsMasterInfo, irctcRawData]);
+    const map: Record<string, any> = {};
+    // First build the normal station report from master data.
+    data.forEach((r) => {
+      const stn = r['Station Code'] || 'UNKNOWN';
+      if (!map[stn]) {
+        map[stn] = {
+          station: stn,
+          state: r['State'] || '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
+        };
+      }
+      map[stn].totalOrders += 1;
+      if (r['Final Status'] === 'Delivered') map[stn].delivered += 1;
+      if (r['Final Status'] === 'Cancelled') map[stn].cancelled += 1;
+      map[stn].sellingPrice += r['Final Selling Price'] || 0;
+      map[stn].vendorPrice += r['Final Vendor Price'] || 0;
+      map[stn].rfComm += r['Final RF Commission'] || 0;
+      map[stn].gst += r['Final GST'] || 0;
+    });
+
+    // Exact source mapping:
+    // Delivery Station + Feedback Type
+    //
+    // First count from master data because it is now guaranteed to preserve
+    // the IRCTC fields. If a station is not present in master data, use the
+    // raw IRCTC data as a fallback.
+    const countedStations = new Set<string>();
+
+    data.forEach((r) => {
+      const station = String(
+        r['Delivery Station'] || r['Station Code'] || ''
+      ).trim().toUpperCase();
+      const type = String(r['Feedback Type'] || '').trim().toUpperCase();
+
+      if (!station || !['FEEDBACK', 'COMPLAIN'].includes(type)) return;
+
+      if (!map[station]) {
+        map[station] = {
+          station,
+          state: r['State'] || '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
+        };
+      }
+
+      if (type === 'FEEDBACK') map[station].feedbackGood += 1;
+      if (type === 'COMPLAIN') map[station].feedbackBad += 1;
+      countedStations.add(station);
+    });
+
+    // Raw IRCTC fallback only for stations that have not already been counted
+    // from master data.
+    (irctcRawData || []).forEach((r) => {
+      const station = String(r['Delivery Station'] ?? '').trim().toUpperCase();
+      const type = String(r['Feedback Type'] ?? '').trim().toUpperCase();
+
+      if (
+        !station ||
+        !['FEEDBACK', 'COMPLAIN'].includes(type) ||
+        countedStations.has(station)
+      ) return;
+
+      if (!map[station]) {
+        map[station] = {
+          station,
+          state: '',
+          totalOrders: 0,
+          delivered: 0,
+          cancelled: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          gst: 0,
+          feedbackGood: 0,
+          feedbackBad: 0,
+        };
+      }
+
+      if (type === 'FEEDBACK') map[station].feedbackGood += 1;
+      if (type === 'COMPLAIN') map[station].feedbackBad += 1;
+    });
+
+    return Object.values(map);
+  }, [data, irctcRawData]);
 
   const vendorSummary = useMemo(() => {
-    return generateVendorWiseData(data, outletsMasterInfo, penaltySummary);
-  }, [data, outletsMasterInfo, penaltySummary]);
+    const map: Record<string, any> = {};
+    data.forEach((r) => {
+      const v = r['Vendor Name'] || 'UNKNOWN';
+      if (!map[v]) {
+        map[v] = {
+          vendor: v,
+          outletId: r['Outlet ID'],
+          state: r['State'] || '',
+          totalOrders: 0,
+          delivered: 0,
+          sellingPrice: 0,
+          vendorPrice: 0,
+          rfComm: 0,
+          penalty: penaltySummary[r['Outlet ID']] || 0,
+        };
+      }
+      map[v].totalOrders += 1;
+      if (r['Final Status'] === 'Delivered') map[v].delivered += 1;
+      map[v].sellingPrice += r['Final Selling Price'] || 0;
+      map[v].vendorPrice += r['Final Vendor Price'] || 0;
+      map[v].rfComm += r['Final RF Commission'] || 0;
+    });
+    return Object.values(map);
+  }, [data, penaltySummary]);
 
   const dateSummary = useMemo(() => {
     const map: Record<string, any> = {};
-
     data.forEach((r) => {
       const dt = r['Delivery Date'] || r['Booking Date'] || 'N/A';
-      const key = reportDateKey(dt);
       const formatted = formatFullDisplayDate(dt);
-
-      if (!map[key]) {
-        map[key] = {
+      if (!map[formatted]) {
+        map[formatted] = {
           date: formatted,
-          rawDate: key,
           totalOrders: 0,
           delivered: 0,
           cancelled: 0,
@@ -1398,68 +1218,20 @@ export default function Page() {
           rfComm: 0,
         };
       }
-
-      map[key].totalOrders += 1;
-      if (r['Final Status'] === 'Delivered') map[key].delivered += 1;
-      if (r['Final Status'] === 'Cancelled') map[key].cancelled += 1;
-      map[key].sellingPrice += Number(r['Final Selling Price'] || 0) || 0;
-      map[key].vendorPrice += Number(r['Final Vendor Price'] || 0) || 0;
-      map[key].rfComm += Number(r['Final RF Commission'] || 0) || 0;
+      map[formatted].totalOrders += 1;
+      if (r['Final Status'] === 'Delivered') map[formatted].delivered += 1;
+      if (r['Final Status'] === 'Cancelled') map[formatted].cancelled += 1;
+      map[formatted].sellingPrice += r['Final Selling Price'] || 0;
+      map[formatted].vendorPrice += r['Final Vendor Price'] || 0;
+      map[formatted].rfComm += r['Final RF Commission'] || 0;
     });
-
-    return Object.values(map).sort((a: any, b: any) => {
-      if (a.rawDate === 'UNKNOWN') return 1;
-      if (b.rawDate === 'UNKNOWN') return -1;
-      return a.rawDate.localeCompare(b.rawDate);
-    });
+    return Object.values(map);
   }, [data]);
 
   // --- Outlet-wise Feedback / Complaint Report ---
-  //
-  // PERFORMANCE FIX:
-  // Feedback Report can contain 1,000+ historical outlets and is not needed
-  // while the user is viewing Master/Station/Vendor/etc. reports.
-  // Calculate it only when the Feedback Report is actually selected.
-  // This also prevents Old Ratings upload from triggering a heavy calculation
-  // during every processing/render cycle.
   const feedbackReportRows = useMemo(() => {
-    if (selectedReport !== 'FEEDBACK_REPORT') return [];
-
-    return buildFeedbackReport(
-      feedbackRawData,
-      irctcRawData,
-      data,
-      outletsMasterInfo,
-      oldRatingsRawData
-    );
-  }, [
-    selectedReport,
-    feedbackRawData,
-    irctcRawData,
-    outletsMasterInfo,
-    oldRatingsRawData,
-    data,
-  ]);
-
-  // Vendor RDS screen must use the EXACT same 41-column aggregation engine
-  // as the Vendor RDS Excel export. This prevents the webpage from showing
-  // the old 9-column Vendor Summary while Excel contains 41 columns.
-  const vendorRdsRows = useMemo(() => {
-    if (selectedReport !== 'VENDOR_RDS') return [];
-
-    return generateVendorRdsData(
-      data,
-      penaltySummary,
-      currentMonthRecords,
-      outletsMasterInfo
-    );
-  }, [
-    selectedReport,
-    data,
-    penaltySummary,
-    currentMonthRecords,
-    outletsMasterInfo,
-  ]);
+    return buildFeedbackReport(feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData);
+  }, [feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData]);
 
   // --- Exports ---
   const exportMasterExcel = () => {
@@ -1555,61 +1327,31 @@ export default function Page() {
       ]);
     } else if (selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') {
       head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)', 'Feedback Good', 'Feedback Bad']];
-      body = stationSummary.map((s: any) => [
-        s['Station Code'],
-        s['State'] || '-',
-        s['Total Orders'],
-        s['Delivered'],
-        s['Cancelled'],
-        `₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`,
-        `₹${Number(s['Vendor Price'] || 0).toFixed(2)}`,
-        `₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`,
-        `₹${Number(s['Final GST'] || 0).toFixed(2)}`,
-        s['Feedback Good'] || 0,
-        s['Feedback Bad'] || 0,
+      body = stationSummary.map((s) => [
+        s.station,
+        s.state || '-',
+        s.totalOrders,
+        s.delivered,
+        s.cancelled,
+        `₹${s.sellingPrice.toFixed(2)}`,
+        `₹${s.vendorPrice.toFixed(2)}`,
+        `₹${s.rfComm.toFixed(2)}`,
+        `₹${s.gst.toFixed(2)}`,
+        s.feedbackGood || 0,
+        s.feedbackBad || 0,
       ]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
-      // Vendor Report / Vendor RDS uses the same named fields as the
-      // Vendor Excel generator. Do not use the old simplified property
-      // names (vendor/outletId/state/etc.) here because VendorReportRow
-      // is column-name based.
-      head = [[
-        'Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name',
-        'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission',
-        'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount',
-        'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges',
-        'Final Selling Price', 'Final Order Total', 'Discounted Base Price',
-        'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders',
-        'Not Delivered', 'Not Delivered %', 'Prepaid %'
-      ]];
+      head = [['Vendor Name', 'Outlet ID', 'State', 'Total Orders', 'Delivered', 'Selling Amount', 'Vendor Payout', 'RF Commission', 'Penalty Total']];
       body = vendorSummary.map((v) => [
-        v['Aggregator Outlet ID'],
-        v['Station Code'],
-        v['Rank'],
-        v['Station Name'],
-        String(v['Vendor Name'] || '').substring(0, 22),
-        `₹${Number(v['Vendor Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Net Payment'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Base Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Total Commission'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final IRCTC Comm'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final RF Commission'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final GST'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Vendor Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final RF Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Delivery Charges'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Selling Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Order Total'] || 0).toFixed(2)}`,
-        `₹${Number(v['Discounted Base Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['PPD'] || 0).toFixed(2)}`,
-        `₹${Number(v['COD'] || 0).toFixed(2)}`,
-        `₹${Number(v['Meals'] || 0).toFixed(2)}`,
-        v['Check'] || '-',
-        v['Count of Delivered Orders'] || 0,
-        v['Count of Not_Delivered As per IRCTC Status'] || 0,
-        v['Not_Delivered %'] || '0.00%',
-        v['Prepaid %'] || '0.00%',
+        String(v.vendor).substring(0, 22),
+        v.outletId,
+        v.state || '-',
+        v.totalOrders,
+        v.delivered,
+        `₹${v.sellingPrice.toFixed(2)}`,
+        `₹${v.vendorPrice.toFixed(2)}`,
+        `₹${v.rfComm.toFixed(2)}`,
+        `₹${v.penalty.toFixed(2)}`,
       ]);
     } else if (selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') {
       head = [['Date', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Price', 'RF Commission']];
@@ -1636,8 +1378,8 @@ export default function Page() {
       head = [[
         'Outlet ID', 'Outlet Name', 'Station Code',
         'Old Count', 'Old Ratings', 'Old Sum',
-        'Complaint', 'Feedback', 'Current Count', 'Current Rating', 'Current Sum',
-        'Total Count', 'Total Rating Sum', 'Till Date Ratings'
+        'Complaint', 'Feedback', 'Current Count', 'Current Rating',
+        'Total Count', 'Total Rating Sum', 'Total Rating'
       ]];
       body = feedbackReportRows.map((r) => [
         r['Outlet Id'],
@@ -1650,7 +1392,6 @@ export default function Page() {
         r.Feedback,
         r['Current Count'],
         r['Current Rating'],
-        r['Current Sum'],
         r['Total Count'],
         r['Total Rating Sum'],
         r['Total Rating'],
@@ -1696,72 +1437,72 @@ export default function Page() {
     const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
     return (
-      <tr className={`portal-data-row border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
-        <td className={`p-1 border border-gray-400 text-[10px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-black text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+      <tr className={`border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
+        <td className={`p-1.5 border border-gray-400 text-[11px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
           {label}
         </td>
 
         {/* ORDERS */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{orderAsp}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{delPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{orderAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{delPct}</td>
 
         {/* MEALS */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mealAsp}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mpo}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mealAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mpo}</td>
 
         {/* VALUE */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
 
         {/* PREPAID */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{prepaidPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{prepaidPct}</td>
 
         {/* DISCOUNT */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{discountPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{discountPct}</td>
 
         {/* REVENUE */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{revenuePct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{revenuePct}</td>
 
         {/* Complaints */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{complaintPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{complaintPct}</td>
 
         {/* Feedback */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{feedbackPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{feedbackPct}</td>
 
         {/* IRCTC Undelivered */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{undeliveredPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{undeliveredPct}</td>
       </tr>
     );
   };
 
   if (!isLoaded) {
     return (
-      <div className="portal-clean min-h-screen bg-white flex items-center justify-center text-slate-600 text-sm">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
         <div className="flex items-center gap-2">
           <div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full" />
           Loading saved master records &amp; database...
@@ -1774,7 +1515,7 @@ export default function Page() {
   const outletsInfoCount = Object.keys(outletsMasterInfo).length;
 
   return (
-    <div className={`portal-clean ${themeMode === 'night' ? 'portal-night' : 'portal-day'} min-h-screen p-3 md:p-6 font-sans`} onClick={handleTableRowClick}>
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-3 md:p-6 font-sans">
       {/* Top Header */}
       <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
@@ -1783,7 +1524,7 @@ export default function Page() {
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg md:text-xl font-black tracking-wide text-slate-900">
+              <h1 className="text-lg md:text-xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
                 RELFOOD ENTERPRISE PORTAL
               </h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
@@ -1831,16 +1572,6 @@ export default function Page() {
                   <option value="FEEDBACK_REPORT">💬 Feedback Report</option>
                 </select>
               </div>
-
-              {/* Theme Toggle */}
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="theme-toggle px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border"
-                title="Switch between Day and Night theme"
-              >
-                {themeMode === 'day' ? '🌙 Night' : '☀️ Day'}
-              </button>
 
               {/* Download Buttons */}
               <button
@@ -1921,23 +1652,14 @@ export default function Page() {
                   .map((blk, bIdx) => (
                     <div 
                       key={bIdx} 
-                      className="report-scroll w-full overflow-x-auto overflow-y-hidden rounded-xl border shadow-sm"
-                      onWheel={(e) => {
-                        // Force horizontal two-finger trackpad gestures to move
-                        // this report horizontally instead of requiring scrollbar dragging.
-                        if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-                          e.preventDefault();
-                          e.currentTarget.scrollLeft += e.deltaX;
-                        }
-                      }}
+                      className="w-full overflow-x-auto rounded-xl border border-gray-500 bg-white shadow-2xl"
                       style={{ 
                         WebkitOverflowScrolling: 'touch',
                         scrollbarWidth: 'auto',
-                        scrollbarColor: '#cbd5e1 #f8fafc',
-                        touchAction: 'pan-x'
+                        scrollbarColor: '#475569 #0f172a'
                       }}
                     >
-                      <table className="portal-report-table portal-table-main min-w-[2400px] border-separate border-spacing-0 text-[10px] whitespace-nowrap">
+                      <table className="w-full min-w-[2100px] border-collapse text-[11px] whitespace-nowrap">
                         <thead>
                           {/* Banner 1: Red Date Header */}
                           <tr>
@@ -2012,16 +1734,16 @@ export default function Page() {
             {/* ALL OTHER REPORT TABLES (WITH FULL HORIZONTAL SCROLL) */}
             {selectedReport !== 'MAIN_REPORT' && (
               <div 
-                className="report-scroll w-full overflow-auto rounded-xl border shadow-sm max-h-[75vh]"
+                className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/80 shadow-2xl max-h-[75vh]"
                 style={{ 
                   WebkitOverflowScrolling: 'touch',
                   scrollbarWidth: 'auto',
-                  scrollbarColor: '#cbd5e1 #f8fafc'
+                  scrollbarColor: '#475569 #0f172a'
                 }}
               >
                 {/* 1. MASTER VIEW */}
                 {selectedReport === 'MASTER' && (
-                  <table className="portal-report-table portal-table-master w-full min-w-[1400px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1400px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Order ID</th>
@@ -2049,7 +1771,7 @@ export default function Page() {
                         )
                         .slice(0, 100)
                         .map((row, i) => (
-                          <tr key={i} className="portal-data-row hover:bg-slate-50">
+                          <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-3 font-medium text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['IRCTC Order ID']}</td>
                             <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
                             <td className="p-3 font-medium">{row['Vendor Name']}</td>
@@ -2080,132 +1802,76 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 2. STATION / LAST DAY STATION VIEW - EXACT EXCEL DATA ORDER */}
+                {/* 2. STATION / LAST DAY STATION VIEW */}
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <table className="portal-report-table portal-table-station w-full min-w-[2800px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 z-10 text-slate-700">
+                  <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        {[
-                          'Station Code','Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
-                        ].map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stationSummary
-                        .filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()))
-                        .map((row: any, i: number) => (
-                          <tr key={`${row['Station Code']}-${i}`} className="portal-data-row">
-                            {[
-                              row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Price'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Not Delivered Order'], row['Not Delivered %'], row['PPD % of Final Selling Price'], row['Feedback Good'], row['Feedback Bad'], row['Count of Delivered Outlets'], row['Total Station Vendors']
-                            ].map((value: any, j: number) => <td key={j} className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= 3 && typeof value === 'number' ? 'text-right' : ''}`}>{typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '-')}</td>)}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {/* 3A. VENDOR REPORT VIEW - EXACT EXCEL DATA ORDER */}
-                {selectedReport === 'VENDOR_REPORT' && (
-                  <table className="portal-report-table portal-table-vendor w-full min-w-[2500px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 z-10 text-slate-700">
-                      <tr>
-                        {[
-                          'Aggregator Outlet ID','Station Code','Rank','Station Name','Vendor Name','Vendor Price','Net Payment','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Count of Not_Delivered As per IRCTC Status','Not_Delivered %','Prepaid %'
-                        ].map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vendorSummary
-                        .filter((v: any) => String(v['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) || String(v['Aggregator Outlet ID'] || '').includes(searchTerm))
-                        .map((row: any, i: number) => (
-                          <tr key={`${row['Aggregator Outlet ID']}-${i}`} className="portal-data-row">
-                            {[
-                              row['Aggregator Outlet ID'], row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Name'], row['Vendor Price'], row['Net Payment'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Count of Not_Delivered As per IRCTC Status'], row['Not_Delivered %'], row['Prepaid %']
-                            ].map((value: any, j: number) => <td key={j} className={`p-3 ${j < 5 ? 'font-medium' : ''} ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>{typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '-')}</td>)}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
-                {selectedReport === 'VENDOR_RDS' && (
-                  <table className="portal-report-table portal-table-rds w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
-                      <tr>
-                        {VENDOR_RDS_COLUMNS.map((column, index) => {
-                          const sticky = index === 0
-                            ? 'sticky left-0 z-40'
-                            : index === 1
-                              ? 'sticky left-[100px] z-40'
-                              : index === 2
-                                ? 'sticky left-[450px] z-40'
-                                : '';
-                          const width = index === 0
-                            ? 'w-[100px] min-w-[100px] max-w-[100px]'
-                            : index === 1
-                              ? 'w-[350px] min-w-[350px] max-w-[350px]'
-                              : index === 2
-                                ? 'w-[140px] min-w-[140px] max-w-[140px]'
-                                : '';
-                          return (
-                            <th
-                              key={column}
-                              className={`p-3 font-semibold border-b border-slate-800 bg-slate-900 ${sticky} ${width} ${index >= 6 ? 'text-right' : ''}`}
-                            >
-                              {column}
-                            </th>
-                          );
-                        })}
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Station Code</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold text-center">Total Orders</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
+                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
+                        <th className="p-3 font-semibold text-right">Vendor Payout</th>
+                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
+                        <th className="p-3 font-semibold text-right text-cyan-400">GST</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Feedback Good</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Feedback Bad</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {vendorRdsRows
-                        .filter((row: any) => {
-                          const q = searchTerm.toLowerCase();
-                          return (
-                            String(row['Outlet ID'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Vendor Name'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Station Code'] ?? '').toLowerCase().includes(q) ||
-                            String(row['GST Number'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Invoice Number'] ?? '').toLowerCase().includes(q)
-                          );
-                        })
-                        .map((row: any) => (
-                          <tr key={`${row['Outlet ID']}-${row['Invoice Number']}`} className="portal-data-row">
-                            {VENDOR_RDS_COLUMNS.map((column, index) => {
-                              const sticky = index === 0
-                                ? 'sticky left-0 z-30'
-                                : index === 1
-                                  ? 'sticky left-[100px] z-30'
-                                  : index === 2
-                                    ? 'sticky left-[450px] z-30'
-                                    : '';
-                              const width = index === 0
-                                ? 'w-[100px] min-w-[100px] max-w-[100px]'
-                                : index === 1
-                                  ? 'w-[350px] min-w-[350px] max-w-[350px]'
-                                  : index === 2
-                                    ? 'w-[140px] min-w-[140px] max-w-[140px]'
-                                    : '';
-                              const align = index >= 6 ? 'text-right' : index === 0 ? 'font-mono' : '';
-                              const value = formatVendorRdsCell(column, row[column]);
-                              const color = index === 0
-                                ? 'font-bold text-indigo-300'
-                                : index === 1
-                                  ? 'font-medium text-white'
-                                  : index === 2
-                                    ? 'text-cyan-300 font-mono'
-                                    : '';
-                              return (
-                                <td
-                                  key={column}
-                                  className={`p-3 bg-slate-900/95 ${sticky} ${width} ${align} ${color}`}
-                                >
-                                  {value}
-                                </td>
-                              );
-                            })}
+                      {stationSummary
+                        .filter((s) => s.station.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-white font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.station}</td>
+                            <td className="p-3 text-amber-300">{row.state || '-'}</td>
+                            <td className="p-3 text-center font-semibold">{row.totalOrders}</td>
+                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
+                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                            <td className="p-3 text-right text-cyan-400">₹{row.gst.toFixed(2)}</td>
+                            <td className="p-3 text-center font-bold text-emerald-400">{row.feedbackGood || 0}</td>
+                            <td className="p-3 text-center font-bold text-rose-400">{row.feedbackBad || 0}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 3. VENDOR / VENDOR RDS VIEW */}
+                {(selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') && (
+                  <table className="w-full min-w-[1300px] text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Vendor Name</th>
+                        <th className="p-3 font-semibold">Outlet ID</th>
+                        <th className="p-3 font-semibold">State</th>
+                        <th className="p-3 font-semibold text-center">Total Orders</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
+                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
+                        <th className="p-3 font-semibold text-right">Vendor Payout</th>
+                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
+                        <th className="p-3 font-semibold text-right text-rose-400">Penalty Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {vendorSummary
+                        .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.vendor}</td>
+                            <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
+                            <td className="p-3 text-amber-300">{row.state || '-'}</td>
+                            <td className="p-3 text-center">{row.totalOrders}</td>
+                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
+                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                            <td className="p-3 text-right text-rose-400 font-semibold">₹{row.penalty.toFixed(2)}</td>
                           </tr>
                         ))}
                     </tbody>
@@ -2214,7 +1880,7 @@ export default function Page() {
 
                 {/* 4. DATE WISE VIEW */}
                 {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
-                  <table className="portal-report-table portal-table-date w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Date</th>
@@ -2230,7 +1896,7 @@ export default function Page() {
                       {dateSummary
                         .filter((d) => d.date.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="portal-data-row hover:bg-slate-50">
+                          <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.date}</td>
                             <td className="p-3 text-center">{row.totalOrders}</td>
                             <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
@@ -2246,7 +1912,7 @@ export default function Page() {
 
                 {/* 5. OUTLETS MASTER VIEW */}
                 {selectedReport === 'OUTLETS_MASTER' && (
-                  <table className="portal-report-table portal-table-outlets w-full min-w-[1000px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
@@ -2261,7 +1927,7 @@ export default function Page() {
                       {Object.values(outletsMasterInfo)
                         .filter((o) => o.outletId.includes(searchTerm) || o.outletName?.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="portal-data-row hover:bg-slate-50">
+                          <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 font-medium text-white">{row.outletName || '-'}</td>
                             <td className="p-3 text-cyan-300 font-mono">{row.station || '-'}</td>
@@ -2280,12 +1946,12 @@ export default function Page() {
 
                 {/* 6. OUTLET-WISE FEEDBACK + RATING REPORT */}
                 {selectedReport === 'FEEDBACK_REPORT' && (
-                  <table className="portal-report-table portal-table-feedback w-full min-w-[1900px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1900px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
-                        <th className="p-3 font-semibold sticky left-0 z-40 bg-slate-900 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
-                        <th className="p-3 font-semibold sticky left-[100px] z-40 bg-slate-900 w-[300px] min-w-[300px] max-w-[300px]">Outlet Name</th>
-                        <th className="p-3 font-semibold sticky left-[400px] z-40 bg-slate-900 w-[140px] min-w-[140px] max-w-[140px]">Station Code</th>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
+                        <th className="p-3 font-semibold">Outlet Name</th>
+                        <th className="p-3 font-semibold">Station Code</th>
                         <th className="p-3 font-semibold text-center">Old Count</th>
                         <th className="p-3 font-semibold text-center">Old Ratings</th>
                         <th className="p-3 font-semibold text-center">Old Sum</th>
@@ -2293,10 +1959,9 @@ export default function Page() {
                         <th className="p-3 font-semibold text-center text-emerald-400">Feedback</th>
                         <th className="p-3 font-semibold text-center">Current Count</th>
                         <th className="p-3 font-semibold text-center text-amber-400">Current Rating</th>
-                        <th className="p-3 font-semibold text-center text-violet-400">Current Sum</th>
                         <th className="p-3 font-semibold text-center">Total Count</th>
                         <th className="p-3 font-semibold text-center">Total Rating Sum</th>
-                        <th className="p-3 font-semibold text-center text-cyan-400">Till Date Ratings</th>
+                        <th className="p-3 font-semibold text-center text-cyan-400">Total Rating</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -2307,10 +1972,10 @@ export default function Page() {
                           r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
                         )
                         .map((row) => (
-                          <tr key={row['Outlet Id']} className="portal-data-row">
-                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 z-30 bg-slate-900/95 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
-                            <td className="p-3 font-medium text-white sticky left-[100px] z-30 bg-slate-900/95 w-[300px] min-w-[300px] max-w-[300px]">{row['Outlet Name'] || '-'}</td>
-                            <td className="p-3 text-cyan-300 font-mono sticky left-[400px] z-30 bg-slate-900/95 w-[140px] min-w-[140px] max-w-[140px]">{row['Station Code'] || '-'}</td>
+                          <tr key={row['Outlet Id']} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
+                            <td className="p-3 font-medium text-white">{row['Outlet Name'] || '-'}</td>
+                            <td className="p-3 text-cyan-300 font-mono">{row['Station Code'] || '-'}</td>
                             <td className="p-3 text-center">{row['Old Count']}</td>
                             <td className="p-3 text-center">{Number(row['Old Ratings'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center">{Number(row['Old Sum'] || 0).toFixed(2)}</td>
@@ -2318,7 +1983,6 @@ export default function Page() {
                             <td className="p-3 text-center font-bold text-emerald-400">{row.Feedback}</td>
                             <td className="p-3 text-center font-bold">{row['Current Count']}</td>
                             <td className="p-3 text-center font-bold text-amber-400">{Number(row['Current Rating'] || 0).toFixed(2)}</td>
-                            <td className="p-3 text-center font-bold text-violet-400">{Number(row['Current Sum'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center font-bold">{row['Total Count']}</td>
                             <td className="p-3 text-center">{Number(row['Total Rating Sum'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center font-black text-cyan-400">{Number(row['Total Rating'] || 0).toFixed(2)}</td>
@@ -2330,7 +1994,7 @@ export default function Page() {
 
                 {/* 7. PENALTIES VIEW */}
                 {selectedReport === 'PENALTIES' && (
-                  <table className="portal-report-table portal-table-penalties w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
@@ -2346,7 +2010,7 @@ export default function Page() {
                       {penaltyRawRecords
                         .filter((p) => p.outletId.includes(searchTerm) || p.orderId.includes(searchTerm))
                         .map((row, i) => (
-                          <tr key={i} className="portal-data-row hover:bg-slate-50">
+                          <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-3 font-bold text-rose-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 text-white font-mono">{row.orderId || '-'}</td>
                             <td className="p-3">
@@ -2367,452 +2031,16 @@ export default function Page() {
             )}
 
             <p className="text-[11px] text-slate-500 mt-2">
-              * Laptop Touchpad par 2 ungliyon se left/right swipe karke poora data dekhein; horizontal scrollbar bhi available hai.
+              * Laptop Touchpad par 2 ungliyon (Two fingers) ya horizontal scrollbar se right swipe karke poora data dekhein.
             </p>
           </div>
         )}
       </main>
 
-      <style jsx global>{`
-        /* Clean white portal theme + Excel-like horizontal browsing */
-        .portal-clean {
-          background: #ffffff !important;
-          color: #0f172a !important;
-        }
-
-        .portal-clean [class*="bg-slate-950"],
-        .portal-clean [class*="bg-slate-900"] {
-          background-color: #ffffff !important;
-        }
-
-        .portal-clean [class*="bg-slate-800"] {
-          background-color: #f8fafc !important;
-        }
-
-        .portal-clean [class*="border-slate-800"],
-        .portal-clean [class*="border-slate-700"],
-        .portal-clean [class*="border-slate-600"] {
-          border-color: #dbe3ee !important;
-        }
-
-        .portal-clean [class*="text-slate-100"],
-        .portal-clean [class*="text-slate-200"],
-        .portal-clean [class*="text-slate-300"] {
-          color: #334155 !important;
-        }
-
-        .portal-clean [class*="text-slate-400"] {
-          color: #64748b !important;
-        }
-
-        .portal-clean [class*="text-slate-500"] {
-          color: #94a3b8 !important;
-        }
-
-        .portal-report-table tbody td[class*="text-white"] {
-          color: #0f172a !important;
-        }
-
-        .portal-clean input,
-        .portal-clean select {
-          background: #ffffff !important;
-          color: #0f172a !important;
-          border-color: #cbd5e1 !important;
-        }
-
-        .portal-clean main {
-          min-width: 0;
-        }
-
-        .portal-report-table {
-          --portal-c1: 140px;
-          --portal-c2: 220px;
-          --portal-c3: 160px;
-          --portal-sticky-bg: #ffffff;
-          border-color: #dbe3ee !important;
-        }
-
-        .portal-table-main { --portal-c1: 140px; --portal-c2: 60px; --portal-c3: 60px; }
-        .portal-table-master { --portal-c1: 150px; --portal-c2: 120px; --portal-c3: 240px; }
-        .portal-table-station { --portal-c1: 150px; --portal-c2: 180px; --portal-c3: 120px; }
-        .portal-table-vendor { --portal-c1: 350px; --portal-c2: 120px; --portal-c3: 180px; }
-        .portal-table-rds { --portal-c1: 100px; --portal-c2: 350px; --portal-c3: 140px; }
-        .portal-table-date { --portal-c1: 230px; --portal-c2: 130px; --portal-c3: 130px; }
-        .portal-table-outlets { --portal-c1: 130px; --portal-c2: 300px; --portal-c3: 160px; }
-        .portal-table-feedback { --portal-c1: 100px; --portal-c2: 300px; --portal-c3: 140px; }
-        .portal-table-penalties { --portal-c1: 130px; --portal-c2: 170px; --portal-c3: 180px; }
-
-        .portal-report-table tbody tr:nth-child(odd) td {
-          background: #ffffff !important;
-        }
-
-        .portal-report-table tbody tr:nth-child(even) td {
-          background: #f8fafc !important;
-        }
-
-        .portal-report-table tbody tr:hover td {
-          background: #eef6ff !important;
-        }
-
-        .portal-report-table tbody tr.portal-row-selected td {
-          background: #bfdbfe !important;
-          color: #0f172a !important;
-          box-shadow: inset 0 1px 0 #93c5fd, inset 0 -1px 0 #93c5fd;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(1),
-        .portal-report-table tbody tr > td:nth-child(1) {
-          position: sticky !important;
-          left: 0 !important;
-          width: var(--portal-c1) !important;
-          min-width: var(--portal-c1) !important;
-          max-width: var(--portal-c1) !important;
-          z-index: 30;
-          box-sizing: border-box;
-          background: var(--portal-sticky-bg) !important;
-          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(2),
-        .portal-report-table tbody tr > td:nth-child(2) {
-          position: sticky !important;
-          left: var(--portal-c1) !important;
-          width: var(--portal-c2) !important;
-          min-width: var(--portal-c2) !important;
-          max-width: var(--portal-c2) !important;
-          z-index: 30;
-          box-sizing: border-box;
-          background: var(--portal-sticky-bg) !important;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(3),
-        .portal-report-table tbody tr > td:nth-child(3) {
-          position: sticky !important;
-          left: calc(var(--portal-c1) + var(--portal-c2)) !important;
-          width: var(--portal-c3) !important;
-          min-width: var(--portal-c3) !important;
-          max-width: var(--portal-c3) !important;
-          z-index: 30;
-          box-sizing: border-box;
-          background: var(--portal-sticky-bg) !important;
-          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
-        }
-
-        .portal-report-table tbody tr:nth-child(even) > td:nth-child(1),
-        .portal-report-table tbody tr:nth-child(even) > td:nth-child(2),
-        .portal-report-table tbody tr:nth-child(even) > td:nth-child(3) {
-          background: #f8fafc !important;
-        }
-
-        .portal-report-table tbody tr.portal-row-selected > td:nth-child(1),
-        .portal-report-table tbody tr.portal-row-selected > td:nth-child(2),
-        .portal-report-table tbody tr.portal-row-selected > td:nth-child(3) {
-          background: #bfdbfe !important;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(1),
-        .portal-report-table thead tr:last-child > th:nth-child(2),
-        .portal-report-table thead tr:last-child > th:nth-child(3) {
-          z-index: 40 !important;
-          background: #f1f5f9 !important;
-          color: #334155 !important;
-          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
-        }
-
-        .portal-report-table td,
-        .portal-report-table th {
-          border-color: #dbe3ee !important;
-        }
-
-        .portal-report-table tbody tr {
-          cursor: pointer;
-          transition: background-color 120ms ease;
-        }
-
-        /* Main matrix has grouped headers; keep the Source/FTD/MTD data columns fixed. */
-        .portal-table-main thead tr:last-child > th:nth-child(1),
-        .portal-table-main thead tr:last-child > th:nth-child(2),
-        .portal-table-main thead tr:last-child > th:nth-child(3) {
-          background: #f1f5f9 !important;
-        }
-
-        /* Always provide a real horizontal scrollbar for every report. */
-        .portal-clean .overflow-x-auto {
-          overflow-x: auto !important;
-          overscroll-behavior-x: contain;
-          scrollbar-color: #94a3b8 #f1f5f9;
-          scrollbar-width: auto;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar {
-          height: 12px;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar-track {
-          background: #f1f5f9;
-          border-radius: 999px;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb {
-          background: #94a3b8;
-          border-radius: 999px;
-          border: 3px solid #f1f5f9;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb:hover {
-          background: #64748b;
-        }
-      `}</style>
-
-      {/* Final UI overrides: clean white theme + 3 frozen columns + row selection */}
-      <style jsx global>{`
-        /* =========================
-           CLEAN WHITE THEME
-           ========================= */
-        .portal-clean,
-        .portal-clean main,
-        .portal-clean header,
-        .portal-clean section {
-          background: #ffffff !important;
-          color: #0f172a !important;
-        }
-
-        /* Replace the dark report shell and dark utility panels. */
-        .portal-clean [class*="bg-slate-950"],
-        .portal-clean [class*="bg-slate-900"],
-        .portal-clean [class*="bg-slate-800"],
-        .portal-clean [class*="bg-slate-700"],
-        .portal-clean [class*="bg-indigo-950"],
-        .portal-clean [class*="bg-black"] {
-          background-color: #ffffff !important;
-        }
-
-        .portal-clean [class*="text-slate-100"],
-        .portal-clean [class*="text-slate-200"],
-        .portal-clean [class*="text-slate-300"],
-        .portal-clean [class*="text-slate-400"],
-        .portal-clean [class*="text-slate-500"] {
-          color: #475569 !important;
-        }
-
-        .portal-clean [class*="border-slate-800"],
-        .portal-clean [class*="border-slate-700"],
-        .portal-clean [class*="border-slate-600"] {
-          border-color: #d7dee8 !important;
-        }
-
-        .portal-clean input,
-        .portal-clean select {
-          background: #ffffff !important;
-          color: #0f172a !important;
-          border-color: #cbd5e1 !important;
-        }
-
-        /* Modal also gets a clean white/light overlay. */
-        .portal-clean [class*="bg-black/80"] {
-          background-color: rgba(15, 23, 42, 0.22) !important;
-        }
-
-        /* =========================
-           ALL REPORTS: HORIZONTAL SCROLL
-           ========================= */
-        .portal-clean .overflow-x-auto {
-          overflow-x: auto !important;
-          overflow-y: hidden !important;
-          -webkit-overflow-scrolling: touch;
-          overscroll-behavior-x: contain;
-          scrollbar-width: auto;
-          scrollbar-color: #94a3b8 #eef2f7;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar {
-          width: 10px;
-          height: 12px;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar-track {
-          background: #eef2f7;
-        }
-
-        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb {
-          background: #94a3b8;
-          border-radius: 8px;
-          border: 3px solid #eef2f7;
-        }
-
-        /* =========================
-           EVERY REPORT: FIRST 3 COLUMNS FROZEN
-           ========================= */
-        .portal-report-table {
-          --freeze-c1: var(--portal-c1, 140px);
-          --freeze-c2: var(--portal-c2, 220px);
-          --freeze-c3: var(--portal-c3, 160px);
-          --freeze-bg: #ffffff;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(1),
-        .portal-report-table tbody > tr > td:nth-child(1) {
-          position: sticky !important;
-          left: 0 !important;
-          width: var(--freeze-c1) !important;
-          min-width: var(--freeze-c1) !important;
-          max-width: var(--freeze-c1) !important;
-          z-index: 31 !important;
-          box-sizing: border-box !important;
-          background: var(--freeze-bg) !important;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(2),
-        .portal-report-table tbody > tr > td:nth-child(2) {
-          position: sticky !important;
-          left: var(--freeze-c1) !important;
-          width: var(--freeze-c2) !important;
-          min-width: var(--freeze-c2) !important;
-          max-width: var(--freeze-c2) !important;
-          z-index: 31 !important;
-          box-sizing: border-box !important;
-          background: var(--freeze-bg) !important;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(3),
-        .portal-report-table tbody > tr > td:nth-child(3) {
-          position: sticky !important;
-          left: calc(var(--freeze-c1) + var(--freeze-c2)) !important;
-          width: var(--freeze-c3) !important;
-          min-width: var(--freeze-c3) !important;
-          max-width: var(--freeze-c3) !important;
-          z-index: 31 !important;
-          box-sizing: border-box !important;
-          background: var(--freeze-bg) !important;
-          box-shadow: 3px 0 7px rgba(15, 23, 42, 0.12) !important;
-        }
-
-        .portal-report-table thead tr:last-child > th:nth-child(1),
-        .portal-report-table thead tr:last-child > th:nth-child(2),
-        .portal-report-table thead tr:last-child > th:nth-child(3) {
-          z-index: 45 !important;
-          background: #f1f5f9 !important;
-          color: #334155 !important;
-        }
-
-        /* Main matrix has multiple header rows; freeze the first 3 visible
-           metric columns in the bottom header row and all body cells. */
-        .portal-table-main thead tr:last-child > th:nth-child(1),
-        .portal-table-main thead tr:last-child > th:nth-child(2),
-        .portal-table-main thead tr:last-child > th:nth-child(3) {
-          z-index: 45 !important;
-        }
-
-        /* =========================
-           EXCEL-LIKE ZEBRA ROWS + CLICK HIGHLIGHT
-           ========================= */
-        .portal-report-table tbody > tr {
-          cursor: pointer !important;
-          transition: background-color 120ms ease, box-shadow 120ms ease;
-        }
-
-        .portal-report-table tbody > tr:nth-child(odd) > td {
-          background: #ffffff !important;
-        }
-
-        .portal-report-table tbody > tr:nth-child(even) > td {
-          background: #f7f9fc !important;
-        }
-
-        .portal-report-table tbody > tr:hover > td {
-          background: #eaf3ff !important;
-        }
-
-        /* Clicked row: this rule is intentionally LAST and !important so
-           sticky cells and old Tailwind backgrounds cannot hide selection. */
-        .portal-report-table tbody > tr.portal-row-selected > td,
-        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(1),
-        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(2),
-        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(3) {
-          background: #bfdbfe !important;
-          color: #0f172a !important;
-          box-shadow: inset 0 2px 0 #60a5fa, inset 0 -2px 0 #60a5fa !important;
-        }
-
-        .portal-report-table tbody > tr.portal-row-selected {
-          outline: 2px solid #3b82f6;
-          outline-offset: -2px;
-        }
-
-        /* Keep report text readable on white cells. */
-        .portal-report-table tbody td[class*="text-white"] {
-          color: #0f172a !important;
-        }
-
-        .portal-report-table tbody td[class*="text-slate-300"],
-        .portal-report-table tbody td[class*="text-slate-400"] {
-          color: #475569 !important;
-        }
-      `}</style>
-
-      {/* Final hard UI contract: scroll, 3 frozen columns, theme, selection */}
-      <style jsx global>{`
-        .portal-clean { min-width: 0 !important; }
-        .report-scroll {
-          display: block !important;
-          width: 100% !important;
-          max-width: 100% !important;
-          overflow-x: auto !important;
-          overflow-y: hidden !important;
-          overscroll-behavior-x: contain;
-          overscroll-behavior-y: auto;
-          -webkit-overflow-scrolling: touch;
-          touch-action: pan-x;
-          scrollbar-width: auto !important;
-        }
-        .report-scroll::-webkit-scrollbar { width: 11px; height: 13px; }
-        .report-scroll::-webkit-scrollbar-track { background: #e2e8f0; }
-        .report-scroll::-webkit-scrollbar-thumb { background: #64748b; border-radius: 8px; border: 3px solid #e2e8f0; }
-        .portal-report-table { width: max-content !important; table-layout: fixed !important; }
-        .portal-report-table tbody tr { cursor: pointer !important; }
-
-        .portal-day { background: #ffffff !important; color: #0f172a !important; }
-        .portal-day .theme-toggle { background:#0f172a !important; color:#ffffff !important; border-color:#0f172a !important; }
-
-        .portal-night { background:#07111f !important; color:#e5e7eb !important; }
-        .portal-night header, .portal-night section, .portal-night main { background:#07111f !important; color:#e5e7eb !important; }
-        .portal-night [class*="bg-white"] { background:#0f172a !important; }
-        .portal-night [class*="bg-slate-50"] { background:#111827 !important; }
-        .portal-night [class*="bg-slate-900"] { background:#0f172a !important; }
-        .portal-night [class*="text-slate-900"] { color:#f8fafc !important; }
-        .portal-night [class*="text-slate-800"] { color:#e5e7eb !important; }
-        .portal-night [class*="text-slate-700"] { color:#cbd5e1 !important; }
-        .portal-night [class*="text-slate-600"] { color:#94a3b8 !important; }
-        .portal-night [class*="text-slate-500"], .portal-night [class*="text-slate-400"] { color:#94a3b8 !important; }
-        .portal-night [class*="border-slate"], .portal-night [class*="border-gray"] { border-color:#334155 !important; }
-        .portal-night .theme-toggle { background:#f8fafc !important; color:#0f172a !important; border-color:#e2e8f0 !important; }
-        .portal-night .portal-report-table tbody tr:nth-child(odd) td { background:#0f172a !important; color:#e5e7eb !important; }
-        .portal-night .portal-report-table tbody tr:nth-child(even) td { background:#111827 !important; color:#e5e7eb !important; }
-        .portal-night .portal-report-table tbody tr:hover td { background:#172554 !important; }
-        .portal-night .portal-report-table thead th { background:#1e293b !important; color:#e2e8f0 !important; }
-        .portal-night .portal-report-table tbody tr.portal-row-selected td { background:#1d4ed8 !important; color:#ffffff !important; }
-        .portal-night .portal-report-table tbody tr.portal-row-selected td:nth-child(1),
-        .portal-night .portal-report-table tbody tr.portal-row-selected td:nth-child(2),
-        .portal-night .portal-report-table tbody tr.portal-row-selected td:nth-child(3) { background:#1d4ed8 !important; color:#ffffff !important; }
-
-        /* DAY sticky cells: all first 3 stay visible during horizontal scroll. */
-        .portal-day .portal-report-table tbody tr:nth-child(odd) td:nth-child(-n+3) { background:#ffffff !important; }
-        .portal-day .portal-report-table tbody tr:nth-child(even) td:nth-child(-n+3) { background:#f7f9fc !important; }
-        .portal-day .portal-report-table tbody tr:hover td:nth-child(-n+3) { background:#eaf3ff !important; }
-        .portal-day .portal-report-table tbody tr.portal-row-selected td:nth-child(-n+3) { background:#bfdbfe !important; }
-        .portal-day .portal-report-table thead th:nth-child(-n+3) { background:#f1f5f9 !important; color:#334155 !important; }
-
-        /* Keep sticky offsets tied to the actual first-three-column widths. */
-        .portal-report-table thead th:nth-child(1), .portal-report-table tbody td:nth-child(1) { left:0 !important; position:sticky !important; z-index:31 !important; }
-        .portal-report-table thead th:nth-child(2), .portal-report-table tbody td:nth-child(2) { left:var(--portal-c1) !important; position:sticky !important; z-index:31 !important; }
-        .portal-report-table thead th:nth-child(3), .portal-report-table tbody td:nth-child(3) { left:calc(var(--portal-c1) + var(--portal-c2)) !important; position:sticky !important; z-index:31 !important; }
-        .portal-report-table thead th:nth-child(-n+3) { z-index:45 !important; position:sticky !important; top:0 !important; }
-      `}</style>
-
-      {/* Upload Modal (7 Files) */}
+      {/* Upload Modal (6 Files) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white p-6 border border-slate-700 shadow-2xl text-slate-800">
+          <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
             <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
               <span>📊</span> Upload Reports (7 Files System)
             </h2>
