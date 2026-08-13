@@ -88,10 +88,11 @@ export const generateStationWiseData = (
     }
   });
 
-  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana
+  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana (VLOOKUP / Matching logic)
   const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
 
   (irctcOrders || []).forEach((row: any) => {
+    // Column matching specifically checking "Delivery Station" / "Station Code" / "Station"
     const rawStation = getVal(row, [
       'Delivery Station',
       'DeliveryStation',
@@ -106,24 +107,32 @@ export const generateStationWiseData = (
       irctcFeedbackMap[stationCode] = { good: 0, bad: 0 };
     }
 
+    // Checking "AD Feedback Type" or standard Feedback Type columns for values like COMPLAIN / FEEDBACK
     const typeVal = String(
-      getVal(row, ['Feedback Type', 'FeedbackType', 'Type', 'FEEDBACK TYPE']) || ''
+      getVal(row, [
+        'AD Feedback Type',
+        'Ad Feedback Type',
+        'Feedback Type',
+        'FeedbackType',
+        'Type',
+        'FEEDBACK TYPE'
+      ]) || ''
     ).trim().toUpperCase();
 
     const directFeedback = String(getVal(row, ['FEEDBACK', 'Good Feedback', 'Feedback']) || '').trim();
     const directComplain = String(getVal(row, ['COMPLAIN', 'Complaint', 'Bad Feedback', 'Issue']) || '').trim();
 
-    // Check FEEDBACK (Good) vs COMPLAIN (Bad)
-    if (typeVal === 'FEEDBACK' || typeVal.includes('FEEDBACK') || typeVal === 'GOOD') {
-      irctcFeedbackMap[stationCode].good += 1;
-    } else if (typeVal === 'COMPLAIN' || typeVal.includes('COMPLAIN') || typeVal.includes('BAD') || typeVal.includes('ISSUE')) {
+    // Mapping: COMPLAIN -> Feedback Bad, FEEDBACK -> Feedback Good
+    if (typeVal === 'COMPLAIN' || typeVal.includes('COMPLAIN') || typeVal.includes('BAD') || typeVal.includes('ISSUE')) {
       irctcFeedbackMap[stationCode].bad += 1;
+    } else if (typeVal === 'FEEDBACK' || typeVal.includes('FEEDBACK') || typeVal === 'GOOD') {
+      irctcFeedbackMap[stationCode].good += 1;
     } else {
-      if (directFeedback && directFeedback !== '0' && directFeedback.toUpperCase() !== 'NA') {
-        irctcFeedbackMap[stationCode].good += 1;
-      }
       if (directComplain && directComplain !== '0' && directComplain.toUpperCase() !== 'NA') {
         irctcFeedbackMap[stationCode].bad += 1;
+      }
+      if (directFeedback && directFeedback !== '0' && directFeedback.toUpperCase() !== 'NA') {
+        irctcFeedbackMap[stationCode].good += 1;
       }
     }
   });
@@ -246,7 +255,7 @@ export const generateStationWiseData = (
       ? totalStationVendorsMap[st.stationCode].size
       : Math.max(st.deliveredOutlets.size, 1);
 
-    // Direct fetch from IRCTC Map
+    // Direct fetch from IRCTC Map matched against station code
     const irctcFeedback = irctcFeedbackMap[st.stationCode] || { good: 0, bad: 0 };
 
     return {
@@ -274,8 +283,8 @@ export const generateStationWiseData = (
       'Not Delivered Order': st.notDeliveredOrdersCount,
       'Not Delivered %': notDeliveredPct,
       'PPD % of Final Selling Price': ppdPct,
-      'Feedback Good': irctcFeedback.good,
-      'Feedback Bad': irctcFeedback.bad,
+      'Feedback Good': irctcFeedback.good, // Mapped from FEEDBACK
+      'Feedback Bad': irctcFeedback.bad,   // Mapped from COMPLAIN
       'Count of Delivered Outlets': st.deliveredOutlets.size,
       'Total Station Vendors': totalVendors,
     };
