@@ -1,5 +1,7 @@
 'use client';
 
+// UI BUILD: CLEAN WHITE THEME + FROZEN 3 COLUMNS + CLICK ROW HIGHLIGHT + EXCEL-ALIGNED RDS
+
 import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -710,6 +712,17 @@ export default function Page() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedReport, setSelectedReport] = useState<ReportType>('MAIN_REPORT');
+
+  const handleTableRowClick = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement | null;
+    const row = target?.closest('tbody tr') as HTMLTableRowElement | null;
+    if (!row) return;
+
+    document.querySelectorAll('.portal-row-selected').forEach((el) => {
+      el.classList.remove('portal-row-selected');
+    });
+    row.classList.add('portal-row-selected');
+  };
 
   // Upload States
   const [rfFile, setRfFile] = useState<File | null>(null);
@@ -1626,7 +1639,7 @@ export default function Page() {
     const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
     return (
-      <tr className={`border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
+      <tr className={`portal-data-row border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
         <td className={`p-1.5 border border-gray-400 text-[11px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
           {label}
         </td>
@@ -1691,7 +1704,7 @@ export default function Page() {
 
   if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+      <div className="portal-clean min-h-screen bg-white flex items-center justify-center text-slate-600 text-sm">
         <div className="flex items-center gap-2">
           <div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full" />
           Loading saved master records &amp; database...
@@ -1704,7 +1717,7 @@ export default function Page() {
   const outletsInfoCount = Object.keys(outletsMasterInfo).length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-3 md:p-6 font-sans">
+    <div className="portal-clean min-h-screen bg-white text-slate-800 p-3 md:p-6 font-sans" onClick={handleTableRowClick}>
       {/* Top Header */}
       <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
@@ -1713,7 +1726,7 @@ export default function Page() {
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg md:text-xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
+              <h1 className="text-lg md:text-xl font-black tracking-wide text-slate-900">
                 RELFOOD ENTERPRISE PORTAL
               </h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
@@ -1845,10 +1858,10 @@ export default function Page() {
                       style={{ 
                         WebkitOverflowScrolling: 'touch',
                         scrollbarWidth: 'auto',
-                        scrollbarColor: '#475569 #0f172a'
+                        scrollbarColor: '#cbd5e1 #f8fafc'
                       }}
                     >
-                      <table className="w-full min-w-[2100px] border-collapse text-[11px] whitespace-nowrap">
+                      <table className="portal-report-table portal-table-main w-full min-w-[2100px] border-separate border-spacing-0 text-[11px] whitespace-nowrap">
                         <thead>
                           {/* Banner 1: Red Date Header */}
                           <tr>
@@ -1927,12 +1940,12 @@ export default function Page() {
                 style={{ 
                   WebkitOverflowScrolling: 'touch',
                   scrollbarWidth: 'auto',
-                  scrollbarColor: '#475569 #0f172a'
+                  scrollbarColor: '#cbd5e1 #f8fafc'
                 }}
               >
                 {/* 1. MASTER VIEW */}
                 {selectedReport === 'MASTER' && (
-                  <table className="w-full min-w-[1400px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-master w-full min-w-[1400px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Order ID</th>
@@ -1960,7 +1973,7 @@ export default function Page() {
                         )
                         .slice(0, 100)
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-medium text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['IRCTC Order ID']}</td>
                             <td className="p-3 text-slate-400">{row['Outlet ID']}</td>
                             <td className="p-3 font-medium">{row['Vendor Name']}</td>
@@ -1993,7 +2006,7 @@ export default function Page() {
 
                 {/* 2. STATION / LAST DAY STATION VIEW */}
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <table className="w-full min-w-[1200px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-station w-full min-w-[1200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Station Code</th>
@@ -2013,7 +2026,7 @@ export default function Page() {
                       {stationSummary
                         .filter((s) => s.station.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-bold text-white font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.station}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
                             <td className="p-3 text-center font-semibold">{row.totalOrders}</td>
@@ -2033,7 +2046,7 @@ export default function Page() {
 
                 {/* 3A. VENDOR REPORT VIEW */}
                 {selectedReport === 'VENDOR_REPORT' && (
-                  <table className="w-full min-w-[1300px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-vendor w-full min-w-[1300px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Vendor Name</th>
@@ -2051,7 +2064,7 @@ export default function Page() {
                       {vendorSummary
                         .filter((v) => v.vendor.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.vendor}</td>
                             <td className="p-3 text-slate-400 font-mono">{row.outletId}</td>
                             <td className="p-3 text-amber-300">{row.state || '-'}</td>
@@ -2069,7 +2082,7 @@ export default function Page() {
 
                 {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
                 {selectedReport === 'VENDOR_RDS' && (
-                  <table className="w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-rds w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
                       <tr>
                         {VENDOR_RDS_COLUMNS.map((column, index) => {
@@ -2111,7 +2124,7 @@ export default function Page() {
                           );
                         })
                         .map((row: any) => (
-                          <tr key={`${row['Outlet ID']}-${row['Invoice Number']}`} className="hover:bg-slate-800/40">
+                          <tr key={`${row['Outlet ID']}-${row['Invoice Number']}`} className="portal-data-row">
                             {VENDOR_RDS_COLUMNS.map((column, index) => {
                               const sticky = index === 0
                                 ? 'sticky left-0 z-30'
@@ -2153,7 +2166,7 @@ export default function Page() {
 
                 {/* 4. DATE WISE VIEW */}
                 {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
-                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-date w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Date</th>
@@ -2169,7 +2182,7 @@ export default function Page() {
                       {dateSummary
                         .filter((d) => d.date.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.date}</td>
                             <td className="p-3 text-center">{row.totalOrders}</td>
                             <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
@@ -2185,7 +2198,7 @@ export default function Page() {
 
                 {/* 5. OUTLETS MASTER VIEW */}
                 {selectedReport === 'OUTLETS_MASTER' && (
-                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-outlets w-full min-w-[1000px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
@@ -2200,7 +2213,7 @@ export default function Page() {
                       {Object.values(outletsMasterInfo)
                         .filter((o) => o.outletId.includes(searchTerm) || o.outletName?.toLowerCase().includes(searchTerm.toLowerCase()))
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 font-medium text-white">{row.outletName || '-'}</td>
                             <td className="p-3 text-cyan-300 font-mono">{row.station || '-'}</td>
@@ -2219,7 +2232,7 @@ export default function Page() {
 
                 {/* 6. OUTLET-WISE FEEDBACK + RATING REPORT */}
                 {selectedReport === 'FEEDBACK_REPORT' && (
-                  <table className="w-full min-w-[1900px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-feedback w-full min-w-[1900px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 z-40 bg-slate-900 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
@@ -2246,7 +2259,7 @@ export default function Page() {
                           r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
                         )
                         .map((row) => (
-                          <tr key={row['Outlet Id']} className="hover:bg-slate-800/40">
+                          <tr key={row['Outlet Id']} className="portal-data-row">
                             <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 z-30 bg-slate-900/95 w-[100px] min-w-[100px] max-w-[100px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
                             <td className="p-3 font-medium text-white sticky left-[100px] z-30 bg-slate-900/95 w-[300px] min-w-[300px] max-w-[300px]">{row['Outlet Name'] || '-'}</td>
                             <td className="p-3 text-cyan-300 font-mono sticky left-[400px] z-30 bg-slate-900/95 w-[140px] min-w-[140px] max-w-[140px]">{row['Station Code'] || '-'}</td>
@@ -2269,7 +2282,7 @@ export default function Page() {
 
                 {/* 7. PENALTIES VIEW */}
                 {selectedReport === 'PENALTIES' && (
-                  <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="portal-report-table portal-table-penalties w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet ID</th>
@@ -2285,7 +2298,7 @@ export default function Page() {
                       {penaltyRawRecords
                         .filter((p) => p.outletId.includes(searchTerm) || p.orderId.includes(searchTerm))
                         .map((row, i) => (
-                          <tr key={i} className="hover:bg-slate-800/40">
+                          <tr key={i} className="portal-data-row hover:bg-slate-50">
                             <td className="p-3 font-bold text-rose-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.outletId}</td>
                             <td className="p-3 text-white font-mono">{row.orderId || '-'}</td>
                             <td className="p-3">
@@ -2312,10 +2325,386 @@ export default function Page() {
         )}
       </main>
 
-      {/* Upload Modal (6 Files) */}
+      <style jsx global>{`
+        /* Clean white portal theme + Excel-like horizontal browsing */
+        .portal-clean {
+          background: #ffffff !important;
+          color: #0f172a !important;
+        }
+
+        .portal-clean [class*="bg-slate-950"],
+        .portal-clean [class*="bg-slate-900"] {
+          background-color: #ffffff !important;
+        }
+
+        .portal-clean [class*="bg-slate-800"] {
+          background-color: #f8fafc !important;
+        }
+
+        .portal-clean [class*="border-slate-800"],
+        .portal-clean [class*="border-slate-700"],
+        .portal-clean [class*="border-slate-600"] {
+          border-color: #dbe3ee !important;
+        }
+
+        .portal-clean [class*="text-slate-100"],
+        .portal-clean [class*="text-slate-200"],
+        .portal-clean [class*="text-slate-300"] {
+          color: #334155 !important;
+        }
+
+        .portal-clean [class*="text-slate-400"] {
+          color: #64748b !important;
+        }
+
+        .portal-clean [class*="text-slate-500"] {
+          color: #94a3b8 !important;
+        }
+
+        .portal-report-table tbody td[class*="text-white"] {
+          color: #0f172a !important;
+        }
+
+        .portal-clean input,
+        .portal-clean select {
+          background: #ffffff !important;
+          color: #0f172a !important;
+          border-color: #cbd5e1 !important;
+        }
+
+        .portal-clean main {
+          min-width: 0;
+        }
+
+        .portal-report-table {
+          --portal-c1: 140px;
+          --portal-c2: 220px;
+          --portal-c3: 160px;
+          --portal-sticky-bg: #ffffff;
+          border-color: #dbe3ee !important;
+        }
+
+        .portal-table-main { --portal-c1: 140px; --portal-c2: 60px; --portal-c3: 60px; }
+        .portal-table-master { --portal-c1: 150px; --portal-c2: 120px; --portal-c3: 240px; }
+        .portal-table-station { --portal-c1: 150px; --portal-c2: 180px; --portal-c3: 120px; }
+        .portal-table-vendor { --portal-c1: 350px; --portal-c2: 120px; --portal-c3: 180px; }
+        .portal-table-rds { --portal-c1: 100px; --portal-c2: 350px; --portal-c3: 140px; }
+        .portal-table-date { --portal-c1: 230px; --portal-c2: 130px; --portal-c3: 130px; }
+        .portal-table-outlets { --portal-c1: 130px; --portal-c2: 300px; --portal-c3: 160px; }
+        .portal-table-feedback { --portal-c1: 100px; --portal-c2: 300px; --portal-c3: 140px; }
+        .portal-table-penalties { --portal-c1: 130px; --portal-c2: 170px; --portal-c3: 180px; }
+
+        .portal-report-table tbody tr:nth-child(odd) td {
+          background: #ffffff !important;
+        }
+
+        .portal-report-table tbody tr:nth-child(even) td {
+          background: #f8fafc !important;
+        }
+
+        .portal-report-table tbody tr:hover td {
+          background: #eef6ff !important;
+        }
+
+        .portal-report-table tbody tr.portal-row-selected td {
+          background: #bfdbfe !important;
+          color: #0f172a !important;
+          box-shadow: inset 0 1px 0 #93c5fd, inset 0 -1px 0 #93c5fd;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(1),
+        .portal-report-table tbody tr > td:nth-child(1) {
+          position: sticky !important;
+          left: 0 !important;
+          width: var(--portal-c1) !important;
+          min-width: var(--portal-c1) !important;
+          max-width: var(--portal-c1) !important;
+          z-index: 30;
+          box-sizing: border-box;
+          background: var(--portal-sticky-bg) !important;
+          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(2),
+        .portal-report-table tbody tr > td:nth-child(2) {
+          position: sticky !important;
+          left: var(--portal-c1) !important;
+          width: var(--portal-c2) !important;
+          min-width: var(--portal-c2) !important;
+          max-width: var(--portal-c2) !important;
+          z-index: 30;
+          box-sizing: border-box;
+          background: var(--portal-sticky-bg) !important;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(3),
+        .portal-report-table tbody tr > td:nth-child(3) {
+          position: sticky !important;
+          left: calc(var(--portal-c1) + var(--portal-c2)) !important;
+          width: var(--portal-c3) !important;
+          min-width: var(--portal-c3) !important;
+          max-width: var(--portal-c3) !important;
+          z-index: 30;
+          box-sizing: border-box;
+          background: var(--portal-sticky-bg) !important;
+          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
+        }
+
+        .portal-report-table tbody tr:nth-child(even) > td:nth-child(1),
+        .portal-report-table tbody tr:nth-child(even) > td:nth-child(2),
+        .portal-report-table tbody tr:nth-child(even) > td:nth-child(3) {
+          background: #f8fafc !important;
+        }
+
+        .portal-report-table tbody tr.portal-row-selected > td:nth-child(1),
+        .portal-report-table tbody tr.portal-row-selected > td:nth-child(2),
+        .portal-report-table tbody tr.portal-row-selected > td:nth-child(3) {
+          background: #bfdbfe !important;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(1),
+        .portal-report-table thead tr:last-child > th:nth-child(2),
+        .portal-report-table thead tr:last-child > th:nth-child(3) {
+          z-index: 40 !important;
+          background: #f1f5f9 !important;
+          color: #334155 !important;
+          box-shadow: 2px 0 5px rgba(15, 23, 42, 0.10);
+        }
+
+        .portal-report-table td,
+        .portal-report-table th {
+          border-color: #dbe3ee !important;
+        }
+
+        .portal-report-table tbody tr {
+          cursor: pointer;
+          transition: background-color 120ms ease;
+        }
+
+        /* Main matrix has grouped headers; keep the Source/FTD/MTD data columns fixed. */
+        .portal-table-main thead tr:last-child > th:nth-child(1),
+        .portal-table-main thead tr:last-child > th:nth-child(2),
+        .portal-table-main thead tr:last-child > th:nth-child(3) {
+          background: #f1f5f9 !important;
+        }
+
+        /* Always provide a real horizontal scrollbar for every report. */
+        .portal-clean .overflow-x-auto {
+          overflow-x: auto !important;
+          overscroll-behavior-x: contain;
+          scrollbar-color: #94a3b8 #f1f5f9;
+          scrollbar-width: auto;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar {
+          height: 12px;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar-track {
+          background: #f1f5f9;
+          border-radius: 999px;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb {
+          background: #94a3b8;
+          border-radius: 999px;
+          border: 3px solid #f1f5f9;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb:hover {
+          background: #64748b;
+        }
+      `}</style>
+
+      {/* Final UI overrides: clean white theme + 3 frozen columns + row selection */}
+      <style jsx global>{`
+        /* =========================
+           CLEAN WHITE THEME
+           ========================= */
+        .portal-clean,
+        .portal-clean main,
+        .portal-clean header,
+        .portal-clean section {
+          background: #ffffff !important;
+          color: #0f172a !important;
+        }
+
+        /* Replace the dark report shell and dark utility panels. */
+        .portal-clean [class*="bg-slate-950"],
+        .portal-clean [class*="bg-slate-900"],
+        .portal-clean [class*="bg-slate-800"],
+        .portal-clean [class*="bg-slate-700"],
+        .portal-clean [class*="bg-indigo-950"],
+        .portal-clean [class*="bg-black"] {
+          background-color: #ffffff !important;
+        }
+
+        .portal-clean [class*="text-slate-100"],
+        .portal-clean [class*="text-slate-200"],
+        .portal-clean [class*="text-slate-300"],
+        .portal-clean [class*="text-slate-400"],
+        .portal-clean [class*="text-slate-500"] {
+          color: #475569 !important;
+        }
+
+        .portal-clean [class*="border-slate-800"],
+        .portal-clean [class*="border-slate-700"],
+        .portal-clean [class*="border-slate-600"] {
+          border-color: #d7dee8 !important;
+        }
+
+        .portal-clean input,
+        .portal-clean select {
+          background: #ffffff !important;
+          color: #0f172a !important;
+          border-color: #cbd5e1 !important;
+        }
+
+        /* Modal also gets a clean white/light overlay. */
+        .portal-clean [class*="bg-black/80"] {
+          background-color: rgba(15, 23, 42, 0.22) !important;
+        }
+
+        /* =========================
+           ALL REPORTS: HORIZONTAL SCROLL
+           ========================= */
+        .portal-clean .overflow-x-auto {
+          overflow-x: auto !important;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: auto;
+          scrollbar-color: #94a3b8 #eef2f7;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar {
+          width: 10px;
+          height: 12px;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar-track {
+          background: #eef2f7;
+        }
+
+        .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb {
+          background: #94a3b8;
+          border-radius: 8px;
+          border: 3px solid #eef2f7;
+        }
+
+        /* =========================
+           EVERY REPORT: FIRST 3 COLUMNS FROZEN
+           ========================= */
+        .portal-report-table {
+          --freeze-c1: var(--portal-c1, 140px);
+          --freeze-c2: var(--portal-c2, 220px);
+          --freeze-c3: var(--portal-c3, 160px);
+          --freeze-bg: #ffffff;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(1),
+        .portal-report-table tbody > tr > td:nth-child(1) {
+          position: sticky !important;
+          left: 0 !important;
+          width: var(--freeze-c1) !important;
+          min-width: var(--freeze-c1) !important;
+          max-width: var(--freeze-c1) !important;
+          z-index: 31 !important;
+          box-sizing: border-box !important;
+          background: var(--freeze-bg) !important;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(2),
+        .portal-report-table tbody > tr > td:nth-child(2) {
+          position: sticky !important;
+          left: var(--freeze-c1) !important;
+          width: var(--freeze-c2) !important;
+          min-width: var(--freeze-c2) !important;
+          max-width: var(--freeze-c2) !important;
+          z-index: 31 !important;
+          box-sizing: border-box !important;
+          background: var(--freeze-bg) !important;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(3),
+        .portal-report-table tbody > tr > td:nth-child(3) {
+          position: sticky !important;
+          left: calc(var(--freeze-c1) + var(--freeze-c2)) !important;
+          width: var(--freeze-c3) !important;
+          min-width: var(--freeze-c3) !important;
+          max-width: var(--freeze-c3) !important;
+          z-index: 31 !important;
+          box-sizing: border-box !important;
+          background: var(--freeze-bg) !important;
+          box-shadow: 3px 0 7px rgba(15, 23, 42, 0.12) !important;
+        }
+
+        .portal-report-table thead tr:last-child > th:nth-child(1),
+        .portal-report-table thead tr:last-child > th:nth-child(2),
+        .portal-report-table thead tr:last-child > th:nth-child(3) {
+          z-index: 45 !important;
+          background: #f1f5f9 !important;
+          color: #334155 !important;
+        }
+
+        /* Main matrix has multiple header rows; freeze the first 3 visible
+           metric columns in the bottom header row and all body cells. */
+        .portal-table-main thead tr:last-child > th:nth-child(1),
+        .portal-table-main thead tr:last-child > th:nth-child(2),
+        .portal-table-main thead tr:last-child > th:nth-child(3) {
+          z-index: 45 !important;
+        }
+
+        /* =========================
+           EXCEL-LIKE ZEBRA ROWS + CLICK HIGHLIGHT
+           ========================= */
+        .portal-report-table tbody > tr {
+          cursor: pointer !important;
+          transition: background-color 120ms ease, box-shadow 120ms ease;
+        }
+
+        .portal-report-table tbody > tr:nth-child(odd) > td {
+          background: #ffffff !important;
+        }
+
+        .portal-report-table tbody > tr:nth-child(even) > td {
+          background: #f7f9fc !important;
+        }
+
+        .portal-report-table tbody > tr:hover > td {
+          background: #eaf3ff !important;
+        }
+
+        /* Clicked row: this rule is intentionally LAST and !important so
+           sticky cells and old Tailwind backgrounds cannot hide selection. */
+        .portal-report-table tbody > tr.portal-row-selected > td,
+        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(1),
+        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(2),
+        .portal-report-table tbody > tr.portal-row-selected > td:nth-child(3) {
+          background: #bfdbfe !important;
+          color: #0f172a !important;
+          box-shadow: inset 0 2px 0 #60a5fa, inset 0 -2px 0 #60a5fa !important;
+        }
+
+        .portal-report-table tbody > tr.portal-row-selected {
+          outline: 2px solid #3b82f6;
+          outline-offset: -2px;
+        }
+
+        /* Keep report text readable on white cells. */
+        .portal-report-table tbody td[class*="text-white"] {
+          color: #0f172a !important;
+        }
+
+        .portal-report-table tbody td[class*="text-slate-300"],
+        .portal-report-table tbody td[class*="text-slate-400"] {
+          color: #475569 !important;
+        }
+      `}</style>
+
+      {/* Upload Modal (7 Files) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
+          <div className="w-full max-w-xl rounded-2xl bg-white p-6 border border-slate-700 shadow-2xl text-slate-800">
             <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
               <span>📊</span> Upload Reports (7 Files System)
             </h2>
