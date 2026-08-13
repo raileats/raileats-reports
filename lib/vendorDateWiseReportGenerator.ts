@@ -1,39 +1,195 @@
 import * as XLSX from 'xlsx';
 import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
-// Normalize date to DD-MM-YYYY format for consistent column headers
-const normalizeDateStr = (rawDate: string): string => {
-  if (!rawDate) return '';
-  const d = String(rawDate).trim();
-  
-  // If already DD-MM-YYYY or DD/MM/YYYY
-  const dmyMatch = d.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-  if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    return `${day}-${month}-${year}`;
-  }
+/**
+ * IMPORTANT DATE RULE
+ * -------------------
+ * The source report uses MM/DD/YYYY.
+ *
+ * Examples:
+ *   08/01/2026 -> 01 August 2026
+ *   08/02/2026 -> 02 August 2026
+ *   08/08/2026 -> 08 August 2026
+ *   08/10/2026 -> 10 August 2026
+ *
+ * Never let JavaScript's new Date("08/01/2026") decide the meaning.
+ * We parse the source explicitly.
+ */
 
-  // If YYYY-MM-DD
-  const ymdMatch = d.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (ymdMatch) {
-    const year = ymdMatch[1];
-    const month = ymdMatch[2].padStart(2, '0');
-    const day = ymdMatch[3].padStart(2, '0');
-    return `${day}-${month}-${year}`;
+const excelSerialToDate = (serial: number): Date | null => {
+  if (!Number.isFinite(serial)) return null;
+
+  // Excel's 1900 date system. Ignore the time fraction.
+  const utcMs = Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000;
+  const d = new Date(utcMs);
+
+  if (Number.isNaN(d.getTime())) return null;
+
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+};
+
+const validDate = (year: number, month: number, day: number): Date | null => {
+  const d = new Date(year, month - 1, day);
+
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    return null;
   }
 
   return d;
 };
 
-// Date parser for chronological sorting
+/**
+ * Convert any supported source date into a stable DD-MM-YYYY key.
+ *
+ * Supported source formats:
+ *   MM/DD/YYYY
+ *   MM-DD-YYYY
+ *   YYYY-MM-DD
+ *   YYYY/MM/DD
+ *   Excel serial number
+ *   JavaScript Date
+ */
+const normalizeDateStr = (rawDate: any): string => {
+  if (rawDate === null || rawDate === undefined || rawDate === '') return '';
+
+  // 1. XLSX may give us a real Date object.
+  if (rawDate instanceof Date) {
+    if (Number.isNaN(rawDate.getTime())) return '';
+
+    const day = String(rawDate.getDate()).padStart(2, '0');
+    const month = String(rawDate.getMonth() + 1).padStart(2, '0');
+    const year = rawDate.getFullYear();
+
+    return `${day}-${month}-${year}`;
+  }
+
+  // 2. Excel serial number.
+  if (typeof rawDate === 'number') {
+    const d = excelSerialToDate(rawDate);
+
+    if (!d) return '';
+
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+
+    return `${day}-${month}-${year}`;
+  }
+
+  const d = String(rawDate)
+    .trim()
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  if (!d) return '';
+
+  // Remove time portion only after preserving the date part.
+  const datePart = d.split(/[T ]/)[0];
+
+  // 3. SOURCE FORMAT: MM/DD/YYYY or MM-DD-YYYY.
+  //
+  // This is the critical fix.
+  // 08/01/2026 MUST become 01-08-2026, not 08-01-2026.
+  let match = datePart.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+
+  if (match) {
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const year = Number(match[3]);
+
+    const parsed = validDate(year, month, day);
+
+    if (!parsed) return '';
+
+    return [
+      String(parsed.getDate()).padStart(2, '0'),
+      String(parsed.getMonth() + 1).padStart(2, '0'),
+      String(parsed.getFullYear()),
+    ].join('-');
+  }
+
+  // 4. ISO format: YYYY-MM-DD / YYYY/MM/DD.
+  match = datePart.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+
+    const parsed = validDate(year, month, day);
+
+    if (!parsed) return '';
+
+    return [
+      String(parsed.getDate()).padStart(2, '0'),
+      String(parsed.getMonth() + 1).padStart(2, '0'),
+      String(parsed.getFullYear()),
+    ].join('-');
+  }
+
+  // 5. Numeric string Excel serial, e.g. "46235".
+  if (/^\d+(?:\.\d+)?$/.test(datePart)) {
+    const serial = Number(datePart);
+
+    // Normal Excel date serial range.
+    if (serial >= 30000 && serial <= 70000) {
+      const parsed = excelSerialToDate(serial);
+
+      if (!parsed) return '';
+
+      return [
+        String(parsed.getDate()).padStart(2, '0'),
+        String(parsed.getMonth() + 1).padStart(2, '0'),
+        String(parsed.getFullYear()),
+      ].join('-');
+    }
+  }
+
+  return '';
+};
+
 const parseDateForSort = (dStr: string): number => {
   const parts = dStr.split('-');
-  if (parts.length === 3) {
-    return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
-  }
-  return 0;
+
+  if (parts.length !== 3) return Number.MAX_SAFE_INTEGER;
+
+  const day = Number(parts[0]);
+  const month = Number(parts[1]);
+  const year = Number(parts[2]);
+
+  const d = validDate(year, month, day);
+
+  return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+};
+
+/**
+ * Human-readable date header for Excel.
+ *
+ * 01-08-2026 -> 1 August 2026
+ * 02-08-2026 -> 2 August 2026
+ */
+const formatDateHeader = (dStr: string): string => {
+  const parts = dStr.split('-');
+
+  if (parts.length !== 3) return dStr;
+
+  const day = Number(parts[0]);
+  const month = Number(parts[1]);
+  const year = Number(parts[2]);
+
+  const d = validDate(year, month, day);
+
+  if (!d) return dStr;
+
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 };
 
 export const generateVendorDateWiseData = (
@@ -41,6 +197,7 @@ export const generateVendorDateWiseData = (
   outletsMasterInfo: Record<string, OutletMasterInfo> = {}
 ) => {
   const uniqueDatesSet = new Set<string>();
+
   const outletDataMap: Record<
     string,
     {
@@ -54,81 +211,182 @@ export const generateVendorDateWiseData = (
 
   // 1. Group & Aggregate
   masterOrders.forEach((ord) => {
-    const outletId = String(ord['Outlet ID'] || '').trim().replace(/\.0$/, '');
+    const outletId = String(ord['Outlet ID'] || '')
+      .trim()
+      .replace(/\.0$/, '');
+
     if (!outletId) return;
 
     if (!outletDataMap[outletId]) {
       const outMaster = outletsMasterInfo[outletId];
+
       outletDataMap[outletId] = {
         outletId,
-        vendorName: outMaster?.outletName || ord['Vendor Name'] || `Outlet ${outletId}`,
+        vendorName:
+          outMaster?.outletName ||
+          ord['Vendor Name'] ||
+          `Outlet ${outletId}`,
         stnCode: outMaster?.station || ord['Station Code'] || '',
         dateCounts: {},
         totalDelivered: 0,
       };
     }
 
-    const finalStatus = String(ord['Final Status'] || '').trim().toLowerCase();
-    
-    // Only count delivered orders
-    if (finalStatus === 'delivered') {
-      const rawDate = ord['Delivery Date'] || ord['Booking Date'] || '';
-      const dateKey = normalizeDateStr(rawDate);
+    const finalStatus = String(ord['Final Status'] || '')
+      .trim()
+      .toLowerCase();
 
-      if (dateKey) {
-        uniqueDatesSet.add(dateKey);
-        outletDataMap[outletId].dateCounts[dateKey] =
-          (outletDataMap[outletId].dateCounts[dateKey] || 0) + (Number(ord['Orders Count']) || 1);
-        outletDataMap[outletId].totalDelivered += Number(ord['Orders Count']) || 1;
-      }
-    }
+    // Only count delivered orders.
+    if (finalStatus !== 'delivered') return;
+
+    const rawDate = ord['Delivery Date'] || ord['Booking Date'] || '';
+
+    // CRITICAL: all date keys now pass through the same MM/DD/YYYY-safe helper.
+    const dateKey = normalizeDateStr(rawDate);
+
+    if (!dateKey) return;
+
+    uniqueDatesSet.add(dateKey);
+
+    const orderCount = Number(ord['Orders Count']) || 1;
+
+    outletDataMap[outletId].dateCounts[dateKey] =
+      (outletDataMap[outletId].dateCounts[dateKey] || 0) + orderCount;
+
+    outletDataMap[outletId].totalDelivered += orderCount;
   });
 
-  // 2. Chronologically sort date columns
-  const sortedDateColumns = Array.from(uniqueDatesSet).sort(
+  // 2. Chronologically sort date columns.
+  const sortedDateKeys = Array.from(uniqueDatesSet).sort(
     (a, b) => parseDateForSort(a) - parseDateForSort(b)
   );
 
-  // 3. Format rows matching image layout
+  // 3. Dashboard/internal rows.
+  //
+  // Keep the internal date key as DD-MM-YYYY so calculations and sorting
+  // remain deterministic. The UI can format the same key using
+  // formatDateHeader() and therefore cannot swap month/day.
   const rows = Object.values(outletDataMap).map((item) => {
     const rowObj: Record<string, any> = {
       'Row Labels': Number(item.outletId) || item.outletId,
-      'Name': item.vendorName,
+      Name: item.vendorName,
       'STN Code': item.stnCode,
     };
 
-    sortedDateColumns.forEach((dt) => {
-      // If 0, keep blank as shown in pivot screenshot
-      rowObj[dt] = item.dateCounts[dt] ? item.dateCounts[dt] : '';
+    sortedDateKeys.forEach((dateKey) => {
+      rowObj[dateKey] = item.dateCounts[dateKey]
+        ? item.dateCounts[dateKey]
+        : '';
     });
 
     return rowObj;
   });
 
-  // Sort by Outlet ID (Row Labels) ascending
-  rows.sort((a, b) => Number(a['Row Labels']) - Number(b['Row Labels']));
+  // Sort by Outlet ID ascending.
+  rows.sort((a, b) => {
+    const aa = Number(a['Row Labels']);
+    const bb = Number(b['Row Labels']);
 
-  return { rows, dateColumns: sortedDateColumns };
+    if (Number.isFinite(aa) && Number.isFinite(bb)) {
+      return aa - bb;
+    }
+
+    return String(a['Row Labels']).localeCompare(
+      String(b['Row Labels']),
+      undefined,
+      { numeric: true }
+    );
+  });
+
+  // IMPORTANT:
+  // dateColumns are human-readable labels, but dateKeys are returned too.
+  // This allows dashboard and Excel to use exactly the same source dates.
+  const dateColumns = sortedDateKeys.map(formatDateHeader);
+
+  return {
+    rows,
+    dateColumns,
+    dateKeys: sortedDateKeys,
+  };
 };
 
 /**
- * Direct Vendor Date Wise Report Excel Generator
+ * Direct Vendor Date Wise Report Excel Generator.
+ *
+ * Excel output:
+ *   Row Labels | Name | STN Code | 1 August 2026 | 2 August 2026 | ...
+ *
+ * No Excel serial number is written into the header.
+ * No DD/MM vs MM/DD ambiguity remains in the generated report.
  */
 export const generateVendorDateWiseReportWorkbook = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
   fileNamePrefix: string = 'VENDOR_REPORT_DATE_WISE'
 ) => {
-  const { rows } = generateVendorDateWiseData(masterOrders, outletsMasterInfo);
+  const { rows, dateKeys } = generateVendorDateWiseData(
+    masterOrders,
+    outletsMasterInfo
+  );
+
   if (rows.length === 0) {
     alert('Date-wise report export karne ke liye koi data available nahi hai.');
     return;
   }
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
+  // Build Excel rows with human-readable date headers.
+  const excelRows = rows.map((row) => {
+    const out: Record<string, any> = {
+      'Row Labels': row['Row Labels'],
+      Name: row.Name,
+      'STN Code': row['STN Code'],
+    };
+
+    dateKeys.forEach((dateKey) => {
+      const header = formatDateHeader(dateKey);
+      out[header] = row[dateKey] ?? '';
+    });
+
+    return out;
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(excelRows);
+
+  // Freeze first 3 columns so Outlet ID / Name / STN Code remain visible
+  // while horizontally scrolling through dates.
+  worksheet['!freeze'] = {
+    xSplit: 3,
+    ySplit: 1,
+  };
+
+  // Basic readable widths.
+  worksheet['!cols'] = [
+    { wch: 14 },
+    { wch: 42 },
+    { wch: 14 },
+    ...dateKeys.map(() => ({ wch: 18 })),
+  ];
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendor Date Wise');
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
+
+  XLSX.writeFile(
+    workbook,
+    `${fileNamePrefix}_${todayStr}.xlsx`
+  );
+};
+
+/**
+ * Exported helpers for the dashboard.
+ *
+ * IMPORTANT:
+ * The dashboard must use these helpers instead of new Date(rawDate)
+ * or manually splitting date strings.
+ */
+export {
+  normalizeDateStr,
+  parseDateForSort,
+  formatDateHeader,
 };
