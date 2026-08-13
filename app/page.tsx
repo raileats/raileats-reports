@@ -584,23 +584,85 @@ const getSourceChannel = (row: any): string => {
   return 'RELFood_IRCTC';
 };
 
-// --- Date Fix: Excel Serial Number & Regular Dates ---
-const formatFullDisplayDate = (dateVal: any): string => {
-  if (!dateVal) return 'Unknown Date';
-  
-  const num = parseFloat(String(dateVal));
-  let d: Date;
+// --- Date Engine: DD/MM/YYYY-safe + Excel serial + ISO/Date support ---
+const parseReportDate = (dateVal: any): Date | null => {
+  if (dateVal === null || dateVal === undefined || dateVal === '') return null;
 
-  // Check if it's an Excel serial date number like 46061.0001
-  if (!isNaN(num) && num > 30000 && num < 70000) {
-    const utcDays = Math.floor(num - 25569);
-    const utcValue = utcDays * 86400;
-    d = new Date(utcValue * 1000);
-  } else {
-    d = new Date(String(dateVal));
+  if (dateVal instanceof Date) {
+    return isNaN(dateVal.getTime()) ? null : new Date(
+      dateVal.getFullYear(),
+      dateVal.getMonth(),
+      dateVal.getDate()
+    );
   }
 
-  if (isNaN(d.getTime())) return String(dateVal);
+  const raw = String(dateVal).trim();
+  if (!raw) return null;
+
+  // Excel serial date, including fractional time.
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    const d = new Date(excelEpoch + numeric * 86400000);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  // Never send DD/MM/YYYY through new Date(string).
+  const datePart = raw.split(/[T ]/)[0];
+
+  // DD/MM/YYYY or DD-MM-YYYY
+  let match = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    const d = new Date(year, month - 1, day);
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) return d;
+    return null;
+  }
+
+  // YYYY-MM-DD / YYYY/MM/DD
+  match = datePart.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const d = new Date(year, month - 1, day);
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) return d;
+    return null;
+  }
+
+  // Fallback for unambiguous strings such as "Feb 8 2026".
+  const fallback = new Date(raw);
+  if (isNaN(fallback.getTime())) return null;
+  return new Date(
+    fallback.getFullYear(),
+    fallback.getMonth(),
+    fallback.getDate()
+  );
+};
+
+const reportDateKey = (dateVal: any): string => {
+  const d = parseReportDate(dateVal);
+  if (!d) return 'UNKNOWN';
+
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const formatFullDisplayDate = (dateVal: any): string => {
+  const d = parseReportDate(dateVal);
+  if (!d) return String(dateVal || 'Unknown Date');
 
   return d.toLocaleDateString('en-GB', {
     weekday: 'long',
@@ -1149,16 +1211,15 @@ export default function Page() {
     const dateMap: Record<string, any[]> = {};
     data.forEach((row) => {
       const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
-      const dateKey = String(rawDate).split(' ')[0].split('T')[0];
+      const dateKey = reportDateKey(rawDate);
       if (!dateMap[dateKey]) dateMap[dateKey] = [];
       dateMap[dateKey].push(row);
     });
 
     const sortedDates = Object.keys(dateMap).sort((a, b) => {
-      const numA = parseFloat(a);
-      const numB = parseFloat(b);
-      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-      return new Date(a).getTime() - new Date(b).getTime();
+      if (a === 'UNKNOWN') return 1;
+      if (b === 'UNKNOWN') return -1;
+      return a.localeCompare(b);
     });
 
     const mtdBySource: Record<string, MetricStats> = {};
@@ -1237,7 +1298,7 @@ export default function Page() {
       mtdGrandTotal.undelivered += dayTotal.undelivered;
 
       return {
-        dateLabel: formatFullDisplayDate(dateKey),
+        dateLabel: dateKey === 'UNKNOWN' ? 'Unknown Date' : formatFullDisplayDate(dateKey),
         rawDate: dateKey,
         dayTotal: { ...dayTotal },
         dayStats: JSON.parse(JSON.stringify(dayStats)),
@@ -1259,12 +1320,16 @@ export default function Page() {
 
   const dateSummary = useMemo(() => {
     const map: Record<string, any> = {};
+
     data.forEach((r) => {
       const dt = r['Delivery Date'] || r['Booking Date'] || 'N/A';
+      const key = reportDateKey(dt);
       const formatted = formatFullDisplayDate(dt);
-      if (!map[formatted]) {
-        map[formatted] = {
+
+      if (!map[key]) {
+        map[key] = {
           date: formatted,
+          rawDate: key,
           totalOrders: 0,
           delivered: 0,
           cancelled: 0,
@@ -1273,14 +1338,20 @@ export default function Page() {
           rfComm: 0,
         };
       }
-      map[formatted].totalOrders += 1;
-      if (r['Final Status'] === 'Delivered') map[formatted].delivered += 1;
-      if (r['Final Status'] === 'Cancelled') map[formatted].cancelled += 1;
-      map[formatted].sellingPrice += r['Final Selling Price'] || 0;
-      map[formatted].vendorPrice += r['Final Vendor Price'] || 0;
-      map[formatted].rfComm += r['Final RF Commission'] || 0;
+
+      map[key].totalOrders += 1;
+      if (r['Final Status'] === 'Delivered') map[key].delivered += 1;
+      if (r['Final Status'] === 'Cancelled') map[key].cancelled += 1;
+      map[key].sellingPrice += Number(r['Final Selling Price'] || 0) || 0;
+      map[key].vendorPrice += Number(r['Final Vendor Price'] || 0) || 0;
+      map[key].rfComm += Number(r['Final RF Commission'] || 0) || 0;
     });
-    return Object.values(map);
+
+    return Object.values(map).sort((a: any, b: any) => {
+      if (a.rawDate === 'UNKNOWN') return 1;
+      if (b.rawDate === 'UNKNOWN') return -1;
+      return a.rawDate.localeCompare(b.rawDate);
+    });
   }, [data]);
 
   // --- Outlet-wise Feedback / Complaint Report ---
