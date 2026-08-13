@@ -208,14 +208,27 @@ const buildFeedbackReport = (
     if (outletId) masterOutletMap.set(outletId, row);
   });
 
-  // STEP 4: Aggregate by Outlet ID.
+  // STEP 4: Build a direct Feedback Order ID -> first Feedback row map.
+  //
+  // IMPORTANT PERFORMANCE FIX:
+  // Never use feedbackRows.find() inside the orderCounts loop.
+  // With ~10,000 Feedback rows that becomes O(N²) and can perform
+  // 100+ million comparisons. A Map makes this O(1) per order.
+  const feedbackRowMap = new Map<string, any>();
+  feedbackRows.forEach((row) => {
+    const orderId = cleanOrderId(
+      row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']
+    );
+    if (orderId && !feedbackRowMap.has(orderId)) {
+      feedbackRowMap.set(orderId, row);
+    }
+  });
+
+  // STEP 5: Aggregate by Outlet ID.
   const outletMap: Record<string, FeedbackReportRow> = {};
 
   Object.entries(orderCounts).forEach(([orderId, counts]) => {
-    const feedbackRow = feedbackRows.find((row) =>
-      cleanOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']) === orderId
-    );
-
+    const feedbackRow = feedbackRowMap.get(orderId);
     const irctc = irctcOrderMap.get(orderId);
 
     // IMPORTANT:
@@ -281,7 +294,7 @@ const buildFeedbackReport = (
     outletMap[outletId].Feedback += counts.feedback;
   });
 
-  // STEP 5: If Feedback file is not available in IndexedDB (for example the
+  // STEP 6: If Feedback file is not available in IndexedDB (for example the
   // user installed the new page after an older merge), recover the report from
   // the IRCTC Feedback Type data. This prevents the report from becoming blank
   // solely because the optional Feedback file was not persisted by the old build.
@@ -322,7 +335,7 @@ const buildFeedbackReport = (
   }
 
 
-  // STEP 6: Merge historical Old Feedback / Old Ratings by Outlet ID.
+  // STEP 7: Merge historical Old Feedback / Old Ratings by Outlet ID.
   // Old data is used only when the Outlet ID already exists in the current
   // IRCTC-matched report. Old-only outlets are NOT added.
   const oldMap: Record<string, {
@@ -388,7 +401,7 @@ const buildFeedbackReport = (
     current['Old Sum'] = old.oldSum;
   });
 
-  // STEP 7: Build the FINAL outlet list.
+  // STEP 8: Build the FINAL outlet list.
   //
   // IMPORTANT BUSINESS RULE:
   // The final Feedback Report's Outlet ID list MUST come from the
@@ -433,7 +446,7 @@ const buildFeedbackReport = (
     });
   }
 
-  // STEP 8: Rating calculations.
+  // STEP 9: Rating calculations.
   //
   // Current Rating = Feedback * 5 / (Feedback + Complaint)
   //
@@ -801,6 +814,8 @@ export default function Page() {
       // later merge, keep the previously stored Old Feedback data.
       let oldRatingsData: any[] = oldRatingsRawData;
       if (oldFeedbackFile) {
+        // Old Ratings is only ~1k outlet rows; parsing/storage is lightweight.
+        // The expensive part was the Feedback Report calculation, not this file.
         setStatusText('Reading Old Feedback / Old Ratings...');
         oldRatingsData = await parseAnyFile(oldFeedbackFile);
         await saveToDB('CURRENT_OLD_RATINGS_DATA', oldRatingsData);
@@ -1288,9 +1303,30 @@ export default function Page() {
   }, [data]);
 
   // --- Outlet-wise Feedback / Complaint Report ---
+  //
+  // PERFORMANCE FIX:
+  // Feedback Report can contain 1,000+ historical outlets and is not needed
+  // while the user is viewing Master/Station/Vendor/etc. reports.
+  // Calculate it only when the Feedback Report is actually selected.
+  // This also prevents Old Ratings upload from triggering a heavy calculation
+  // during every processing/render cycle.
   const feedbackReportRows = useMemo(() => {
-    return buildFeedbackReport(feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData);
-  }, [feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData]);
+    if (selectedReport !== 'FEEDBACK_REPORT') return [];
+
+    return buildFeedbackReport(
+      feedbackRawData,
+      irctcRawData,
+      data,
+      outletsMasterInfo,
+      oldRatingsRawData
+    );
+  }, [
+    selectedReport,
+    feedbackRawData,
+    irctcRawData,
+    outletsMasterInfo,
+    oldRatingsRawData,
+  ]);
 
   // --- Exports ---
   const exportMasterExcel = () => {
