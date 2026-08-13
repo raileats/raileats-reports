@@ -1,313 +1,94 @@
 'use client';
 
 import React from 'react';
-import './main-report-matrix.css';
 
-type SourceRow = {
-  source: string;
-  orders: [number, number, number, number, string];
-  meals: [number, number, number, number, number];
-  value: [number, number, number];
-  prepaid: [number, number, number, string];
-  discount: [number, number, number, string];
-  revenue: [number, number, number, string];
-  complaints: [number, number, number, string];
-  feedback: [number, number, number, string];
-  undelivered: [number, number, number, string];
-  outlets: number;
-};
-
-type DayData = {
-  date: string;
-  rows: SourceRow[];
-};
-
-const reportData: DayData[] = [
-  {
-    date: 'Saturday, 1 August, 2026',
-    rows: [
-      {
-        source: 'Total',
-        orders: [1166, 0, 0, 319, '99.46%'],
-        meals: [2155, 0, 0, 228, 1.40],
-        value: [352803, 0, 0],
-        prepaid: [163676, 0, 0, '46.4%'],
-        discount: [12340, 12340, 0, '4.00%'],
-        revenue: [63619, 63619, 0, '18%'],
-        complaints: [76, 0, 0, '0.00%'],
-        feedback: [229, 0, 0, '0.00%'],
-        undelivered: [6, 0, 0, '0.00%'],
-        outlets: 184,
-      },
-      {
-        source: 'RELFood_IRCTC',
-        orders: [1104, 0, 0, 319, '99%'],
-        meals: [2151, 0, 0, 164, 1.95],
-        value: [352547, 0, 0],
-        prepaid: [163562, 0, 0, '46.4%'],
-        discount: [12340, 12340, 0, '3.5%'],
-        revenue: [63619, 63619, 0, '18.0%'],
-        complaints: [76, 0, 0, '0.00%'],
-        feedback: [229, 0, 0, '0.00%'],
-        undelivered: [6, 0, 0, '0.00%'],
-        outlets: 184,
-      },
-      {
-        source: 'RELFood_WEBSITE',
-        orders: [2, 0, 0, 128, '100%'],
-        meals: [4, 0, 0, 64, 2.00],
-        value: [256, 0, 0],
-        prepaid: [204, 0, 0, '79.7%'],
-        discount: [0, 0, 0, '0.0%'],
-        revenue: [0, 0, 0, '0.0%'],
-        complaints: [0, 0, 0, '0.0%'],
-        feedback: [0, 0, 0, '0.0%'],
-        undelivered: [0, 0, 0, '0.0%'],
-        outlets: 0,
-      },
-      {
-        source: 'REL_Food_App',
-        orders: [0, 0, 0, 0, '0%'],
-        meals: [0, 0, 0, 0, 0],
-        value: [0, 0, 0],
-        prepaid: [0, 0, 0, '0.0%'],
-        discount: [0, 0, 0, '0.0%'],
-        revenue: [0, 0, 0, '0.0%'],
-        complaints: [0, 0, 0, '0.0%'],
-        feedback: [0, 0, 0, '0.0%'],
-        undelivered: [0, 0, 0, '0.0%'],
-        outlets: 0,
-      },
-      {
-        source: 'MakeMyTrip',
-        orders: [0, 0, 0, 0, '0%'],
-        meals: [0, 0, 0, 0, 0],
-        value: [0, 0, 0],
-        prepaid: [0, 0, 0, '0.0%'],
-        discount: [0, 0, 0, '0.0%'],
-        revenue: [0, 0, 0, '0.0%'],
-        complaints: [0, 0, 0, '0.0%'],
-        feedback: [0, 0, 0, '0.0%'],
-        undelivered: [0, 0, 0, '0.0%'],
-        outlets: 0,
-      },
-    ],
-  },
-
-  // Isi tarah 2 August se 10 August tak data add karo.
-];
-
-/* ---------- GROUP CONFIG ---------- */
-
-const groups = [
-  {
-    key: 'orders',
-    title: 'ORDERS',
-    className: 'orders',
-    columns: ['FTD', 'MTD', 'LMTD', 'ASP', 'Del%'],
-  },
-  {
-    key: 'meals',
-    title: 'MEALS',
-    className: 'meals',
-    columns: ['FTD', 'MTD', 'LMTD', 'ASP', 'MPO'],
-  },
-  {
-    key: 'value',
-    title: 'VALUE',
-    className: 'value',
-    columns: ['FTD', 'MTD', 'LMTD'],
-  },
-  {
-    key: 'prepaid',
-    title: 'PREPAID',
-    className: 'prepaid',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-  {
-    key: 'discount',
-    title: 'DISCOUNT',
-    className: 'discount',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-  {
-    key: 'revenue',
-    title: 'REVENUE',
-    className: 'revenue',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-  {
-    key: 'complaints',
-    title: 'Complaints',
-    className: 'complaints',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-  {
-    key: 'feedback',
-    title: 'Feedback',
-    className: 'feedback',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-  {
-    key: 'undelivered',
-    title: 'IRCTC Undelivered',
-    className: 'undelivered',
-    columns: ['FTD', 'MTD', 'LMTD', '%'],
-  },
-];
-
-/* ---------- COMPONENT ---------- */
-
-export default function MainReportMatrix() {
-  return (
-    <div className="main-report-page">
-
-      <div className="report-toolbar">
-        <div>
-          <h1>RELFOOD ENTERPRISE PORTAL</h1>
-          <p>
-            Multi-Report Aggregation, Universal XLS/PDF Engine & Real-time
-            Calculations
-          </p>
-        </div>
-
-        <div className="toolbar-actions">
-          <button>🌙 Night</button>
-          <button className="excel-btn">📊 Excel (.xlsx)</button>
-          <button className="pdf-btn">📄 Download PDF</button>
-          <button className="upload-btn">☁ Upload 7 Reports</button>
-        </div>
-      </div>
-
-      <div className="report-info">
-        <span className="view-badge">Viewing: MAIN REPORT</span>
-        <span>Total Records: <b>11650</b></span>
-
-        <input
-          className="search"
-          placeholder="Search records..."
-        />
-      </div>
-
-      <div className="matrix-scroll">
-
-        {reportData.map((day) => (
-          <div className="day-block" key={day.date}>
-
-            {/* DATE BAR */}
-            <div className="date-bar">
-              {day.date}
-            </div>
-
-            <table className="matrix-table">
-
-              <thead>
-                {/* GROUP HEADERS */}
-                <tr>
-                  <th
-                    className="source-header sticky-source"
-                    rowSpan={2}
-                  >
-                    Source
-                  </th>
-
-                  {groups.map((group) => (
-                    <th
-                      key={group.key}
-                      className={`group-header ${group.className}`}
-                      colSpan={group.columns.length}
-                    >
-                      {group.title}
-                    </th>
-                  ))}
-
-                  <th
-                    className="outlets-header"
-                    rowSpan={2}
-                  >
-                    Outlets
-                  </th>
-                </tr>
-
-                {/* SUB HEADERS */}
-                <tr>
-                  {groups.flatMap((group) =>
-                    group.columns.map((column) => (
-                      <th
-                        key={`${group.key}-${column}`}
-                        className={`sub-header ${group.className}`}
-                      >
-                        {column}
-                      </th>
-                    ))
-                  )}
-                </tr>
-              </thead>
-
-              <tbody>
-                {day.rows.map((row) => (
-                  <tr
-                    key={row.source}
-                    className={row.source === 'Total' ? 'total-row' : ''}
-                  >
-                    <td className="source-cell sticky-source">
-                      {row.source}
-                    </td>
-
-                    {groups.map((group) => {
-                      const values =
-                        row[group.key as keyof SourceRow] as any[];
-
-                      return values.map((value, index) => (
-                        <td
-                          key={`${row.source}-${group.key}-${index}`}
-                          className={group.className}
-                        >
-                          {formatValue(value)}
-                        </td>
-                      ));
-                    })}
-
-                    <td className="outlet-cell">
-                      {row.outlets}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-
-            </table>
-          </div>
-        ))}
-
-      </div>
-
-      <div className="report-note">
-        Note: FTD = Full Day Total, MTD = Month Till Date,
-        LMTD = Last Month Till Date, ASP = Average Selling Price,
-        MPO = Meals Per Order.
-      </div>
-
-    </div>
-  );
+interface MainReportMatrixProps {
+  blocks: any[];
+  searchTerm: string;
 }
 
+const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
-/* ---------- VALUE FORMATTER ---------- */
+const cell = 'border border-gray-300 px-0.5 py-0.5 text-[7px] leading-[1.0] text-center whitespace-nowrap overflow-hidden';
+const headCell = 'border border-gray-300 px-0.5 py-1 text-[7px] leading-none text-center whitespace-nowrap';
 
-function formatValue(value: any) {
-  if (value === null || value === undefined || value === '') {
-    return '0';
-  }
+export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatrixProps) {
+  const renderMainReportRow = (label: string, ftd: any, mtd: any, isTotal = false) => {
+    const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
+    const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(0)}%` : '0%';
+    const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
+    const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
+    const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
+    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
-      return value.toLocaleString('en-IN');
-    }
+    return (
+      <tr className={`portal-data-row ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
+        <td className={`sticky left-0 z-10 min-w-0 ${isTotal ? 'bg-[#b40000] text-white' : 'bg-[#ef0000] text-white'} border border-gray-300 px-1 py-1 text-[7px] font-bold text-center whitespace-nowrap overflow-hidden`}>
+          {label}
+        </td>
 
-    return value.toLocaleString('en-IN', {
-      maximumFractionDigits: 2,
-    });
-  }
+        <td className={cell}>{ftd.orders}</td><td className={cell}>{mtd.orders}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{orderAsp}</td><td className={cell}>{delPct}</td>
+        <td className={cell}>{ftd.meals}</td><td className={cell}>{mtd.meals}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{mealAsp}</td><td className={cell}>{mpo}</td>
+        <td className={`${cell} font-semibold`}>{Math.round(ftd.value)}</td><td className={`${cell} font-semibold`}>{Math.round(mtd.value)}</td><td className={`${cell} text-gray-400`}>0</td>
+        <td className={cell}>{Math.round(ftd.prepaidValue)}</td><td className={cell}>{Math.round(mtd.prepaidValue)}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{prepaidPct}</td>
+        <td className={cell}>{Math.round(ftd.discount)}</td><td className={cell}>{Math.round(mtd.discount)}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{discountPct}</td>
+        <td className={`${cell} font-bold text-emerald-700`}>{Math.round(ftd.revenue)}</td><td className={`${cell} font-bold text-emerald-700`}>{Math.round(mtd.revenue)}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{revenuePct}</td>
+        <td className={cell}>{ftd.complaints}</td><td className={cell}>{mtd.complaints}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{complaintPct}</td>
+        <td className={cell}>{ftd.feedback}</td><td className={cell}>{mtd.feedback}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{feedbackPct}</td>
+        <td className={`${cell} text-rose-600 font-bold`}>{ftd.undelivered}</td><td className={`${cell} text-rose-600 font-bold`}>{mtd.undelivered}</td><td className={`${cell} text-gray-400`}>0</td><td className={cell}>{undeliveredPct}</td>
+        <td className="border border-gray-300 bg-[#f0c808] text-black font-extrabold text-center text-[7px] px-0 py-0.5 whitespace-nowrap">{ftd.outletsSet?.size ?? 0}</td>
+      </tr>
+    );
+  };
 
-  return String(value);
+  const q = searchTerm.trim().toLowerCase();
+  const filteredBlocks = blocks.filter((blk) => String(blk.dateLabel || '').toLowerCase().includes(q));
+
+  return (
+    <div className="main-report-matrix w-full space-y-4 max-h-[76vh] overflow-y-auto overflow-x-hidden pr-0" style={{ width: '100%', maxWidth: '100%' }}>
+      {filteredBlocks.map((blk, bIdx) => (
+        <div key={`${blk.rawDate || blk.dateLabel}-${bIdx}`} className="w-full overflow-hidden rounded-xl border border-slate-700 shadow-sm bg-white" style={{ width: '100%', maxWidth: '100%' }}>
+          <table className="portal-report-table portal-table-main w-full table-fixed border-collapse whitespace-nowrap" style={{ width: '100%', minWidth: '0', maxWidth: '100%', tableLayout: 'fixed', fontSize: '7px' }}>
+            <colgroup>
+              <col style={{ width: '9%' }} />
+              {Array.from({ length: 37 }).map((_, i) => <col key={i} style={{ width: '2.34%' }} />)}
+              <col style={{ width: '2.0%' }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th colSpan={39} className="bg-red-600 text-white font-bold py-1 text-center text-[9px] tracking-wide">
+                  {blk.dateLabel}
+                </th>
+              </tr>
+              <tr className="text-white font-bold text-center text-[8px]">
+                <th className="bg-black text-white border border-gray-400 py-0.5 sticky left-0 z-20 min-w-0">Source</th>
+                <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 py-0.5">ORDERS</th>
+                <th colSpan={5} className="bg-[#78b778] border border-gray-300 py-0.5">MEALS</th>
+                <th colSpan={3} className="bg-[#f2a879] border border-gray-300 py-0.5">VALUE</th>
+                <th colSpan={4} className="bg-[#7db4db] border border-gray-300 py-0.5">PREPAID</th>
+                <th colSpan={4} className="bg-[#e5989b] border border-gray-300 py-0.5">DISCOUNT</th>
+                <th colSpan={4} className="bg-[#83b0df] border border-gray-300 py-0.5">REVENUE</th>
+                <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 py-0.5">Complaints</th>
+                <th colSpan={4} className="bg-[#9ec899] border border-gray-300 py-0.5">Feedback</th>
+                <th colSpan={4} className="bg-[#444444] border border-gray-300 py-0.5">IRCTC Undelivered</th>
+                <th className="bg-[#f0c808] text-black border border-gray-400 py-0.5">Outlets</th>
+              </tr>
+              <tr className="text-[7px] text-center font-bold bg-gray-100 text-gray-800">
+                <th className="border border-gray-300 py-0.5 sticky left-0 z-20 min-w-0 bg-gray-200"></th>
+                {['FTD','MTD','LMTD','ASP','Del%','FTD','MTD','LMTD','ASP','MPO','FTD','MTD','LMTD','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%'].map((x, i) => <th key={i} className={headCell}>{x}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
+              {SOURCES.map((src) => <React.Fragment key={src}>{renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}</React.Fragment>)}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
 }
