@@ -1,11 +1,19 @@
 import * as XLSX from 'xlsx';
 
 export interface FeedbackReportRow {
-  'Outlet ID': string;
+  'Outlet Id': string;
   'Outlet Name': string;
   'Station Code': string;
-  'Complaint': number;
-  'Feedback': number;
+  'Old Count': number;
+  'Old Ratings': number;
+  'Old Sum': number;
+  Complaint: number;
+  Feedback: number;
+  'Current Count': number;
+  'Current Rating': number;
+  'Total Count': number;
+  'Total Rating Sum': number;
+  'Total Rating': number;
 }
 
 const clean = (value: any): string => {
@@ -21,11 +29,32 @@ const getValue = (row: any, keys: string[]): any => {
     const found = rowKeys.find(
       (rk) => rk.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized
     );
-    if (found && row[found] !== null && row[found] !== undefined && String(row[found]).trim() !== '') {
+    if (
+      found &&
+      row[found] !== null &&
+      row[found] !== undefined &&
+      String(row[found]).trim() !== ''
+    ) {
       return row[found];
     }
   }
   return '';
+};
+
+const toNumber = (value: any): number => {
+  const n = Number(String(value ?? '').replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+};
+
+const normalizeOrderId = (value: any): string => {
+  if (value === null || value === undefined || value === '') return '';
+  let s = String(value).trim().replace(/\u00A0/g, '').replace(/\s+/g, '');
+  s = s.replace(/\.0+$/, '');
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n)) s = String(Math.trunc(n));
+  }
+  return s.toUpperCase();
 };
 
 const normalizeType = (value: any): 'FEEDBACK' | 'COMPLAINT' | '' => {
@@ -36,32 +65,39 @@ const normalizeType = (value: any): 'FEEDBACK' | 'COMPLAINT' | '' => {
 };
 
 /**
- * Creates Outlet-wise Feedback Report.
+ * Creates the final Outlet-wise Feedback + Rating report.
  *
- * Source 1: Feedback report
- *   Order ID + Type
- *   FEEDBACK / feedback -> Feedback count
- *   COMPLAIN / COMPLAINT / complaint -> Complaint count
+ * Current data:
+ *   Feedback file -> Order ID + Type
+ *   IRCTC file    -> Order Id -> Outlet Id / Outlet Name / Delivery Station
  *
- * Source 2: IRCTC report
- *   Order Id -> Outlet Id, Outlet Name, Delivery Station
+ * Historical data:
+ *   Old Feedback / Old Ratings Excel -> Outlet Id + Old Count + Old Ratings + Old Sum
  *
- * Join key: Order ID (Feedback) = Order Id (IRCTC)
- * Then aggregate the matched orders by Outlet ID + Outlet Name + Station Code.
+ * Current Rating:
+ *   Feedback * 5 / (Feedback + Complaint)
+ *
+ * Total Rating:
+ *   (Old Sum + Feedback * 5) /
+ *   (Old Count + Feedback + Complaint)
+ *
+ * Complaint adds to the count but contributes zero rating points.
+ * Final outlet rows are the UNION of old outlets and current outlets.
  */
 export const generateFeedbackReportData = (
   feedbackData: any[] = [],
-  irctcData: any[] = []
+  irctcData: any[] = [],
+  oldRatingsData: any[] = []
 ): FeedbackReportRow[] => {
-  // Step 1: Count Feedback/Complaint by Order ID.
+  // 1. Current Feedback/Complaint count by Order ID.
   const orderTypeCounts: Record<string, { complaint: number; feedback: number }> = {};
 
-  for (const row of feedbackData || []) {
-    const orderId = clean(getValue(row, ['Order ID', 'Order Id', 'OrderID']));
-    if (!orderId) continue;
-
-    const type = normalizeType(getValue(row, ['Type']));
-    if (!type) continue;
+  for (const row of feedbackData) {
+    const orderId = normalizeOrderId(
+      getValue(row, ['Order ID', 'Order Id', 'OrderID', 'IRCTC Order ID'])
+    );
+    const type = normalizeType(getValue(row, ['Type', 'Feedback Type', 'FeedbackType']));
+    if (!orderId || !type) continue;
 
     if (!orderTypeCounts[orderId]) {
       orderTypeCounts[orderId] = { complaint: 0, feedback: 0 };
@@ -71,83 +107,168 @@ export const generateFeedbackReportData = (
     if (type === 'FEEDBACK') orderTypeCounts[orderId].feedback += 1;
   }
 
-  // Step 2: Build Order ID -> IRCTC outlet/station mapping.
-  // Duplicate IRCTC rows for the same Order Id are ignored after the first
-  // usable mapping so one order does not get counted multiple times.
-  const orderToOutlet: Record<string, {
-    outletId: string;
-    outletName: string;
-    stationCode: string;
-  }> = {};
+  // 2. IRCTC Order ID -> outlet information.
+  const orderToOutlet: Record<string, any> = {};
+  const outletToIrctc: Record<string, any> = {};
 
-  for (const row of irctcData || []) {
-    const orderId = clean(getValue(row, ['Order Id', 'Order ID', 'OrderID']));
-    if (!orderId || orderToOutlet[orderId]) continue;
+  for (const row of irctcData) {
+    const orderId = normalizeOrderId(
+      getValue(row, ['Order Id', 'Order ID', 'OrderID'])
+    );
+    const outletId = clean(
+      getValue(row, ['Outlet Id', 'Outlet ID', 'OutletId'])
+    );
 
-    const outletId = clean(getValue(row, ['Outlet Id', 'Outlet ID', 'OutletId']));
-    const outletName = clean(getValue(row, ['Outlet Name', 'OutletName']));
-    const stationCode = clean(getValue(row, ['Delivery Station', 'DeliveryStation', 'Station Code', 'StationCode'])).toUpperCase();
-
-    if (!outletId) continue;
-
-    orderToOutlet[orderId] = {
-      outletId,
-      outletName,
-      stationCode,
-    };
+    if (orderId && !orderToOutlet[orderId]) orderToOutlet[orderId] = row;
+    if (outletId && !outletToIrctc[outletId]) outletToIrctc[outletId] = row;
   }
 
-  // Step 3: Join and aggregate outlet-wise.
+  // 3. Aggregate current data by Outlet ID.
   const outletMap: Record<string, FeedbackReportRow> = {};
 
-  Object.entries(orderTypeCounts).forEach(([orderId, counts]) => {
-    const irctc = orderToOutlet[orderId];
-    if (!irctc) return;
+  for (const [orderId, counts] of Object.entries(orderTypeCounts)) {
+    const irctc = orderToOutlet[orderId] || {};
+    const feedbackRow = feedbackData.find((row) =>
+      normalizeOrderId(
+        getValue(row, ['Order ID', 'Order Id', 'OrderID', 'IRCTC Order ID'])
+      ) === orderId
+    );
 
-    const key = `${irctc.outletId}|||${irctc.stationCode}`;
+    const outletId = clean(
+      getValue(irctc, ['Outlet Id', 'Outlet ID', 'OutletId']) ||
+      getValue(feedbackRow, ['Outlet ID', 'Outlet Id', 'OutletId'])
+    );
+    if (!outletId) continue;
 
-    if (!outletMap[key]) {
-      outletMap[key] = {
-        'Outlet ID': irctc.outletId,
-        'Outlet Name': irctc.outletName,
-        'Station Code': irctc.stationCode,
-        'Complaint': 0,
-        'Feedback': 0,
+    const fallback = outletToIrctc[outletId] || {};
+    const outletName = clean(
+      getValue(irctc, ['Outlet Name', 'OutletName']) ||
+      getValue(feedbackRow, ['Outlet', 'Outlet Name']) ||
+      getValue(fallback, ['Outlet Name', 'OutletName'])
+    );
+    const stationCode = clean(
+      getValue(irctc, ['Delivery Station', 'Station Code', 'StationCode']) ||
+      getValue(fallback, ['Delivery Station', 'Station Code'])
+    ).toUpperCase();
+
+    if (!outletMap[outletId]) {
+      outletMap[outletId] = {
+        'Outlet Id': outletId,
+        'Outlet Name': outletName,
+        'Station Code': stationCode,
+        'Old Count': 0,
+        'Old Ratings': 0,
+        'Old Sum': 0,
+        Complaint: 0,
+        Feedback: 0,
+        'Current Count': 0,
+        'Current Rating': 0,
+        'Total Count': 0,
+        'Total Rating Sum': 0,
+        'Total Rating': 0,
       };
     }
 
-    outletMap[key]['Complaint'] += counts.complaint;
-    outletMap[key]['Feedback'] += counts.feedback;
-  });
+    if (!outletMap[outletId]['Outlet Name']) outletMap[outletId]['Outlet Name'] = outletName;
+    if (!outletMap[outletId]['Station Code']) outletMap[outletId]['Station Code'] = stationCode;
 
-  return Object.values(outletMap).sort((a, b) => {
-    const stationCompare = a['Station Code'].localeCompare(b['Station Code']);
-    if (stationCompare !== 0) return stationCompare;
-    const nameCompare = a['Outlet Name'].localeCompare(b['Outlet Name']);
-    if (nameCompare !== 0) return nameCompare;
-    return a['Outlet ID'].localeCompare(b['Outlet ID']);
-  });
+    outletMap[outletId].Complaint += counts.complaint;
+    outletMap[outletId].Feedback += counts.feedback;
+  }
+
+  // 4. Old Ratings / Old Feedback data by Outlet ID.
+  for (const row of oldRatingsData) {
+    const outletId = clean(
+      getValue(row, ['Outlet Id', 'Outlet ID', 'OutletId', 'Aggregator Outlet ID'])
+    );
+    if (!outletId) continue;
+
+    const oldCount = toNumber(getValue(row, ['Old Count', 'OldCount', 'Count']));
+    const oldRatings = toNumber(getValue(row, ['Old Ratings', 'Old Rating', 'Rating']));
+    const rawOldSum = getValue(row, ['Old Sum', 'OldSum']);
+    const oldSum = rawOldSum !== ''
+      ? toNumber(rawOldSum)
+      : Number((oldCount * oldRatings).toFixed(2));
+
+    if (!outletMap[outletId]) {
+      outletMap[outletId] = {
+        'Outlet Id': outletId,
+        'Outlet Name': clean(getValue(row, ['Outlet Name', 'Outlet'])),
+        'Station Code': clean(getValue(row, ['Station Code', 'Station', 'Delivery Station'])).toUpperCase(),
+        'Old Count': oldCount,
+        'Old Ratings': oldRatings,
+        'Old Sum': oldSum,
+        Complaint: 0,
+        Feedback: 0,
+        'Current Count': 0,
+        'Current Rating': 0,
+        'Total Count': 0,
+        'Total Rating Sum': 0,
+        'Total Rating': 0,
+      };
+    } else {
+      if (!outletMap[outletId]['Outlet Name']) {
+        outletMap[outletId]['Outlet Name'] = clean(getValue(row, ['Outlet Name', 'Outlet']));
+      }
+      if (!outletMap[outletId]['Station Code']) {
+        outletMap[outletId]['Station Code'] =
+          clean(getValue(row, ['Station Code', 'Station', 'Delivery Station'])).toUpperCase();
+      }
+      outletMap[outletId]['Old Count'] = oldCount;
+      outletMap[outletId]['Old Ratings'] = oldRatings;
+      outletMap[outletId]['Old Sum'] = oldSum;
+    }
+  }
+
+  // 5. Calculate current and total ratings.
+  return Object.values(outletMap)
+    .map((row) => {
+      const currentCount = row.Feedback + row.Complaint;
+      const currentRating = currentCount > 0
+        ? Number(((row.Feedback * 5) / currentCount).toFixed(2))
+        : 0;
+
+      const totalCount = row['Old Count'] + currentCount;
+      const totalRatingSum = Number(
+        (row['Old Sum'] + row.Feedback * 5).toFixed(2)
+      );
+      const totalRating = totalCount > 0
+        ? Number((totalRatingSum / totalCount).toFixed(2))
+        : 0;
+
+      return {
+        ...row,
+        'Current Count': currentCount,
+        'Current Rating': currentRating,
+        'Total Count': totalCount,
+        'Total Rating Sum': totalRatingSum,
+        'Total Rating': totalRating,
+      };
+    })
+    .sort((a, b) =>
+      a['Outlet Id'].localeCompare(b['Outlet Id'], undefined, { numeric: true })
+    );
 };
 
 export const generateFeedbackReportWorkbook = (
   feedbackData: any[] = [],
   irctcData: any[] = [],
+  oldRatingsData: any[] = [],
   fileNamePrefix = 'FEEDBACK_REPORT'
 ) => {
-  const rows = generateFeedbackReportData(feedbackData, irctcData);
+  const rows = generateFeedbackReportData(feedbackData, irctcData, oldRatingsData);
 
   if (!rows.length) {
-    alert('Feedback Report ke liye matching Order ID data nahi mila. Feedback aur IRCTC reports check karein.');
+    alert('Feedback Report ke liye current ya Old Feedback data available nahi hai.');
     return;
   }
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   worksheet['!cols'] = [
-    { wch: 16 },
-    { wch: 42 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 14 },
+    { wch: 16 }, { wch: 42 }, { wch: 16 },
+    { wch: 12 }, { wch: 13 }, { wch: 13 },
+    { wch: 12 }, { wch: 12 }, { wch: 14 },
+    { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 14 },
   ];
 
   const workbook = XLSX.utils.book_new();
