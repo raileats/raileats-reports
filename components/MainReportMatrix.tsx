@@ -25,8 +25,45 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
     const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
     const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
-  
+    return (
+      <tr className={`mr-data-row ${isTotal ? 'mr-total-row' : 'mr-source-row'}`}>
+        <td className={`mr-source-cell ${isTotal ? 'mr-total-label' : ''}`}>{label}</td>
+
+        <td className={cell}>{ftd.orders}</td><td className={cell}>{mtd.orders}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{orderAsp}</td><td className={cell}>{delPct}</td>
+        <td className={cell}>{ftd.meals}</td><td className={cell}>{mtd.meals}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{mealAsp}</td><td className={cell}>{mpo}</td>
+        <td className={`${cell} mr-value-number`}>{Math.round(ftd.value)}</td><td className={`${cell} mr-value-number`}>{Math.round(mtd.value)}</td><td className={`${cell} mr-muted`}>0</td>
+        <td className={cell}>{Math.round(ftd.prepaidValue)}</td><td className={cell}>{Math.round(mtd.prepaidValue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{prepaidPct}</td>
+        <td className={cell}>{Math.round(ftd.discount)}</td><td className={cell}>{Math.round(mtd.discount)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{discountPct}</td>
+        <td className={`${cell} mr-revenue-number`}>{Math.round(ftd.revenue)}</td><td className={`${cell} mr-revenue-number`}>{Math.round(mtd.revenue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{revenuePct}</td>
+        <td className={cell}>{ftd.complaints}</td><td className={cell}>{mtd.complaints}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{complaintPct}</td>
+        <td className={cell}>{ftd.feedback}</td><td className={cell}>{mtd.feedback}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{feedbackPct}</td>
+        <td className={`${cell} mr-undelivered-number`}>{ftd.undelivered}</td><td className={`${cell} mr-undelivered-number`}>{mtd.undelivered}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{undeliveredPct}</td>
+        <td className="mr-outlet-cell">{ftd.outletsSet?.size ?? 0}</td>
+      </tr>
+    );
+  };
+
+  const q = searchTerm.trim().toLowerCase();
+  const filteredBlocks = blocks.filter((blk) =>
+    String(blk.dateLabel || '').toLowerCase().includes(q)
+  );
+
+  const subHeaders = [
+    'FTD','MTD','LMTD','ASP','Del%',
+    'FTD','MTD','LMTD','ASP','MPO',
+    'FTD','MTD','LMTD',
+    'FTD','MTD','LMTD','%',
+    'FTD','MTD','LMTD','%',
+    'FTD','MTD','LMTD','%',
+    'FTD','MTD','LMTD','%',
+    'FTD','MTD','LMTD','%',
+    'FTD','MTD','LMTD','%',
+  ];
+
+  return (
+    <>
       <style jsx global>{`
+
 /* Main Report Matrix — Excel-style compact colours */
 .main-report-matrix {
   width: 100%;
@@ -75,8 +112,8 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
 }
 
 /* Column sizing: source + 37 metric columns + outlets */
-.mr-source-col { width: 5.6% !important; }
-.mr-data-col { width: 2.38% !important; }
+.mr-source-col { width: 7% !important; }
+.mr-data-col { width: 2.43% !important; }
 .mr-outlet-col { width: 2.34% !important; }
 
 /* Excel-like red date strip */
@@ -253,45 +290,9 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
   }
 }
 
+
       `}</style>
-
-  return (
-      <tr className={`mr-data-row ${isTotal ? 'mr-total-row' : 'mr-source-row'}`}>
-        <td className={`mr-source-cell ${isTotal ? 'mr-total-label' : ''}`}>{label}</td>
-
-        <td className={cell}>{ftd.orders}</td><td className={cell}>{mtd.orders}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{orderAsp}</td><td className={cell}>{delPct}</td>
-        <td className={cell}>{ftd.meals}</td><td className={cell}>{mtd.meals}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{mealAsp}</td><td className={cell}>{mpo}</td>
-        <td className={`${cell} mr-value-number`}>{Math.round(ftd.value)}</td><td className={`${cell} mr-value-number`}>{Math.round(mtd.value)}</td><td className={`${cell} mr-muted`}>0</td>
-        <td className={cell}>{Math.round(ftd.prepaidValue)}</td><td className={cell}>{Math.round(mtd.prepaidValue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{prepaidPct}</td>
-        <td className={cell}>{Math.round(ftd.discount)}</td><td className={cell}>{Math.round(mtd.discount)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{discountPct}</td>
-        <td className={`${cell} mr-revenue-number`}>{Math.round(ftd.revenue)}</td><td className={`${cell} mr-revenue-number`}>{Math.round(mtd.revenue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{revenuePct}</td>
-        <td className={cell}>{ftd.complaints}</td><td className={cell}>{mtd.complaints}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{complaintPct}</td>
-        <td className={cell}>{ftd.feedback}</td><td className={cell}>{mtd.feedback}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{feedbackPct}</td>
-        <td className={`${cell} mr-undelivered-number`}>{ftd.undelivered}</td><td className={`${cell} mr-undelivered-number`}>{mtd.undelivered}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{undeliveredPct}</td>
-        <td className="mr-outlet-cell">{ftd.outletsSet?.size ?? 0}</td>
-      </tr>
-    );
-  };
-
-  const q = searchTerm.trim().toLowerCase();
-  const filteredBlocks = blocks.filter((blk) =>
-    String(blk.dateLabel || '').toLowerCase().includes(q)
-  );
-
-  const subHeaders = [
-    'FTD','MTD','LMTD','ASP','Del%',
-    'FTD','MTD','LMTD','ASP','MPO',
-    'FTD','MTD','LMTD',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-  ];
-
-  return (
-    <div className="main-report-matrix">
+      <div className="main-report-matrix">
       {filteredBlocks.map((blk, bIdx) => (
         <div
           key={`${blk.rawDate || blk.dateLabel}-${bIdx}`}
@@ -344,6 +345,7 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
           </table>
         </div>
       ))}
-    </div>
+      </div>
+    </>
   );
 }
