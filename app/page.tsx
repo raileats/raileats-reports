@@ -1696,64 +1696,64 @@ export default function Page() {
 
     return (
       <tr className={`portal-data-row border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
-        <td className={`p-1.5 border border-gray-400 text-[11px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+        <td className={`p-1 border border-gray-400 text-[10px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-black text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
           {label}
         </td>
 
         {/* ORDERS */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{orderAsp}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{delPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{orderAsp}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{delPct}</td>
 
         {/* MEALS */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mealAsp}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mpo}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mealAsp}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mpo}</td>
 
         {/* VALUE */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
 
         {/* PREPAID */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{prepaidPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{prepaidPct}</td>
 
         {/* DISCOUNT */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{discountPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{discountPct}</td>
 
         {/* REVENUE */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{revenuePct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{revenuePct}</td>
 
         {/* Complaints */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.complaints}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.complaints}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{complaintPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{complaintPct}</td>
 
         {/* Feedback */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.feedback}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.feedback}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{feedbackPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{feedbackPct}</td>
 
         {/* IRCTC Undelivered */}
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{undeliveredPct}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{undeliveredPct}</td>
       </tr>
     );
   };
@@ -1920,14 +1920,23 @@ export default function Page() {
                   .map((blk, bIdx) => (
                     <div 
                       key={bIdx} 
-                      className="report-scroll w-full overflow-auto rounded-xl border shadow-sm"
+                      className="report-scroll w-full overflow-x-auto overflow-y-hidden rounded-xl border shadow-sm"
+                      onWheel={(e) => {
+                        // Force horizontal two-finger trackpad gestures to move
+                        // this report horizontally instead of requiring scrollbar dragging.
+                        if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+                          e.preventDefault();
+                          e.currentTarget.scrollLeft += e.deltaX;
+                        }
+                      }}
                       style={{ 
                         WebkitOverflowScrolling: 'touch',
                         scrollbarWidth: 'auto',
-                        scrollbarColor: '#cbd5e1 #f8fafc'
+                        scrollbarColor: '#cbd5e1 #f8fafc',
+                        touchAction: 'pan-x'
                       }}
                     >
-                      <table className="portal-report-table portal-table-main min-w-[2800px] border-separate border-spacing-0 text-[11px] whitespace-nowrap">
+                      <table className="portal-report-table portal-table-main min-w-[2400px] border-separate border-spacing-0 text-[10px] whitespace-nowrap">
                         <thead>
                           {/* Banner 1: Red Date Header */}
                           <tr>
@@ -2357,7 +2366,7 @@ export default function Page() {
             )}
 
             <p className="text-[11px] text-slate-500 mt-2">
-              * Laptop Touchpad par 2 ungliyon (Two fingers) ya horizontal scrollbar se right swipe karke poora data dekhein.
+              * Laptop Touchpad par 2 ungliyon se left/right swipe karke poora data dekhein; horizontal scrollbar bhi available hai.
             </p>
           </div>
         )}
@@ -2608,8 +2617,9 @@ export default function Page() {
            ========================= */
         .portal-clean .overflow-x-auto {
           overflow-x: auto !important;
-          overflow-y: auto;
+          overflow-y: hidden !important;
           -webkit-overflow-scrolling: touch;
+          overscroll-behavior-x: contain;
           scrollbar-width: auto;
           scrollbar-color: #94a3b8 #eef2f7;
         }
@@ -2746,10 +2756,12 @@ export default function Page() {
           display: block !important;
           width: 100% !important;
           max-width: 100% !important;
-          overflow-x: scroll !important;
-          overflow-y: auto !important;
-          overscroll-behavior: contain;
+          overflow-x: auto !important;
+          overflow-y: hidden !important;
+          overscroll-behavior-x: contain;
+          overscroll-behavior-y: auto;
           -webkit-overflow-scrolling: touch;
+          touch-action: pan-x;
           scrollbar-width: auto !important;
         }
         .report-scroll::-webkit-scrollbar { width: 11px; height: 13px; }
