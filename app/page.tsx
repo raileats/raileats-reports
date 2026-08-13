@@ -91,6 +91,133 @@ const cleanOutletId = (val: any): string => {
   return String(val).trim().replace(/\.0$/, '');
 };
 
+// ---------------------------------------------------------------------------
+// Feedback Report Engine
+// Feedback source: Order ID + Type (Feedback / Complaint)
+// IRCTC source: Order Id -> Outlet Id / Outlet Name / Delivery Station
+// Counts are accumulated order-wise first, then aggregated Outlet-wise.
+// ---------------------------------------------------------------------------
+const cleanOrderId = (val: any): string => {
+  if (!val && val !== 0) return '';
+  return String(val).trim().replace(/\.0$/, '');
+};
+
+const normalizeFeedbackType = (val: any): 'Feedback' | 'Complaint' | '' => {
+  const type = String(val ?? '').trim().toUpperCase();
+  if (type === 'FEEDBACK') return 'Feedback';
+  if (type === 'COMPLAINT' || type === 'COMPLAIN') return 'Complaint';
+  return '';
+};
+
+interface FeedbackOrderCount {
+  complaint: number;
+  feedback: number;
+}
+
+interface FeedbackReportRow {
+  'Outlet Id': string;
+  'Outlet Name': string;
+  'Station Code': string;
+  Complaint: number;
+  Feedback: number;
+}
+
+const buildFeedbackReport = (
+  feedbackRows: any[] = [],
+  irctcRows: any[] = []
+): FeedbackReportRow[] => {
+  const orderCounts: Record<string, FeedbackOrderCount> = {};
+
+  // STEP 1: Count every Feedback-file row by Order ID + Type.
+  // Do NOT use a Map that overwrites duplicate Order IDs.
+  feedbackRows.forEach((row) => {
+    const orderId = cleanOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID']);
+    const type = normalizeFeedbackType(row['Type'] ?? row['Feedback Type'] ?? row['FeedbackType']);
+    if (!orderId || !type) return;
+
+    if (!orderCounts[orderId]) orderCounts[orderId] = { complaint: 0, feedback: 0 };
+    if (type === 'Complaint') orderCounts[orderId].complaint += 1;
+    if (type === 'Feedback') orderCounts[orderId].feedback += 1;
+  });
+
+  // STEP 2: Create Order ID -> IRCTC outlet/station lookup.
+  const irctcMap = new Map<string, any>();
+  irctcRows.forEach((row) => {
+    const orderId = cleanOrderId(row['Order Id'] ?? row['Order ID'] ?? row['OrderID']);
+    if (orderId) irctcMap.set(orderId, row);
+  });
+
+  // STEP 3: Join the order-wise counts to IRCTC and aggregate Outlet-wise.
+  const outletMap: Record<string, FeedbackReportRow> = {};
+  Object.entries(orderCounts).forEach(([orderId, counts]) => {
+    const irctc = irctcMap.get(orderId);
+    if (!irctc) return;
+
+    const outletId = cleanOutletId(
+      irctc['Outlet Id'] ?? irctc['Outlet ID'] ?? irctc['OutletId']
+    );
+    if (!outletId) return;
+
+    const outletName = String(
+      irctc['Outlet Name'] ?? irctc['Outlet'] ?? ''
+    ).trim();
+    const stationCode = String(
+      irctc['Delivery Station'] ?? irctc['Station Code'] ?? irctc['Station'] ?? ''
+    ).trim();
+
+    if (!outletMap[outletId]) {
+      outletMap[outletId] = {
+        'Outlet Id': outletId,
+        'Outlet Name': outletName,
+        'Station Code': stationCode,
+        Complaint: 0,
+        Feedback: 0,
+      };
+    } else {
+      // Fill missing descriptive values without changing the existing row.
+      if (!outletMap[outletId]['Outlet Name'] && outletName) outletMap[outletId]['Outlet Name'] = outletName;
+      if (!outletMap[outletId]['Station Code'] && stationCode) outletMap[outletId]['Station Code'] = stationCode;
+    }
+
+    outletMap[outletId].Complaint += counts.complaint;
+    outletMap[outletId].Feedback += counts.feedback;
+  });
+
+  return Object.values(outletMap).sort((a, b) => {
+    const outletCompare = a['Outlet Id'].localeCompare(b['Outlet Id'], undefined, { numeric: true });
+    if (outletCompare !== 0) return outletCompare;
+    return a['Outlet Name'].localeCompare(b['Outlet Name']);
+  });
+};
+
+const generateFeedbackReportWorkbook = (rows: FeedbackReportRow[]) => {
+  if (!rows.length) {
+    alert('Feedback Report ke liye matching Order ID / Outlet data available nahi hai.');
+    return;
+  }
+
+  const exportRows = rows.map((r) => ({
+    'Outlet Id': r['Outlet Id'],
+    'Outlet Name': r['Outlet Name'],
+    'Station Code': r['Station Code'],
+    Complaint: r.Complaint,
+    Feedback: r.Feedback,
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(exportRows);
+  ws['!cols'] = [
+    { wch: 16 },
+    { wch: 42 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Feedback Report');
+  XLSX.writeFile(wb, `FEEDBACK_REPORT_${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
+
 const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
 interface MetricStats {
@@ -165,13 +292,15 @@ type ReportType =
   | 'VENDOR_DATE_WISE'
   | 'LAST_DAY_STATION'
   | 'OUTLETS_MASTER'
-  | 'PENALTIES';
+  | 'PENALTIES'
+  | 'FEEDBACK_REPORT';
 
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
   // Raw IRCTC report is kept separately so Station Report can count
   // Delivery Station + Feedback Type directly from the source file.
   const [irctcRawData, setIrctcRawData] = useState<any[]>([]);
+  const [feedbackRawData, setFeedbackRawData] = useState<any[]>([]);
   const [penaltySummary, setPenaltySummary] = useState<Record<string, number>>({});
   const [penaltyRawRecords, setPenaltyRawRecords] = useState<any[]>([]);
   const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
@@ -197,12 +326,14 @@ export default function Page() {
       try {
         const storedMaster = await loadFromDB('CURRENT_MASTER_DATA');
         const storedIrctc = await loadFromDB('CURRENT_IRCTC_DATA');
+        const storedFeedback = await loadFromDB('CURRENT_FEEDBACK_DATA');
         const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
         const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
         const storedOutletsInfo = await loadFromDB('OUTLET_MASTER_INFO');
 
         if (Array.isArray(storedMaster) && storedMaster.length > 0) setData(storedMaster);
         if (Array.isArray(storedIrctc) && storedIrctc.length > 0) setIrctcRawData(storedIrctc);
+        if (Array.isArray(storedFeedback) && storedFeedback.length > 0) setFeedbackRawData(storedFeedback);
         if (storedPenalty && typeof storedPenalty === 'object') {
           setPenaltySummary(storedPenalty.outletTotals || {});
           setPenaltyRawRecords(storedPenalty.records || []);
@@ -226,6 +357,8 @@ export default function Page() {
     if (confirm('Kya aap sach me saara stored master data delete karna chahte hain?')) {
       await clearDB();
       setData([]);
+      setIrctcRawData([]);
+      setFeedbackRawData([]);
       setPenaltySummary({});
       setPenaltyRawRecords([]);
       setCurrentMonthRecords([]);
@@ -305,6 +438,8 @@ export default function Page() {
       if (feedbackFile) {
         setStatusText('Reading Feedback Report...');
         feedbackData = await parseAnyFile(feedbackFile);
+        await saveToDB('CURRENT_FEEDBACK_DATA', feedbackData);
+        setFeedbackRawData(feedbackData);
       }
 
       const penaltyOutletMap: Record<string, number> = {};
@@ -409,16 +544,23 @@ export default function Page() {
         if (orderId) irctcMap.set(orderId, row);
       });
 
-      const fbMap = new Map();
+      // Feedback Report needs counts, not a last-row Map.
+      // Keep the raw Feedback rows separately and count every row by Order ID + Type.
+      const fbCountMap = new Map<string, FeedbackOrderCount>();
       feedbackData.forEach((row) => {
-        const orderId = String(row['Order ID'] || row['Feedback Id'] || row['Order Id'] || '').trim().replace(/\.0$/, '');
-        if (orderId) fbMap.set(orderId, row);
+        const orderId = cleanOrderId(row['Order ID'] || row['Order Id'] || row['OrderID']);
+        const type = normalizeFeedbackType(row['Type'] || row['Feedback Type'] || row['FeedbackType']);
+        if (!orderId || !type) return;
+        const current = fbCountMap.get(orderId) || { complaint: 0, feedback: 0 };
+        if (type === 'Complaint') current.complaint += 1;
+        if (type === 'Feedback') current.feedback += 1;
+        fbCountMap.set(orderId, current);
       });
 
       const masterRows = rfData.map((rf) => {
         const orderId = String(rf['IRCTC OrderId'] || rf['Order Id'] || '').trim().replace(/\.0$/, '');
         const irctc = irctcMap.get(orderId) || {};
-        const fb = fbMap.get(orderId) || {};
+        const fbCounts = fbCountMap.get(orderId) || { complaint: 0, feedback: 0 };
         const outletId = cleanOutletId(rf['OutletId'] || rf['Outlet ID'] || irctc['Outlet Id'] || '');
         const outletInfo = outletsMap[outletId] || outletsMasterInfo[outletId] || {};
 
@@ -493,8 +635,10 @@ export default function Page() {
           'Meals': meals,
           'Margin %': marginPct,
           'Orders Count': ordersCount,
-          'Rating': fb['Rating'] || '',
-          'Remarks': fb['Remarks'] || irctc['Comments'] || '',
+          'Rating': '',
+          'Remarks': irctc['Comments'] || '',
+          'Feedback Complaint Count': fbCounts.complaint,
+          'Feedback Count': fbCounts.feedback,
         };
       });
 
@@ -777,6 +921,11 @@ export default function Page() {
     return Object.values(map);
   }, [data]);
 
+  // --- Outlet-wise Feedback / Complaint Report ---
+  const feedbackReportRows = useMemo(() => {
+    return buildFeedbackReport(feedbackRawData, irctcRawData);
+  }, [feedbackRawData, irctcRawData]);
+
   // --- Exports ---
   const exportMasterExcel = () => {
     if (!data.length) return alert('No Data available!');
@@ -819,6 +968,9 @@ export default function Page() {
         XLSX.writeFile(wb, `OUTLETS_MASTER_${new Date().toISOString().slice(0, 10)}.xlsx`);
         break;
       }
+      case 'FEEDBACK_REPORT':
+        generateFeedbackReportWorkbook(feedbackReportRows);
+        break;
       case 'PENALTIES': {
         const ws = XLSX.utils.json_to_sheet(penaltyRawRecords);
         const wb = XLSX.utils.book_new();
@@ -914,6 +1066,15 @@ export default function Page() {
         o.state || '-',
         o.gst || '-',
         o.irctcStatus || '-',
+      ]);
+    } else if (selectedReport === 'FEEDBACK_REPORT') {
+      head = [['Outlet ID', 'Outlet Name', 'Station Code', 'Complaint', 'Feedback']];
+      body = feedbackReportRows.map((r) => [
+        r['Outlet Id'],
+        String(r['Outlet Name'] || '-').substring(0, 35),
+        r['Station Code'] || '-',
+        r.Complaint,
+        r.Feedback,
       ]);
     } else if (selectedReport === 'PENALTIES') {
       head = [['Outlet ID', 'Order ID', 'Transaction Mode', 'Vendor Name', 'Date', 'Amount (₹)', 'Remarks']];
@@ -1087,6 +1248,7 @@ export default function Page() {
                   <option value="LAST_DAY_STATION">🚉 Last Day Station</option>
                   <option value="OUTLETS_MASTER">🏢 Outlets Master (GST/State)</option>
                   <option value="PENALTIES">⚠️ Penalty &amp; Deductions</option>
+                  <option value="FEEDBACK_REPORT">💬 Feedback Report</option>
                 </select>
               </div>
 
@@ -1461,7 +1623,39 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 6. PENALTIES VIEW */}
+                {/* 6. OUTLET-WISE FEEDBACK REPORT */}
+                {selectedReport === 'FEEDBACK_REPORT' && (
+                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
+                        <th className="p-3 font-semibold">Outlet Name</th>
+                        <th className="p-3 font-semibold">Station Code</th>
+                        <th className="p-3 font-semibold text-center text-rose-400">Complaint</th>
+                        <th className="p-3 font-semibold text-center text-emerald-400">Feedback</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {feedbackReportRows
+                        .filter((r) =>
+                          r['Outlet Id'].toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          r['Outlet Name'].toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
+                        )
+                        .map((row, i) => (
+                          <tr key={row['Outlet Id']} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
+                            <td className="p-3 font-medium text-white">{row['Outlet Name'] || '-'}</td>
+                            <td className="p-3 text-cyan-300 font-mono">{row['Station Code'] || '-'}</td>
+                            <td className="p-3 text-center font-bold text-rose-400">{row.Complaint}</td>
+                            <td className="p-3 text-center font-bold text-emerald-400">{row.Feedback}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 7. PENALTIES VIEW */}
                 {selectedReport === 'PENALTIES' && (
                   <table className="w-full min-w-[1100px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
