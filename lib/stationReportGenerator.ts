@@ -33,16 +33,24 @@ export interface StationReportRow {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Universal Value Getter (Key name case/spaces ignore karega)
+// 1. Universal Value Getter
+//    Column name me spaces/case ka difference ignore karega.
 // ---------------------------------------------------------------------------
 const getVal = (row: any, searchKeys: string[]): any => {
   if (!row || typeof row !== 'object') return null;
+
   const rowKeys = Object.keys(row);
+
   for (const sk of searchKeys) {
-    const cleanSk = sk.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanSk = String(sk)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
     const foundKey = rowKeys.find(
-      (rk) => rk.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanSk
+      (rk) =>
+        rk.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanSk
     );
+
     if (
       foundKey &&
       row[foundKey] !== undefined &&
@@ -52,115 +60,221 @@ const getVal = (row: any, searchKeys: string[]): any => {
       return row[foundKey];
     }
   }
+
   return null;
 };
 
 // ---------------------------------------------------------------------------
-// 2. Station Matcher & Normalizer (Handles "NDLS", "NDLS - New Delhi", etc.)
+// 2. Station Code Normalizer
+//
+// Examples:
+//   "CNB"                  -> "CNB"
+//   "CNB - Kanpur"         -> "CNB"
+//   "CNB (Kanpur)"         -> "CNB"
+//   "CNB / Kanpur"         -> "CNB"
+//   " ngp "                -> "NGP"
 // ---------------------------------------------------------------------------
 const getCleanStationCode = (val: any): string => {
-  if (!val) return '';
+  if (val === undefined || val === null) return '';
+
   let str = String(val).trim().toUpperCase();
-  if (str.includes('-')) str = str.split('-')[0].trim();
-  if (str.includes('(')) str = str.split('(')[0].trim();
-  if (str.includes('/')) str = str.split('/')[0].trim();
+
+  if (!str) return '';
+
+  if (str.includes('-')) {
+    str = str.split('-')[0].trim();
+  }
+
+  if (str.includes('(')) {
+    str = str.split('(')[0].trim();
+  }
+
+  if (str.includes('/')) {
+    str = str.split('/')[0].trim();
+  }
+
   return str.replace(/[^A-Z0-9]/g, '');
 };
 
 // ---------------------------------------------------------------------------
-// 3. Station Wise Data Generator (Accepts masterOrders + raw irctcOrders)
+// 3. IRCTC Feedback Map
+//
+// EXACT REQUIREMENT:
+//
+// IRCTC Report:
+//   Delivery Station -> Station Code
+//   Feedback Type:
+//      COMPLAIN -> Feedback Bad
+//      FEEDBACK -> Feedback Good
+//
+// Example:
+//   NGP + COMPLAIN 28 rows -> Feedback Bad = 28
+//   NGP + FEEDBACK 62 rows -> Feedback Good = 62
+//
+// Ye map VLOOKUP/XLOOKUP jaisa station-code based lookup karega.
+// ---------------------------------------------------------------------------
+const buildIrctcFeedbackMap = (
+  irctcOrders: any[]
+): Record<string, { good: number; bad: number }> => {
+  const feedbackMap: Record<string, { good: number; bad: number }> = {};
+
+  (irctcOrders || []).forEach((row: any) => {
+    // ---------------------------------------------------------------
+    // IRCTC report ka Delivery Station
+    // ---------------------------------------------------------------
+    const rawDeliveryStation = getVal(row, [
+      'Delivery Station',
+      'DeliveryStation',
+      'Delivery Station Name',
+    ]);
+
+    const stationCode = getCleanStationCode(rawDeliveryStation);
+
+    // Delivery Station nahi mila to row ignore
+    if (!stationCode) return;
+
+    // ---------------------------------------------------------------
+    // Station ke liye initial counter
+    // ---------------------------------------------------------------
+    if (!feedbackMap[stationCode]) {
+      feedbackMap[stationCode] = {
+        good: 0,
+        bad: 0,
+      };
+    }
+
+    // ---------------------------------------------------------------
+    // AD column: Feedback Type
+    // ---------------------------------------------------------------
+    const feedbackType = String(
+      getVal(row, [
+        'Feedback Type',
+        'FeedbackType',
+        'FEEDBACK TYPE',
+      ]) || ''
+    )
+      .trim()
+      .toUpperCase();
+
+    // ---------------------------------------------------------------
+    // EXACT mapping
+    //
+    // COMPLAIN  -> Feedback Bad
+    // FEEDBACK  -> Feedback Good
+    // ---------------------------------------------------------------
+    if (feedbackType === 'COMPLAIN') {
+      feedbackMap[stationCode].bad += 1;
+    }
+
+    if (feedbackType === 'FEEDBACK') {
+      feedbackMap[stationCode].good += 1;
+    }
+  });
+
+  return feedbackMap;
+};
+
+// ---------------------------------------------------------------------------
+// 4. Station Wise Data Generator
 // ---------------------------------------------------------------------------
 export const generateStationWiseData = (
   masterOrders: any[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
-  irctcOrders: any[] = [] // <--- IRCTC RAW FILE ARRAY YAHAN PASS KAREIN
+  irctcOrders: any[] = []
 ): StationReportRow[] => {
 
-  // A. Total Vendor mapping
+  // -------------------------------------------------------------------------
+  // A. Total Vendor Mapping
+  // -------------------------------------------------------------------------
   const totalStationVendorsMap: Record<string, Set<string>> = {};
+
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const rawSt = out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '';
-    const cleanSt = getCleanStationCode(rawSt);
-    const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
-    if (cleanSt && outId) {
-      if (!totalStationVendorsMap[cleanSt]) totalStationVendorsMap[cleanSt] = new Set();
-      totalStationVendorsMap[cleanSt].add(outId);
-    }
-  });
+    const rawStation =
+      out?.station ||
+      out?.stationCode ||
+      out?.stn_code ||
+      out?.deliveryStation ||
+      out?.stationName ||
+      '';
 
-  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana (VLOOKUP / Matching logic)
-  const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
-
-  (irctcOrders || []).forEach((row: any) => {
-    // Column matching specifically checking "Delivery Station" / "Station Code" / "Station"
-    const rawStation = getVal(row, [
-      'Delivery Station',
-      'DeliveryStation',
-      'Delivery Station Name',
-      'Station Code',
-      'Station'
-    ]);
     const stationCode = getCleanStationCode(rawStation);
-    if (!stationCode) return;
 
-    if (!irctcFeedbackMap[stationCode]) {
-      irctcFeedbackMap[stationCode] = { good: 0, bad: 0 };
-    }
+    const outletId = String(
+      out?.outletId ||
+      out?.restaurantId ||
+      out?.outlet_id ||
+      ''
+    ).trim();
 
-    // Checking "AD Feedback Type" or standard Feedback Type columns for values like COMPLAIN / FEEDBACK
-    const typeVal = String(
-      getVal(row, [
-        'AD Feedback Type',
-        'Ad Feedback Type',
-        'Feedback Type',
-        'FeedbackType',
-        'Type',
-        'FEEDBACK TYPE'
-      ]) || ''
-    ).trim().toUpperCase();
-
-    const directFeedback = String(getVal(row, ['FEEDBACK', 'Good Feedback', 'Feedback']) || '').trim();
-    const directComplain = String(getVal(row, ['COMPLAIN', 'Complaint', 'Bad Feedback', 'Issue']) || '').trim();
-
-    // Mapping: COMPLAIN -> Feedback Bad, FEEDBACK -> Feedback Good
-    if (typeVal === 'COMPLAIN' || typeVal.includes('COMPLAIN') || typeVal.includes('BAD') || typeVal.includes('ISSUE')) {
-      irctcFeedbackMap[stationCode].bad += 1;
-    } else if (typeVal === 'FEEDBACK' || typeVal.includes('FEEDBACK') || typeVal === 'GOOD') {
-      irctcFeedbackMap[stationCode].good += 1;
-    } else {
-      if (directComplain && directComplain !== '0' && directComplain.toUpperCase() !== 'NA') {
-        irctcFeedbackMap[stationCode].bad += 1;
+    if (stationCode && outletId) {
+      if (!totalStationVendorsMap[stationCode]) {
+        totalStationVendorsMap[stationCode] = new Set<string>();
       }
-      if (directFeedback && directFeedback !== '0' && directFeedback.toUpperCase() !== 'NA') {
-        irctcFeedbackMap[stationCode].good += 1;
-      }
+
+      totalStationVendorsMap[stationCode].add(outletId);
     }
   });
 
-  // C. STEP 2: Master Orders Processing (Financials & Orders)
+  // -------------------------------------------------------------------------
+  // B. IRCTC Feedback Count
+  //
+  // Ye exactly IRCTC report ke:
+  //
+  // Delivery Station
+  // +
+  // Feedback Type
+  //
+  // ke basis par count banayega.
+  // -------------------------------------------------------------------------
+  const irctcFeedbackMap = buildIrctcFeedbackMap(irctcOrders);
+
+  // -------------------------------------------------------------------------
+  // C. Master Orders Processing
+  // -------------------------------------------------------------------------
   const stationMap: Record<string, any> = {};
 
   (masterOrders || []).forEach((row: any) => {
+
+    // -----------------------------------------------------------------------
+    // Station Code
+    //
+    // Final Station Report ka Station Code isi key ke basis par banega.
+    // -----------------------------------------------------------------------
     const rawStation = getVal(row, [
       'Station Code',
       'StationCode',
       'Delivery Station',
       'DeliveryStation',
       'Station Name',
-      'Station'
+      'Station',
     ]);
 
     const stationCode = getCleanStationCode(rawStation);
+
     if (!stationCode) return;
 
+    // -----------------------------------------------------------------------
+    // Station Name
+    // -----------------------------------------------------------------------
     const stationName = String(
-      getVal(row, ['Station Name', 'Delivery Station Name', 'Delivery Station', 'Station']) || rawStation || stationCode
+      getVal(row, [
+        'Station Name',
+        'Delivery Station Name',
+        'Delivery Station',
+        'Station',
+      ]) ||
+        rawStation ||
+        stationCode
     ).trim();
 
+    // -----------------------------------------------------------------------
+    // Initialize Station
+    // -----------------------------------------------------------------------
     if (!stationMap[stationCode]) {
       stationMap[stationCode] = {
         stationCode,
         stationName,
+
         vendorPrice: 0,
         finalBasePrice: 0,
         totalComm: 0,
@@ -177,20 +291,59 @@ export const generateStationWiseData = (
         ppd: 0,
         cod: 0,
         meals: 0,
+
         deliveredOrdersCount: 0,
         notDeliveredOrdersCount: 0,
+
         deliveredOutlets: new Set<string>(),
       };
     }
 
     const st = stationMap[stationCode];
 
-    const finalStatus = String(getVal(row, ['Final Status', 'Delivery Status', 'Status']) || '').trim().toLowerCase();
-    const irctcStatus = String(getVal(row, ['IRCTC Status', 'Order Status']) || '').trim().toLowerCase();
-    const rfStatus = String(getVal(row, ['RF Status']) || '').trim().toLowerCase();
-    const outletId = String(getVal(row, ['Outlet ID', 'OutletId', 'outlet_id']) || '').trim();
+    // -----------------------------------------------------------------------
+    // Statuses
+    // -----------------------------------------------------------------------
+    const finalStatus = String(
+      getVal(row, [
+        'Final Status',
+        'Delivery Status',
+        'Status',
+      ]) || ''
+    )
+      .trim()
+      .toLowerCase();
 
-    const isDelivered = finalStatus === 'delivered' || finalStatus === 'success';
+    const irctcStatus = String(
+      getVal(row, [
+        'IRCTC Status',
+        'Order Status',
+      ]) || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    const rfStatus = String(
+      getVal(row, ['RF Status']) || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    const outletId = String(
+      getVal(row, [
+        'Outlet ID',
+        'OutletId',
+        'outlet_id',
+      ]) || ''
+    ).trim();
+
+    // -----------------------------------------------------------------------
+    // Delivered / Not Delivered
+    // -----------------------------------------------------------------------
+    const isDelivered =
+      finalStatus === 'delivered' ||
+      finalStatus === 'success';
+
     const isNotDelivered =
       finalStatus === 'not delivered' ||
       finalStatus === 'cancelled' ||
@@ -204,24 +357,127 @@ export const generateStationWiseData = (
       st.notDeliveredOrdersCount += 1;
     }
 
+    // -----------------------------------------------------------------------
+    // Delivered Order Financials
+    // -----------------------------------------------------------------------
     if (isDelivered) {
-      st.vendorPrice += Number(getVal(row, ['Final Vendor Price', 'Vendor Price']) || 0);
-      st.finalBasePrice += Number(getVal(row, ['Final Base Price', 'Base Price']) || 0);
-      st.totalComm += Number(getVal(row, ['Final Total Commission', 'Total Commission']) || 0);
-      st.irctcComm += Number(getVal(row, ['Final IRCTC Commission', 'IRCTC Comm']) || 0);
-      st.rfComm += Number(getVal(row, ['Final RF Commission', 'RF Commission']) || 0);
-      st.gst += Number(getVal(row, ['Final GST', 'GST']) || 0);
-      st.totalDiscount += Number(getVal(row, ['Final Total Discount', 'Discount']) || 0);
-      st.vendorDiscount += Number(getVal(row, ['Final Vendor Discount', 'Vendor Discount']) || 0);
-      st.rfDiscount += Number(getVal(row, ['Final RF Discount', 'RF Discount']) || 0);
-      st.deliveryCharges += Number(getVal(row, ['Delivery Charges', 'Delivery Charge']) || 0);
-      st.sellingPrice += Number(getVal(row, ['Final Selling Price', 'Selling Price']) || 0);
-      st.orderTotal += Number(getVal(row, ['Final Order Total', 'Order Total']) || 0);
-      st.discountedBase += Number(getVal(row, ['Discounted Base Price']) || 0);
-      st.ppd += Number(getVal(row, ['PPD', 'ppd']) || 0);
-      st.cod += Number(getVal(row, ['COD', 'cod']) || 0);
-      st.meals += Number(getVal(row, ['Meals', 'Meal Count']) || 1);
-      st.deliveredOrdersCount += Number(getVal(row, ['Orders Count']) || 1);
+
+      st.vendorPrice += Number(
+        getVal(row, [
+          'Final Vendor Price',
+          'Vendor Price',
+        ]) || 0
+      );
+
+      st.finalBasePrice += Number(
+        getVal(row, [
+          'Final Base Price',
+          'Base Price',
+        ]) || 0
+      );
+
+      st.totalComm += Number(
+        getVal(row, [
+          'Final Total Commission',
+          'Total Commission',
+        ]) || 0
+      );
+
+      st.irctcComm += Number(
+        getVal(row, [
+          'Final IRCTC Commission',
+          'IRCTC Comm',
+        ]) || 0
+      );
+
+      st.rfComm += Number(
+        getVal(row, [
+          'Final RF Commission',
+          'RF Commission',
+        ]) || 0
+      );
+
+      st.gst += Number(
+        getVal(row, [
+          'Final GST',
+          'GST',
+        ]) || 0
+      );
+
+      st.totalDiscount += Number(
+        getVal(row, [
+          'Final Total Discount',
+          'Discount',
+        ]) || 0
+      );
+
+      st.vendorDiscount += Number(
+        getVal(row, [
+          'Final Vendor Discount',
+          'Vendor Discount',
+        ]) || 0
+      );
+
+      st.rfDiscount += Number(
+        getVal(row, [
+          'Final RF Discount',
+          'RF Discount',
+        ]) || 0
+      );
+
+      st.deliveryCharges += Number(
+        getVal(row, [
+          'Delivery Charges',
+          'Delivery Charge',
+        ]) || 0
+      );
+
+      st.sellingPrice += Number(
+        getVal(row, [
+          'Final Selling Price',
+          'Selling Price',
+        ]) || 0
+      );
+
+      st.orderTotal += Number(
+        getVal(row, [
+          'Final Order Total',
+          'Order Total',
+        ]) || 0
+      );
+
+      st.discountedBase += Number(
+        getVal(row, [
+          'Discounted Base Price',
+        ]) || 0
+      );
+
+      st.ppd += Number(
+        getVal(row, [
+          'PPD',
+          'ppd',
+        ]) || 0
+      );
+
+      st.cod += Number(
+        getVal(row, [
+          'COD',
+          'cod',
+        ]) || 0
+      );
+
+      st.meals += Number(
+        getVal(row, [
+          'Meals',
+          'Meal Count',
+        ]) || 1
+      );
+
+      st.deliveredOrdersCount += Number(
+        getVal(row, [
+          'Orders Count',
+        ]) || 1
+      );
 
       if (outletId) {
         st.deliveredOutlets.add(outletId);
@@ -229,87 +485,237 @@ export const generateStationWiseData = (
     }
   });
 
-  // D. Sort descending by Base Price
+  // -------------------------------------------------------------------------
+  // D. Sort Stations by Final Base Price
+  // -------------------------------------------------------------------------
   const sortedStations = Object.values(stationMap).sort(
-    (a: any, b: any) => b.finalBasePrice - a.finalBasePrice
+    (a: any, b: any) =>
+      b.finalBasePrice - a.finalBasePrice
   );
 
-  // E. Final Mapping with Feedback Data
-  return sortedStations.map((st: any, idx: number): StationReportRow => {
-    const vPrice = Number(st.vendorPrice.toFixed(2));
-    const bPrice = Number(st.finalBasePrice.toFixed(2));
-    const tComm = Number(st.totalComm.toFixed(2));
-    const sPrice = Number(st.sellingPrice.toFixed(2));
-    const ppdVal = Number(st.ppd.toFixed(2));
+  // -------------------------------------------------------------------------
+  // E. Final Station Report
+  // -------------------------------------------------------------------------
+  return sortedStations.map(
+    (st: any, idx: number): StationReportRow => {
 
-    const checkPct = bPrice > 0 ? `${((tComm / bPrice) * 100).toFixed(2)}%` : '0.00%';
-    const notDeliveredPct =
-      st.deliveredOrdersCount > 0
-        ? `${((st.notDeliveredOrdersCount / st.deliveredOrdersCount) * 100).toFixed(2)}%`
-        : st.notDeliveredOrdersCount > 0
-        ? '100.00%'
-        : '0.00%';
-    const ppdPct = sPrice > 0 ? `${((ppdVal / sPrice) * 100).toFixed(2)}%` : '0.00%';
+      const vPrice = Number(
+        st.vendorPrice.toFixed(2)
+      );
 
-    const totalVendors = totalStationVendorsMap[st.stationCode]
-      ? totalStationVendorsMap[st.stationCode].size
-      : Math.max(st.deliveredOutlets.size, 1);
+      const bPrice = Number(
+        st.finalBasePrice.toFixed(2)
+      );
 
-    // Direct fetch from IRCTC Map matched against station code
-    const irctcFeedback = irctcFeedbackMap[st.stationCode] || { good: 0, bad: 0 };
+      const tComm = Number(
+        st.totalComm.toFixed(2)
+      );
 
-    return {
-      'Station Code': st.stationCode,
-      'Rank': idx + 1,
-      'Station Name': st.stationName,
-      'Vendor Price': vPrice,
-      'Final Base Price': bPrice,
-      'Final Total Commission': tComm,
-      'Final IRCTC Comm': Number(st.irctcComm.toFixed(2)),
-      'Final RF Commission': Number(st.rfComm.toFixed(2)),
-      'Final GST': Number(st.gst.toFixed(2)),
-      'Final Discount': Number(st.totalDiscount.toFixed(2)),
-      'Final Vendor Discount': Number(st.vendorDiscount.toFixed(2)),
-      'Final RF Discount': Number(st.rfDiscount.toFixed(2)),
-      'Delivery Charges': Number(st.deliveryCharges.toFixed(2)),
-      'Final Selling Price': sPrice,
-      'Final Order Total': Number(st.orderTotal.toFixed(2)),
-      'Discounted Base Price': Number(st.discountedBase.toFixed(2)),
-      'PPD': ppdVal,
-      'COD': Number(st.cod.toFixed(2)),
-      'Meals': st.meals,
-      'Check': checkPct,
-      'Count of Delivered Orders': st.deliveredOrdersCount,
-      'Not Delivered Order': st.notDeliveredOrdersCount,
-      'Not Delivered %': notDeliveredPct,
-      'PPD % of Final Selling Price': ppdPct,
-      'Feedback Good': irctcFeedback.good, // Mapped from FEEDBACK
-      'Feedback Bad': irctcFeedback.bad,   // Mapped from COMPLAIN
-      'Count of Delivered Outlets': st.deliveredOutlets.size,
-      'Total Station Vendors': totalVendors,
-    };
-  });
+      const sPrice = Number(
+        st.sellingPrice.toFixed(2)
+      );
+
+      const ppdVal = Number(
+        st.ppd.toFixed(2)
+      );
+
+      // ---------------------------------------------------------------------
+      // Check %
+      // ---------------------------------------------------------------------
+      const checkPct =
+        bPrice > 0
+          ? `${((tComm / bPrice) * 100).toFixed(2)}%`
+          : '0.00%';
+
+      // ---------------------------------------------------------------------
+      // Not Delivered %
+      // ---------------------------------------------------------------------
+      const notDeliveredPct =
+        st.deliveredOrdersCount > 0
+          ? `${(
+              (st.notDeliveredOrdersCount /
+                st.deliveredOrdersCount) *
+              100
+            ).toFixed(2)}%`
+          : st.notDeliveredOrdersCount > 0
+          ? '100.00%'
+          : '0.00%';
+
+      // ---------------------------------------------------------------------
+      // PPD %
+      // ---------------------------------------------------------------------
+      const ppdPct =
+        sPrice > 0
+          ? `${((ppdVal / sPrice) * 100).toFixed(2)}%`
+          : '0.00%';
+
+      // ---------------------------------------------------------------------
+      // Total Vendors
+      // ---------------------------------------------------------------------
+      const totalVendors =
+        totalStationVendorsMap[st.stationCode]
+          ? totalStationVendorsMap[st.stationCode].size
+          : Math.max(
+              st.deliveredOutlets.size,
+              1
+            );
+
+      // ---------------------------------------------------------------------
+      // IMPORTANT:
+      //
+      // Station Report ke Column A:
+      //     Station Code
+      //
+      // ke against IRCTC Delivery Station ka lookup.
+      //
+      // Ye exactly VLOOKUP/XLOOKUP style station-code matching hai.
+      // ---------------------------------------------------------------------
+      const irctcFeedback =
+        irctcFeedbackMap[st.stationCode] || {
+          good: 0,
+          bad: 0,
+        };
+
+      // ---------------------------------------------------------------------
+      // Final Output
+      // ---------------------------------------------------------------------
+      return {
+        'Station Code': st.stationCode,
+        'Rank': idx + 1,
+        'Station Name': st.stationName,
+
+        'Vendor Price': vPrice,
+        'Final Base Price': bPrice,
+        'Final Total Commission': tComm,
+
+        'Final IRCTC Comm': Number(
+          st.irctcComm.toFixed(2)
+        ),
+
+        'Final RF Commission': Number(
+          st.rfComm.toFixed(2)
+        ),
+
+        'Final GST': Number(
+          st.gst.toFixed(2)
+        ),
+
+        'Final Discount': Number(
+          st.totalDiscount.toFixed(2)
+        ),
+
+        'Final Vendor Discount': Number(
+          st.vendorDiscount.toFixed(2)
+        ),
+
+        'Final RF Discount': Number(
+          st.rfDiscount.toFixed(2)
+        ),
+
+        'Delivery Charges': Number(
+          st.deliveryCharges.toFixed(2)
+        ),
+
+        'Final Selling Price': sPrice,
+
+        'Final Order Total': Number(
+          st.orderTotal.toFixed(2)
+        ),
+
+        'Discounted Base Price': Number(
+          st.discountedBase.toFixed(2)
+        ),
+
+        'PPD': ppdVal,
+
+        'COD': Number(
+          st.cod.toFixed(2)
+        ),
+
+        'Meals': st.meals,
+
+        'Check': checkPct,
+
+        'Count of Delivered Orders':
+          st.deliveredOrdersCount,
+
+        'Not Delivered Order':
+          st.notDeliveredOrdersCount,
+
+        'Not Delivered %':
+          notDeliveredPct,
+
+        'PPD % of Final Selling Price':
+          ppdPct,
+
+        // -------------------------------------------------------------------
+        // FEEDBACK MAPPING
+        //
+        // IRCTC:
+        // FEEDBACK  -> Feedback Good
+        // COMPLAIN  -> Feedback Bad
+        // -------------------------------------------------------------------
+        'Feedback Good':
+          irctcFeedback.good,
+
+        'Feedback Bad':
+          irctcFeedback.bad,
+
+        'Count of Delivered Outlets':
+          st.deliveredOutlets.size,
+
+        'Total Station Vendors':
+          totalVendors,
+      };
+    }
+  );
 };
 
-/**
- * Direct Excel Export Workbook Generator
- */
+// ---------------------------------------------------------------------------
+// 5. Direct Excel Export Workbook Generator
+// ---------------------------------------------------------------------------
 export const generateStationReportWorkbook = (
   masterOrders: any[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
   irctcOrders: any[] = [],
   fileNamePrefix: string = 'STATION_WISE_REPORT'
 ) => {
-  const stationData = generateStationWiseData(masterOrders, outletsMasterInfo, irctcOrders);
+
+  const stationData =
+    generateStationWiseData(
+      masterOrders,
+      outletsMasterInfo,
+      irctcOrders
+    );
+
   if (stationData.length === 0) {
-    alert('Station report export karne ke liye koi data available nahi hai.');
+    alert(
+      'Station report export karne ke liye koi data available nahi hai.'
+    );
     return;
   }
 
-  const worksheet = XLSX.utils.json_to_sheet(stationData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Station Wise Summary');
+  const worksheet =
+    XLSX.utils.json_to_sheet(
+      stationData
+    );
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
+  const workbook =
+    XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    'Station Wise Summary'
+  );
+
+  const todayStr =
+    new Date()
+      .toISOString()
+      .slice(0, 10);
+
+  XLSX.writeFile(
+    workbook,
+    `${fileNamePrefix}_${todayStr}.xlsx`
+  );
 };
