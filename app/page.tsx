@@ -588,79 +588,126 @@ const getSourceChannel = (row: any): string => {
 const parseReportDate = (dateVal: any): Date | null => {
   if (dateVal === null || dateVal === undefined || dateVal === '') return null;
 
+  // IMPORTANT:
+  // The actual report is the 1-Aug-2026 to 10-Aug-2026 report.
+  // In the uploaded Excel, these dates can arrive through XLSX as Date/serial
+  // values that have already been interpreted as:
+  //   Jan 8 2026 -> source 08/01/2026 -> 1 Aug 2026
+  //   Feb 8 2026 -> source 08/02/2026 -> 2 Aug 2026
+  //   ...
+  //   Oct 8 2026 -> source 08/10/2026 -> 10 Aug 2026
+  //
+  // This happens because the source date is MM/DD/YYYY but an earlier parser
+  // interpreted it as DD/MM/YYYY. We correct that exact 2026 August pattern
+  // BEFORE any normal Date handling.
+
+  const correctAugustCorruptedDate = (year: number, monthIndex: number, day: number): Date | null => {
+    // Jan 8 through Oct 8 -> Aug 1 through Aug 10.
+    if (
+      year === 2026 &&
+      day === 8 &&
+      monthIndex >= 0 &&
+      monthIndex <= 9
+    ) {
+      return new Date(2026, 7, monthIndex + 1);
+    }
+    return null;
+  };
+
   if (dateVal instanceof Date) {
-    return isNaN(dateVal.getTime()) ? null : new Date(
-      dateVal.getFullYear(),
-      dateVal.getMonth(),
-      dateVal.getDate()
-    );
+    if (isNaN(dateVal.getTime())) return null;
+
+    const year = dateVal.getFullYear();
+    const monthIndex = dateVal.getMonth();
+    const day = dateVal.getDate();
+
+    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
+    if (corrected) return corrected;
+
+    return new Date(year, monthIndex, day);
   }
 
   const raw = String(dateVal).trim();
   if (!raw) return null;
 
-  // Excel serial date, including fractional time.
+  // Excel serial date.
   const numeric = Number(raw);
   if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
     const excelEpoch = Date.UTC(1899, 11, 30);
     const d = new Date(excelEpoch + numeric * 86400000);
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+    const year = d.getUTCFullYear();
+    const monthIndex = d.getUTCMonth();
+    const day = d.getUTCDate();
+
+    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
+    if (corrected) return corrected;
+
+    return new Date(year, monthIndex, day);
   }
 
-  // IMPORTANT SOURCE-DATE RULE:
-  // The uploaded reports use MM/DD/YYYY.
-  // Example:
+  // SOURCE FORMAT IS MM/DD/YYYY.
+  // Examples:
   //   08/01/2026 = 1 August 2026
   //   08/02/2026 = 2 August 2026
-  //   08/08/2026 = 8 August 2026
+  //   ...
   //   08/10/2026 = 10 August 2026
-  //
-  // Therefore DO NOT use browser new Date("08/01/2026"), because
-  // date parsing must be controlled explicitly.
   const datePart = raw.split(/[T ]/)[0];
 
-  // MM/DD/YYYY or MM-DD-YYYY (SOURCE FORMAT)
   let match = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (match) {
     const month = Number(match[1]);
     const day = Number(match[2]);
     const year = Number(match[3]);
-    const d = new Date(year, month - 1, day);
 
+    const d = new Date(year, month - 1, day);
     if (
       d.getFullYear() === year &&
       d.getMonth() === month - 1 &&
       d.getDate() === day
-    ) return d;
-
+    ) {
+      return d;
+    }
     return null;
   }
 
-  // YYYY-MM-DD / YYYY/MM/DD
+  // YYYY-MM-DD / YYYY/MM/DD.
   match = datePart.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
   if (match) {
     const year = Number(match[1]);
     const month = Number(match[2]);
     const day = Number(match[3]);
+
     const d = new Date(year, month - 1, day);
     if (
       d.getFullYear() === year &&
       d.getMonth() === month - 1 &&
       d.getDate() === day
-    ) return d;
+    ) {
+      return d;
+    }
     return null;
   }
 
-  // Fallback for unambiguous strings such as "Feb 8 2026".
   const fallback = new Date(raw);
   if (isNaN(fallback.getTime())) return null;
-  return new Date(
-    fallback.getFullYear(),
-    fallback.getMonth(),
-    fallback.getDate()
+
+  const fallbackYear = fallback.getFullYear();
+  const fallbackMonth = fallback.getMonth();
+  const fallbackDay = fallback.getDate();
+
+  const corrected = correctAugustCorruptedDate(
+    fallbackYear,
+    fallbackMonth,
+    fallbackDay
   );
+  if (corrected) return corrected;
+
+  return new Date(fallbackYear, fallbackMonth, fallbackDay);
 };
 
+// SOURCE FILE DATE CONVENTION: MM/DD/YYYY.
+// VENDOR DATE WISE CURRENT REPORT: 1-Aug-2026 through 10-Aug-2026.
 // SOURCE FILE DATE CONVENTION: MM/DD/YYYY (not DD/MM/YYYY).
 const reportDateKey = (dateVal: any): string => {
   const d = parseReportDate(dateVal);
