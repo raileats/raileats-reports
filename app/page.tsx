@@ -299,6 +299,14 @@ const buildFeedbackReport = (
           'Station Code': String(row['Delivery Station'] || row['Station Code'] || '').trim(),
           Complaint: 0,
           Feedback: 0,
+          'Current Count': 0,
+          'Current Rating': 0,
+          'Old Count': 0,
+          'Old Ratings': 0,
+          'Old Sum': 0,
+          'Total Count': 0,
+          'Total Rating Sum': 0,
+          'Total Rating': 0,
         };
       }
 
@@ -1223,7 +1231,7 @@ export default function Page() {
   // --- Outlet-wise Feedback / Complaint Report ---
   const feedbackReportRows = useMemo(() => {
     return buildFeedbackReport(feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData);
-  }, [feedbackRawData, irctcRawData, data, outletsMasterInfo]);
+  }, [feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData]);
 
   // --- Exports ---
   const exportMasterExcel = () => {
