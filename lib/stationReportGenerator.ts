@@ -88,26 +88,17 @@ export const generateStationWiseData = (
     }
   });
 
-  // B. STEP 1: IRCTC raw file se exact Station + Feedback Type counts
-  //
-  // IMPORTANT:
-  //   Delivery Station = station key
-  //   Feedback Type = category
-  //   FEEDBACK -> Feedback Good
-  //   COMPLAIN -> Feedback Bad
-  //
-  // Sirf exact Feedback Type values count ki ja rahi hain.
-  // Kisi aur column (Feedback Id, Comments, Remarks, etc.) se fallback
-  // count nahi kiya jayega.
+  // B. STEP 1: Direct IRCTC File se Feedback Good & Bad ka Count map banana
   const irctcFeedbackMap: Record<string, { good: number; bad: number }> = {};
 
   (irctcOrders || []).forEach((row: any) => {
     const rawStation = getVal(row, [
       'Delivery Station',
       'DeliveryStation',
-      'Delivery Station Name'
+      'Delivery Station Name',
+      'Station Code',
+      'Station'
     ]);
-
     const stationCode = getCleanStationCode(rawStation);
     if (!stationCode) return;
 
@@ -115,19 +106,17 @@ export const generateStationWiseData = (
       irctcFeedbackMap[stationCode] = { good: 0, bad: 0 };
     }
 
-    const feedbackType = String(
-      getVal(row, [
-        'Feedback Type',
-        'FeedbackType',
-        'FEEDBACK TYPE'
-      ]) || ''
-    )
-      .trim()
-      .toUpperCase();
+    // EXACT requirement: only AD / Feedback Type is counted.
+    // FEEDBACK -> Feedback Good
+    // COMPLAIN -> Feedback Bad
+    // No fallback to Comments / Remarks / other columns.
+    const typeVal = String(
+      getVal(row, ['Feedback Type', 'FeedbackType', 'FEEDBACK TYPE']) || ''
+    ).trim().toUpperCase();
 
-    if (feedbackType === 'FEEDBACK') {
+    if (typeVal === 'FEEDBACK') {
       irctcFeedbackMap[stationCode].good += 1;
-    } else if (feedbackType === 'COMPLAIN') {
+    } else if (typeVal === 'COMPLAIN') {
       irctcFeedbackMap[stationCode].bad += 1;
     }
   });
