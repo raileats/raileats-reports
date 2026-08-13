@@ -183,8 +183,9 @@ const buildFeedbackReport = (
     if (type === 'Feedback') orderCounts[orderId].feedback += 1;
   });
 
-  // STEP 2: Build several IRCTC lookup maps.
-  // Order ID is the primary key, Outlet ID is the fallback key.
+  // STEP 2: Build IRCTC lookup maps.
+  // Order ID is the ONLY join key for current Feedback rows.
+  // Final Outlet ID always comes from IRCTC.
   const irctcOrderMap = new Map<string, any>();
   const irctcOutletMap = new Map<string, any>();
 
@@ -217,19 +218,21 @@ const buildFeedbackReport = (
 
     const irctc = irctcOrderMap.get(orderId);
 
-    // Feedback source itself contains Outlet ID. Use it as fallback when an
-    // old/current IRCTC export does not contain the matching Order ID.
-    const feedbackOutletId = cleanOutletId(
-      feedbackRow?.['Outlet ID'] ?? feedbackRow?.['Outlet Id'] ?? feedbackRow?.['OutletId']
-    );
+    // IMPORTANT:
+    // Final Feedback Report ka Outlet ID SIRF IRCTC report se liya jayega.
+    // Feedback file ka Outlet ID kabhi use nahi hoga.
+    //
+    // Primary join:
+    // Feedback Order ID -> IRCTC Order Id -> IRCTC Outlet Id
+    if (!irctc) return;
 
     const outletId = cleanOutletId(
-      irctc?.['Outlet Id'] ?? irctc?.['Outlet ID'] ?? irctc?.['OutletId'] ?? feedbackOutletId
+      irctc['Outlet Id'] ?? irctc['Outlet ID'] ?? irctc['OutletId']
     );
 
     if (!outletId) return;
 
-    const irctcOutlet = irctc || irctcOutletMap.get(outletId) || {};
+    const irctcOutlet = irctc;
     const masterOutlet = masterOutletMap.get(outletId) || {};
 
     const outletName = String(
@@ -320,8 +323,8 @@ const buildFeedbackReport = (
 
 
   // STEP 6: Merge historical Old Feedback / Old Ratings by Outlet ID.
-  // Old-only outlets are also included, so final rows are the UNION of
-  // historical outlets + current feedback outlets.
+  // Old data is used only when the Outlet ID already exists in the current
+  // IRCTC-matched report. Old-only outlets are NOT added.
   const oldMap: Record<string, {
     outletId: string;
     outletName: string;
@@ -364,36 +367,25 @@ const buildFeedbackReport = (
     };
   });
 
+  // IMPORTANT:
+  // Old Ratings are used ONLY as historical values for Outlet IDs that are
+  // already present in the current IRCTC-matched report.
+  //
+  // Do NOT add Old-Ratings-only outlets to the final report.
   Object.values(oldMap).forEach((old) => {
-    if (!outletMap[old.outletId]) {
-      outletMap[old.outletId] = {
-        'Outlet Id': old.outletId,
-        'Outlet Name': old.outletName,
-        'Station Code': old.stationCode,
-        Complaint: 0,
-        Feedback: 0,
-        'Current Count': 0,
-        'Current Rating': 0,
-        'Current Sum': 0,
-        'Old Count': 0,
-        'Old Ratings': 0,
-        'Old Sum': 0,
-        'Total Count': 0,
-        'Total Rating Sum': 0,
-        'Total Rating': 0,
-      };
+    const current = outletMap[old.outletId];
+    if (!current) return;
+
+    if (!current['Outlet Name'] && old.outletName) {
+      current['Outlet Name'] = old.outletName;
+    }
+    if (!current['Station Code'] && old.stationCode) {
+      current['Station Code'] = old.stationCode;
     }
 
-    if (!outletMap[old.outletId]['Outlet Name'] && old.outletName) {
-      outletMap[old.outletId]['Outlet Name'] = old.outletName;
-    }
-    if (!outletMap[old.outletId]['Station Code'] && old.stationCode) {
-      outletMap[old.outletId]['Station Code'] = old.stationCode;
-    }
-
-    outletMap[old.outletId]['Old Count'] = old.oldCount;
-    outletMap[old.outletId]['Old Ratings'] = old.oldRatings;
-    outletMap[old.outletId]['Old Sum'] = old.oldSum;
+    current['Old Count'] = old.oldCount;
+    current['Old Ratings'] = old.oldRatings;
+    current['Old Sum'] = old.oldSum;
   });
 
   // STEP 7: Rating calculations.
