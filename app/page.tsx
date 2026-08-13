@@ -98,8 +98,32 @@ const cleanOutletId = (val: any): string => {
 // Counts are accumulated order-wise first, then aggregated Outlet-wise.
 // ---------------------------------------------------------------------------
 const cleanOrderId = (val: any): string => {
-  if (!val && val !== 0) return '';
-  return String(val).trim().replace(/\.0$/, '');
+  if (val === null || val === undefined || val === '') return '';
+
+  // Excel/CSV can represent the same Order ID in slightly different forms
+  // (spaces, .0, scientific notation, hidden characters). Normalize all of
+  // them before joining Feedback <-> IRCTC.
+  let s = String(val).trim();
+  s = s.replace(/\u00A0/g, ' ');
+  s = s.replace(/\.0+$/, '');
+  s = s.replace(/\s+/g, '');
+
+  // Convert a numeric/scientific representation safely when possible.
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n)) s = String(Math.trunc(n));
+  }
+
+  return s.toUpperCase();
+};
+
+const cleanTextKey = (val: any): string => {
+  if (val === null || val === undefined) return '';
+  return String(val)
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 };
 
 const normalizeFeedbackType = (val: any): 'Feedback' | 'Complaint' | '' => {
@@ -120,49 +144,107 @@ interface FeedbackReportRow {
   'Station Code': string;
   Complaint: number;
   Feedback: number;
+  'Current Count': number;
+  'Current Rating': number;
+  'Old Count': number;
+  'Old Ratings': number;
+  'Old Sum': number;
+  'Total Count': number;
+  'Total Rating Sum': number;
+  'Total Rating': number;
 }
 
 const buildFeedbackReport = (
   feedbackRows: any[] = [],
-  irctcRows: any[] = []
+  irctcRows: any[] = [],
+  masterRows: any[] = [],
+  outletsMasterInfo: Record<string, any> = {},
+  oldRatingsRows: any[] = []
 ): FeedbackReportRow[] => {
+  // STEP 1: Count every Feedback-file row by Order ID + Type.
+  // Never overwrite duplicate Order IDs: every Feedback/Complaint row counts.
   const orderCounts: Record<string, FeedbackOrderCount> = {};
 
-  // STEP 1: Count every Feedback-file row by Order ID + Type.
-  // Do NOT use a Map that overwrites duplicate Order IDs.
   feedbackRows.forEach((row) => {
-    const orderId = cleanOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID']);
-    const type = normalizeFeedbackType(row['Type'] ?? row['Feedback Type'] ?? row['FeedbackType']);
+    const orderId = cleanOrderId(
+      row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']
+    );
+    const type = normalizeFeedbackType(
+      row['Type'] ?? row['Feedback Type'] ?? row['FeedbackType']
+    );
     if (!orderId || !type) return;
 
-    if (!orderCounts[orderId]) orderCounts[orderId] = { complaint: 0, feedback: 0 };
+    if (!orderCounts[orderId]) {
+      orderCounts[orderId] = { complaint: 0, feedback: 0 };
+    }
+
     if (type === 'Complaint') orderCounts[orderId].complaint += 1;
     if (type === 'Feedback') orderCounts[orderId].feedback += 1;
   });
 
-  // STEP 2: Create Order ID -> IRCTC outlet/station lookup.
-  const irctcMap = new Map<string, any>();
+  // STEP 2: Build several IRCTC lookup maps.
+  // Order ID is the primary key, Outlet ID is the fallback key.
+  const irctcOrderMap = new Map<string, any>();
+  const irctcOutletMap = new Map<string, any>();
+
   irctcRows.forEach((row) => {
-    const orderId = cleanOrderId(row['Order Id'] ?? row['Order ID'] ?? row['OrderID']);
-    if (orderId) irctcMap.set(orderId, row);
+    const orderId = cleanOrderId(
+      row['Order Id'] ?? row['Order ID'] ?? row['OrderID']
+    );
+    const outletId = cleanOutletId(
+      row['Outlet Id'] ?? row['Outlet ID'] ?? row['OutletId']
+    );
+
+    if (orderId && !irctcOrderMap.has(orderId)) irctcOrderMap.set(orderId, row);
+    if (outletId && !irctcOutletMap.has(outletId)) irctcOutletMap.set(outletId, row);
   });
 
-  // STEP 3: Join the order-wise counts to IRCTC and aggregate Outlet-wise.
+  // STEP 3: Outlet Master fallback for descriptive fields.
+  const masterOutletMap = new Map<string, any>();
+  Object.values(outletsMasterInfo || {}).forEach((row: any) => {
+    const outletId = cleanOutletId(row?.outletId ?? row?.['Outlet Id'] ?? row?.['Outlet ID']);
+    if (outletId) masterOutletMap.set(outletId, row);
+  });
+
+  // STEP 4: Aggregate by Outlet ID.
   const outletMap: Record<string, FeedbackReportRow> = {};
+
   Object.entries(orderCounts).forEach(([orderId, counts]) => {
-    const irctc = irctcMap.get(orderId);
-    if (!irctc) return;
+    const feedbackRow = feedbackRows.find((row) =>
+      cleanOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']) === orderId
+    );
+
+    const irctc = irctcOrderMap.get(orderId);
+
+    // Feedback source itself contains Outlet ID. Use it as fallback when an
+    // old/current IRCTC export does not contain the matching Order ID.
+    const feedbackOutletId = cleanOutletId(
+      feedbackRow?.['Outlet ID'] ?? feedbackRow?.['Outlet Id'] ?? feedbackRow?.['OutletId']
+    );
 
     const outletId = cleanOutletId(
-      irctc['Outlet Id'] ?? irctc['Outlet ID'] ?? irctc['OutletId']
+      irctc?.['Outlet Id'] ?? irctc?.['Outlet ID'] ?? irctc?.['OutletId'] ?? feedbackOutletId
     );
+
     if (!outletId) return;
 
+    const irctcOutlet = irctc || irctcOutletMap.get(outletId) || {};
+    const masterOutlet = masterOutletMap.get(outletId) || {};
+
     const outletName = String(
-      irctc['Outlet Name'] ?? irctc['Outlet'] ?? ''
+      irctcOutlet['Outlet Name'] ??
+      feedbackRow?.['Outlet'] ??
+      masterOutlet['outletName'] ??
+      masterOutlet['Outlet Name'] ??
+      ''
     ).trim();
+
     const stationCode = String(
-      irctc['Delivery Station'] ?? irctc['Station Code'] ?? irctc['Station'] ?? ''
+      irctcOutlet['Delivery Station'] ??
+      irctcOutlet['Station Code'] ??
+      masterOutlet['station'] ??
+      masterOutlet['Station'] ??
+      ''
     ).trim();
 
     if (!outletMap[outletId]) {
@@ -172,27 +254,184 @@ const buildFeedbackReport = (
         'Station Code': stationCode,
         Complaint: 0,
         Feedback: 0,
+        'Current Count': 0,
+        'Current Rating': 0,
+        'Old Count': 0,
+        'Old Ratings': 0,
+        'Old Sum': 0,
+        'Total Count': 0,
+        'Total Rating Sum': 0,
+        'Total Rating': 0,
       };
     } else {
-      // Fill missing descriptive values without changing the existing row.
-      if (!outletMap[outletId]['Outlet Name'] && outletName) outletMap[outletId]['Outlet Name'] = outletName;
-      if (!outletMap[outletId]['Station Code'] && stationCode) outletMap[outletId]['Station Code'] = stationCode;
+      if (!outletMap[outletId]['Outlet Name'] && outletName) {
+        outletMap[outletId]['Outlet Name'] = outletName;
+      }
+      if (!outletMap[outletId]['Station Code'] && stationCode) {
+        outletMap[outletId]['Station Code'] = stationCode;
+      }
     }
 
     outletMap[outletId].Complaint += counts.complaint;
     outletMap[outletId].Feedback += counts.feedback;
   });
 
-  return Object.values(outletMap).sort((a, b) => {
-    const outletCompare = a['Outlet Id'].localeCompare(b['Outlet Id'], undefined, { numeric: true });
-    if (outletCompare !== 0) return outletCompare;
-    return a['Outlet Name'].localeCompare(b['Outlet Name']);
+  // STEP 5: If Feedback file is not available in IndexedDB (for example the
+  // user installed the new page after an older merge), recover the report from
+  // the IRCTC Feedback Type data. This prevents the report from becoming blank
+  // solely because the optional Feedback file was not persisted by the old build.
+  if (Object.keys(outletMap).length === 0 && irctcRows.length > 0) {
+    irctcRows.forEach((row) => {
+      const type = normalizeFeedbackType(
+        row['Feedback Type'] ?? row['FeedbackType'] ?? row['Type']
+      );
+      if (!type) return;
+
+      const outletId = cleanOutletId(
+        row['Outlet Id'] ?? row['Outlet ID'] ?? row['OutletId']
+      );
+      if (!outletId) return;
+
+      if (!outletMap[outletId]) {
+        outletMap[outletId] = {
+          'Outlet Id': outletId,
+          'Outlet Name': String(row['Outlet Name'] || '').trim(),
+          'Station Code': String(row['Delivery Station'] || row['Station Code'] || '').trim(),
+          Complaint: 0,
+          Feedback: 0,
+        };
+      }
+
+      if (type === 'Complaint') outletMap[outletId].Complaint += 1;
+      if (type === 'Feedback') outletMap[outletId].Feedback += 1;
+    });
+  }
+
+
+  // STEP 6: Merge historical Old Feedback / Old Ratings by Outlet ID.
+  // Old-only outlets are also included, so final rows are the UNION of
+  // historical outlets + current feedback outlets.
+  const oldMap: Record<string, {
+    outletId: string;
+    outletName: string;
+    stationCode: string;
+    oldCount: number;
+    oldRatings: number;
+    oldSum: number;
+  }> = {};
+
+  oldRatingsRows.forEach((row: any) => {
+    const outletId = cleanOutletId(
+      row['Outlet Id'] ??
+      row['Outlet ID'] ??
+      row['OutletId'] ??
+      row['Aggregator Outlet ID']
+    );
+    if (!outletId) return;
+
+    const num = (v: any) => {
+      const n = Number(String(v ?? '').replace(/,/g, '').trim());
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const oldCount = num(row['Old Count'] ?? row['OldCount'] ?? row['Count']);
+    const oldRatings = num(row['Old Ratings'] ?? row['Old Rating'] ?? row['Rating']);
+    const rawOldSum = row['Old Sum'] ?? row['OldSum'];
+    const oldSum = rawOldSum !== undefined && rawOldSum !== ''
+      ? num(rawOldSum)
+      : Number((oldCount * oldRatings).toFixed(2));
+
+    oldMap[outletId] = {
+      outletId,
+      outletName: String(row['Outlet Name'] ?? row['Outlet'] ?? '').trim(),
+      stationCode: String(
+        row['Station Code'] ?? row['Station'] ?? row['Delivery Station'] ?? ''
+      ).trim().toUpperCase(),
+      oldCount,
+      oldRatings,
+      oldSum,
+    };
   });
+
+  Object.values(oldMap).forEach((old) => {
+    if (!outletMap[old.outletId]) {
+      outletMap[old.outletId] = {
+        'Outlet Id': old.outletId,
+        'Outlet Name': old.outletName,
+        'Station Code': old.stationCode,
+        Complaint: 0,
+        Feedback: 0,
+        'Current Count': 0,
+        'Current Rating': 0,
+        'Old Count': 0,
+        'Old Ratings': 0,
+        'Old Sum': 0,
+        'Total Count': 0,
+        'Total Rating Sum': 0,
+        'Total Rating': 0,
+      };
+    }
+
+    if (!outletMap[old.outletId]['Outlet Name'] && old.outletName) {
+      outletMap[old.outletId]['Outlet Name'] = old.outletName;
+    }
+    if (!outletMap[old.outletId]['Station Code'] && old.stationCode) {
+      outletMap[old.outletId]['Station Code'] = old.stationCode;
+    }
+
+    outletMap[old.outletId]['Old Count'] = old.oldCount;
+    outletMap[old.outletId]['Old Ratings'] = old.oldRatings;
+    outletMap[old.outletId]['Old Sum'] = old.oldSum;
+  });
+
+  // STEP 7: Rating calculations.
+  //
+  // Current Rating = Feedback * 5 / (Feedback + Complaint)
+  //
+  // Total Rating = (Old Sum + Feedback * 5)
+  //                / (Old Count + Feedback + Complaint)
+  //
+  // Complaint contributes to count but gives 0 rating points.
+  return Object.values(outletMap)
+    .map((row) => {
+      const currentCount = row.Complaint + row.Feedback;
+      const currentRating = currentCount > 0
+        ? Number(((row.Feedback * 5) / currentCount).toFixed(2))
+        : 0;
+
+      const currentRatingSum = row.Feedback * 5;
+      const totalCount = row['Old Count'] + currentCount;
+      const totalRatingSum = Number(
+        (row['Old Sum'] + currentRatingSum).toFixed(2)
+      );
+      const totalRating = totalCount > 0
+        ? Number((totalRatingSum / totalCount).toFixed(2))
+        : 0;
+
+      return {
+        ...row,
+        'Current Count': currentCount,
+        'Current Rating': currentRating,
+        'Total Count': totalCount,
+        'Total Rating Sum': totalRatingSum,
+        'Total Rating': totalRating,
+      };
+    })
+    .sort((a, b) => {
+      const outletCompare = a['Outlet Id'].localeCompare(
+        b['Outlet Id'],
+        undefined,
+        { numeric: true }
+      );
+      if (outletCompare !== 0) return outletCompare;
+      return a['Outlet Name'].localeCompare(b['Outlet Name']);
+    });
+
 };
 
 const generateFeedbackReportWorkbook = (rows: FeedbackReportRow[]) => {
   if (!rows.length) {
-    alert('Feedback Report ke liye matching Order ID / Outlet data available nahi hai.');
+    alert('Feedback Report ke liye data available nahi hai. Current Feedback + IRCTC ya Old Feedback file check karein.');
     return;
   }
 
@@ -200,17 +439,24 @@ const generateFeedbackReportWorkbook = (rows: FeedbackReportRow[]) => {
     'Outlet Id': r['Outlet Id'],
     'Outlet Name': r['Outlet Name'],
     'Station Code': r['Station Code'],
+    'Old Count': r['Old Count'],
+    'Old Ratings': r['Old Ratings'],
+    'Old Sum': r['Old Sum'],
     Complaint: r.Complaint,
     Feedback: r.Feedback,
+    'Current Count': r['Current Count'],
+    'Current Rating': r['Current Rating'],
+    'Total Count': r['Total Count'],
+    'Total Rating Sum': r['Total Rating Sum'],
+    'Total Rating': r['Total Rating'],
   }));
 
   const ws = XLSX.utils.json_to_sheet(exportRows);
   ws['!cols'] = [
-    { wch: 16 },
-    { wch: 42 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 14 },
+    { wch: 16 }, { wch: 42 }, { wch: 16 },
+    { wch: 12 }, { wch: 13 }, { wch: 13 },
+    { wch: 12 }, { wch: 12 }, { wch: 14 },
+    { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 14 },
   ];
 
   const wb = XLSX.utils.book_new();
@@ -301,6 +547,8 @@ export default function Page() {
   // Delivery Station + Feedback Type directly from the source file.
   const [irctcRawData, setIrctcRawData] = useState<any[]>([]);
   const [feedbackRawData, setFeedbackRawData] = useState<any[]>([]);
+  // Historical outlet-wise rating/count source (uploaded as Old Feedback / Old Ratings Excel).
+  const [oldRatingsRawData, setOldRatingsRawData] = useState<any[]>([]);
   const [penaltySummary, setPenaltySummary] = useState<Record<string, number>>({});
   const [penaltyRawRecords, setPenaltyRawRecords] = useState<any[]>([]);
   const [currentMonthRecords, setCurrentMonthRecords] = useState<any[]>([]);
@@ -314,6 +562,7 @@ export default function Page() {
   const [rfFile, setRfFile] = useState<File | null>(null);
   const [irctcFile, setIrctcFile] = useState<File | null>(null);
   const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
+  const [oldFeedbackFile, setOldFeedbackFile] = useState<File | null>(null);
   const [penaltyFile, setPenaltyFile] = useState<File | null>(null);
   const [currentMonthFile, setCurrentMonthFile] = useState<File | null>(null);
   const [outletsFile, setOutletsFile] = useState<File | null>(null);
@@ -327,6 +576,7 @@ export default function Page() {
         const storedMaster = await loadFromDB('CURRENT_MASTER_DATA');
         const storedIrctc = await loadFromDB('CURRENT_IRCTC_DATA');
         const storedFeedback = await loadFromDB('CURRENT_FEEDBACK_DATA');
+        const storedOldRatings = await loadFromDB('CURRENT_OLD_RATINGS_DATA');
         const storedPenalty = await loadFromDB('OUTLET_PENALTY_DATA');
         const storedCurrentMonth = await loadFromDB('CURRENT_MONTH_DATA');
         const storedOutletsInfo = await loadFromDB('OUTLET_MASTER_INFO');
@@ -334,6 +584,7 @@ export default function Page() {
         if (Array.isArray(storedMaster) && storedMaster.length > 0) setData(storedMaster);
         if (Array.isArray(storedIrctc) && storedIrctc.length > 0) setIrctcRawData(storedIrctc);
         if (Array.isArray(storedFeedback) && storedFeedback.length > 0) setFeedbackRawData(storedFeedback);
+        if (Array.isArray(storedOldRatings) && storedOldRatings.length > 0) setOldRatingsRawData(storedOldRatings);
         if (storedPenalty && typeof storedPenalty === 'object') {
           setPenaltySummary(storedPenalty.outletTotals || {});
           setPenaltyRawRecords(storedPenalty.records || []);
@@ -359,6 +610,7 @@ export default function Page() {
       setData([]);
       setIrctcRawData([]);
       setFeedbackRawData([]);
+      setOldRatingsRawData([]);
       setPenaltySummary({});
       setPenaltyRawRecords([]);
       setCurrentMonthRecords([]);
@@ -417,8 +669,44 @@ export default function Page() {
   };
 
   const handleProcessAndMerge = async () => {
+    // If the six core reports are already stored, Old Feedback/Ratings or the
+    // current Feedback CSV can be uploaded alone. This avoids forcing the user
+    // to upload all six reports again just to refresh the Feedback Report.
+    const hasStoredCoreData = data.length > 0 && irctcRawData.length > 0;
+    if ((!rfFile || !irctcFile) && (oldFeedbackFile || feedbackFile) && hasStoredCoreData) {
+      try {
+        setIsProcessing(true);
+
+        if (feedbackFile) {
+          setStatusText('Updating Current Feedback Data...');
+          const freshFeedback = await parseAnyFile(feedbackFile);
+          await saveToDB('CURRENT_FEEDBACK_DATA', freshFeedback);
+          setFeedbackRawData(freshFeedback);
+        }
+
+        if (oldFeedbackFile) {
+          setStatusText('Updating Old Feedback / Old Ratings...');
+          const freshOldRatings = await parseAnyFile(oldFeedbackFile);
+          await saveToDB('CURRENT_OLD_RATINGS_DATA', freshOldRatings);
+          setOldRatingsRawData(freshOldRatings);
+        }
+
+        setStatusText('Feedback Report updated successfully.');
+        setFeedbackFile(null);
+        setOldFeedbackFile(null);
+        setIsProcessing(false);
+        setIsModalOpen(false);
+        return;
+      } catch (error: any) {
+        console.error(error);
+        alert('Error updating Feedback data: ' + error.message);
+        setIsProcessing(false);
+        return;
+      }
+    }
+
     if (!rfFile || !irctcFile) {
-      alert('Kripya RF Report aur IRCTC Report zaroor upload karein!');
+      alert('Kripya RF Report aur IRCTC Report upload karein. Ya agar existing 6 reports already stored hain, to sirf Feedback / Old Feedback file upload kar sakte hain.');
       return;
     }
 
@@ -434,12 +722,22 @@ export default function Page() {
       await saveToDB('CURRENT_IRCTC_DATA', irctcData);
       setIrctcRawData(irctcData);
 
-      let feedbackData: any[] = [];
+      let feedbackData: any[] = feedbackRawData;
       if (feedbackFile) {
         setStatusText('Reading Feedback Report...');
         feedbackData = await parseAnyFile(feedbackFile);
         await saveToDB('CURRENT_FEEDBACK_DATA', feedbackData);
         setFeedbackRawData(feedbackData);
+      }
+
+      // Historical rating/count file is optional. If it is not selected in a
+      // later merge, keep the previously stored Old Feedback data.
+      let oldRatingsData: any[] = oldRatingsRawData;
+      if (oldFeedbackFile) {
+        setStatusText('Reading Old Feedback / Old Ratings...');
+        oldRatingsData = await parseAnyFile(oldFeedbackFile);
+        await saveToDB('CURRENT_OLD_RATINGS_DATA', oldRatingsData);
+        setOldRatingsRawData(oldRatingsData);
       }
 
       const penaltyOutletMap: Record<string, number> = {};
@@ -648,6 +946,7 @@ export default function Page() {
       setRfFile(null);
       setIrctcFile(null);
       setFeedbackFile(null);
+      setOldFeedbackFile(null);
       setPenaltyFile(null);
       setCurrentMonthFile(null);
       setOutletsFile(null);
@@ -923,8 +1222,8 @@ export default function Page() {
 
   // --- Outlet-wise Feedback / Complaint Report ---
   const feedbackReportRows = useMemo(() => {
-    return buildFeedbackReport(feedbackRawData, irctcRawData);
-  }, [feedbackRawData, irctcRawData]);
+    return buildFeedbackReport(feedbackRawData, irctcRawData, data, outletsMasterInfo, oldRatingsRawData);
+  }, [feedbackRawData, irctcRawData, data, outletsMasterInfo]);
 
   // --- Exports ---
   const exportMasterExcel = () => {
@@ -1068,14 +1367,28 @@ export default function Page() {
         o.irctcStatus || '-',
       ]);
     } else if (selectedReport === 'FEEDBACK_REPORT') {
-      head = [['Outlet ID', 'Outlet Name', 'Station Code', 'Complaint', 'Feedback']];
+      head = [[
+        'Outlet ID', 'Outlet Name', 'Station Code',
+        'Old Count', 'Old Ratings', 'Old Sum',
+        'Complaint', 'Feedback', 'Current Count', 'Current Rating',
+        'Total Count', 'Total Rating Sum', 'Total Rating'
+      ]];
       body = feedbackReportRows.map((r) => [
         r['Outlet Id'],
-        String(r['Outlet Name'] || '-').substring(0, 35),
+        String(r['Outlet Name'] || '-').substring(0, 28),
         r['Station Code'] || '-',
+        r['Old Count'],
+        r['Old Ratings'],
+        r['Old Sum'],
         r.Complaint,
         r.Feedback,
+        r['Current Count'],
+        r['Current Rating'],
+        r['Total Count'],
+        r['Total Rating Sum'],
+        r['Total Rating'],
       ]);
+
     } else if (selectedReport === 'PENALTIES') {
       head = [['Outlet ID', 'Order ID', 'Transaction Mode', 'Vendor Name', 'Date', 'Amount (₹)', 'Remarks']];
       body = penaltyRawRecords.map((p) => [
@@ -1281,7 +1594,7 @@ export default function Page() {
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white flex items-center gap-2 transition shadow-lg shadow-indigo-950"
           >
-            <span>☁️</span> Upload 6 Reports
+            <span>☁️</span> Upload 7 Reports
           </button>
         </div>
       </header>
@@ -1293,7 +1606,7 @@ export default function Page() {
             <div className="text-5xl mb-4">📂</div>
             <h3 className="text-lg font-bold text-slate-300 mb-1">No Data Stored in Portal</h3>
             <p className="text-xs text-slate-500 max-w-md mb-6">
-              Upload RF Report, IRCTC Report, Feedback, Penalty, Current Month &amp; Outlets Master. Calculations will be permanently preserved.
+              Upload RF Report, IRCTC Report, Feedback, Old Feedback/Ratings, Penalty, Current Month &amp; Outlets Master. Calculations will be permanently preserved.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
@@ -1623,16 +1936,24 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 6. OUTLET-WISE FEEDBACK REPORT */}
+                {/* 6. OUTLET-WISE FEEDBACK + RATING REPORT */}
                 {selectedReport === 'FEEDBACK_REPORT' && (
-                  <table className="w-full min-w-[1000px] text-left border-collapse text-xs whitespace-nowrap">
+                  <table className="w-full min-w-[1900px] text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
                         <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Outlet Id</th>
                         <th className="p-3 font-semibold">Outlet Name</th>
                         <th className="p-3 font-semibold">Station Code</th>
+                        <th className="p-3 font-semibold text-center">Old Count</th>
+                        <th className="p-3 font-semibold text-center">Old Ratings</th>
+                        <th className="p-3 font-semibold text-center">Old Sum</th>
                         <th className="p-3 font-semibold text-center text-rose-400">Complaint</th>
                         <th className="p-3 font-semibold text-center text-emerald-400">Feedback</th>
+                        <th className="p-3 font-semibold text-center">Current Count</th>
+                        <th className="p-3 font-semibold text-center text-amber-400">Current Rating</th>
+                        <th className="p-3 font-semibold text-center">Total Count</th>
+                        <th className="p-3 font-semibold text-center">Total Rating Sum</th>
+                        <th className="p-3 font-semibold text-center text-cyan-400">Total Rating</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -1642,13 +1963,21 @@ export default function Page() {
                           r['Outlet Name'].toLowerCase().includes(searchTerm.toLowerCase()) ||
                           r['Station Code'].toLowerCase().includes(searchTerm.toLowerCase())
                         )
-                        .map((row, i) => (
+                        .map((row) => (
                           <tr key={row['Outlet Id']} className="hover:bg-slate-800/40">
                             <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row['Outlet Id']}</td>
                             <td className="p-3 font-medium text-white">{row['Outlet Name'] || '-'}</td>
                             <td className="p-3 text-cyan-300 font-mono">{row['Station Code'] || '-'}</td>
+                            <td className="p-3 text-center">{row['Old Count']}</td>
+                            <td className="p-3 text-center">{Number(row['Old Ratings'] || 0).toFixed(2)}</td>
+                            <td className="p-3 text-center">{Number(row['Old Sum'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center font-bold text-rose-400">{row.Complaint}</td>
                             <td className="p-3 text-center font-bold text-emerald-400">{row.Feedback}</td>
+                            <td className="p-3 text-center font-bold">{row['Current Count']}</td>
+                            <td className="p-3 text-center font-bold text-amber-400">{Number(row['Current Rating'] || 0).toFixed(2)}</td>
+                            <td className="p-3 text-center font-bold">{row['Total Count']}</td>
+                            <td className="p-3 text-center">{Number(row['Total Rating Sum'] || 0).toFixed(2)}</td>
+                            <td className="p-3 text-center font-black text-cyan-400">{Number(row['Total Rating'] || 0).toFixed(2)}</td>
                           </tr>
                         ))}
                     </tbody>
@@ -1705,7 +2034,7 @@ export default function Page() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-xl rounded-2xl bg-slate-900 p-6 border border-slate-700 shadow-2xl text-white">
             <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-              <span>📊</span> Upload Reports (6 Files System)
+              <span>📊</span> Upload Reports (7 Files System)
             </h2>
             <p className="text-xs text-slate-400 mb-4">
               Files select karein. Sabhi calculated metrics aur summaries permanently IndexedDB me save ho jayengi.
@@ -1748,9 +2077,24 @@ export default function Page() {
                 />
               </div>
 
+              <div className="p-3 bg-slate-800/60 rounded-xl border border-violet-700/60">
+                <label className="text-xs font-semibold text-violet-400 block mb-1">
+                  4. Old Feedback / Old Ratings (Historical Outlet-wise Rating &amp; Count) (Optional)
+                </label>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => setOldFeedbackFile(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-violet-700 file:text-white hover:file:bg-violet-600 cursor-pointer"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Columns: Outlet Id, Outlet Name, Station Code, Old Count, Old Ratings, Old Sum
+                </p>
+              </div>
+
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-rose-400 block mb-1">
-                  4. Penalty &amp; Deduction Report (Optional)
+                  5. Penalty &amp; Deduction Report (Optional)
                 </label>
                 <input
                   type="file"
@@ -1762,7 +2106,7 @@ export default function Page() {
 
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-cyan-400 block mb-1">
-                  5. Current Month Data (Previous Balance, Paid by Relfood) (Optional)
+                  6. Current Month Data (Previous Balance, Paid by Relfood) (Optional)
                 </label>
                 <input
                   type="file"
@@ -1774,7 +2118,7 @@ export default function Page() {
 
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700">
                 <label className="text-xs font-semibold text-amber-400 block mb-1">
-                  6. Outlets Master (GST, State &amp; IRCTC Status) (Optional)
+                  7. Outlets Master (GST, State &amp; IRCTC Status) (Optional)
                 </label>
                 <input
                   type="file"
