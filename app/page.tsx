@@ -303,6 +303,7 @@ const buildFeedbackReport = (
           Feedback: 0,
           'Current Count': 0,
           'Current Rating': 0,
+          'Current Sum': 0,
           'Old Count': 0,
           'Old Ratings': 0,
           'Old Sum': 0,
