@@ -810,7 +810,7 @@ export default function Page() {
         generateVendorDateWiseReportWorkbook(data);
         break;
       case 'LAST_DAY_STATION':
-        generateLastDayStationReportWorkbook(data, outletsMasterInfo);
+        generateLastDayStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
         break;
       case 'OUTLETS_MASTER': {
         const ws = XLSX.utils.json_to_sheet(Object.values(outletsMasterInfo));
