@@ -146,6 +146,7 @@ interface FeedbackReportRow {
   Feedback: number;
   'Current Count': number;
   'Current Rating': number;
+  'Current Sum': number;
   'Old Count': number;
   'Old Ratings': number;
   'Old Sum': number;
@@ -256,6 +257,7 @@ const buildFeedbackReport = (
         Feedback: 0,
         'Current Count': 0,
         'Current Rating': 0,
+        'Current Sum': 0,
         'Old Count': 0,
         'Old Ratings': 0,
         'Old Sum': 0,
@@ -371,6 +373,7 @@ const buildFeedbackReport = (
         Feedback: 0,
         'Current Count': 0,
         'Current Rating': 0,
+        'Current Sum': 0,
         'Old Count': 0,
         'Old Ratings': 0,
         'Old Sum': 0,
@@ -403,16 +406,29 @@ const buildFeedbackReport = (
   return Object.values(outletMap)
     .map((row) => {
       const currentCount = row.Complaint + row.Feedback;
+
+      // Current Rating = Feedback * 5 / (Feedback + Complaint)
       const currentRating = currentCount > 0
         ? Number(((row.Feedback * 5) / currentCount).toFixed(2))
         : 0;
 
-      const currentRatingSum = row.Feedback * 5;
-      const totalCount = row['Old Count'] + currentCount;
-      const totalRatingSum = Number(
-        (row['Old Sum'] + currentRatingSum).toFixed(2)
+      // Current Sum = Current Count * Current Rating
+      // Uses the displayed/rounded Current Rating exactly as requested.
+      const currentSum = Number(
+        (currentCount * currentRating).toFixed(2)
       );
-      const totalRating = totalCount > 0
+
+      // Total Count = Old Count + Current Count
+      const totalCount = row['Old Count'] + currentCount;
+
+      // Total Rating Sum = Old Sum + Current Sum
+      const totalRatingSum = Number(
+        (row['Old Sum'] + currentSum).toFixed(2)
+      );
+
+      // Till Date Ratings = (Old Sum + Current Sum)
+      //                    / (Old Count + Current Count)
+      const tillDateRatings = totalCount > 0
         ? Number((totalRatingSum / totalCount).toFixed(2))
         : 0;
 
@@ -420,9 +436,10 @@ const buildFeedbackReport = (
         ...row,
         'Current Count': currentCount,
         'Current Rating': currentRating,
+        'Current Sum': currentSum,
         'Total Count': totalCount,
         'Total Rating Sum': totalRatingSum,
-        'Total Rating': totalRating,
+        'Total Rating': tillDateRatings,
       };
     })
     .sort((a, b) => {
@@ -454,16 +471,17 @@ const generateFeedbackReportWorkbook = (rows: FeedbackReportRow[]) => {
     Feedback: r.Feedback,
     'Current Count': r['Current Count'],
     'Current Rating': r['Current Rating'],
+    'Current Sum': r['Current Sum'],
     'Total Count': r['Total Count'],
     'Total Rating Sum': r['Total Rating Sum'],
-    'Total Rating': r['Total Rating'],
+    'Till Date Ratings': r['Total Rating'],
   }));
 
   const ws = XLSX.utils.json_to_sheet(exportRows);
   ws['!cols'] = [
     { wch: 16 }, { wch: 42 }, { wch: 16 },
     { wch: 12 }, { wch: 13 }, { wch: 13 },
-    { wch: 12 }, { wch: 12 }, { wch: 14 },
+    { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
     { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 14 },
   ];
 
@@ -1378,8 +1396,8 @@ export default function Page() {
       head = [[
         'Outlet ID', 'Outlet Name', 'Station Code',
         'Old Count', 'Old Ratings', 'Old Sum',
-        'Complaint', 'Feedback', 'Current Count', 'Current Rating',
-        'Total Count', 'Total Rating Sum', 'Total Rating'
+        'Complaint', 'Feedback', 'Current Count', 'Current Rating', 'Current Sum',
+        'Total Count', 'Total Rating Sum', 'Till Date Ratings'
       ]];
       body = feedbackReportRows.map((r) => [
         r['Outlet Id'],
@@ -1392,6 +1410,7 @@ export default function Page() {
         r.Feedback,
         r['Current Count'],
         r['Current Rating'],
+        r['Current Sum'],
         r['Total Count'],
         r['Total Rating Sum'],
         r['Total Rating'],
@@ -1959,9 +1978,10 @@ export default function Page() {
                         <th className="p-3 font-semibold text-center text-emerald-400">Feedback</th>
                         <th className="p-3 font-semibold text-center">Current Count</th>
                         <th className="p-3 font-semibold text-center text-amber-400">Current Rating</th>
+                        <th className="p-3 font-semibold text-center text-violet-400">Current Sum</th>
                         <th className="p-3 font-semibold text-center">Total Count</th>
                         <th className="p-3 font-semibold text-center">Total Rating Sum</th>
-                        <th className="p-3 font-semibold text-center text-cyan-400">Total Rating</th>
+                        <th className="p-3 font-semibold text-center text-cyan-400">Till Date Ratings</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -1983,6 +2003,7 @@ export default function Page() {
                             <td className="p-3 text-center font-bold text-emerald-400">{row.Feedback}</td>
                             <td className="p-3 text-center font-bold">{row['Current Count']}</td>
                             <td className="p-3 text-center font-bold text-amber-400">{Number(row['Current Rating'] || 0).toFixed(2)}</td>
+                            <td className="p-3 text-center font-bold text-violet-400">{Number(row['Current Sum'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center font-bold">{row['Total Count']}</td>
                             <td className="p-3 text-center">{Number(row['Total Rating Sum'] || 0).toFixed(2)}</td>
                             <td className="p-3 text-center font-black text-cyan-400">{Number(row['Total Rating'] || 0).toFixed(2)}</td>
