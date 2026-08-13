@@ -1,418 +1,153 @@
-import '../styles/main-report-matrix.css';
-* {
-  box-sizing: border-box;
+'use client';
+
+import React from 'react';
+
+interface MainReportMatrixProps {
+  blocks: any[];
+  searchTerm: string;
 }
 
-.main-report-page {
-  width: 100%;
-  min-height: 100vh;
-  padding: 18px 22px;
-  background: #ffffff;
-  color: #172033;
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/* =========================
-   TOP TOOLBAR
-========================= */
-
-.report-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #d9dee8;
-}
-
-.report-toolbar h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-}
-
-.report-toolbar p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.toolbar-actions button {
-  border: 0;
-  border-radius: 9px;
-  padding: 9px 14px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  background: #111827;
-  color: white;
-}
-
-.toolbar-actions .excel-btn {
-  background: #009f63;
-}
-
-.toolbar-actions .pdf-btn {
-  background: #ef1235;
-}
-
-.toolbar-actions .upload-btn {
-  background: #5138ee;
-}
-
-/* =========================
-   INFO
-========================= */
-
-.report-info {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin: 14px 0;
-  font-size: 13px;
-}
-
-.report-info b {
-  color: #00a66a;
-}
-
-.view-badge {
-  border: 1px solid #aebcff;
-  border-radius: 7px;
-  padding: 6px 12px;
-  color: #6077d9;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.search {
-  margin-left: auto;
-  width: 280px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid #d7dce5;
-  border-radius: 7px;
-  outline: none;
-}
-
-/* =========================
-   IMPORTANT:
-   BOTH AXIS SCROLL
-========================= */
-
-.matrix-scroll {
-  width: 100%;
-  max-width: 100%;
-  height: calc(100vh - 185px);
-  overflow: auto;
-
-  /* touchpad / trackpad */
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-}
-
-/*
-  This is important for touchpad horizontal scrolling.
-*/
-.matrix-scroll {
-  overflow-x: auto;
-  overflow-y: auto;
-}
-
-/* =========================
-   DAY BLOCK
-========================= */
-
-.day-block {
-  min-width: 1450px;
-  margin-bottom: 8px;
-}
-
-.date-bar {
-  height: 27px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  background: #ff0808;
-  color: white;
-
-  font-size: 17px;
-  font-weight: 800;
-
-  border-left: 1px solid #ff0808;
-  border-right: 1px solid #ff0808;
-}
-
-/* =========================
-   TABLE
-========================= */
-
-.matrix-table {
-  width: max-content;
-  min-width: 1450px;
-
-  border-collapse: collapse;
-  table-layout: fixed;
-
-  font-size: 9px;
-}
-
-.matrix-table th,
-.matrix-table td {
-  border: 1px solid #7c8794;
-  padding: 2px 3px;
-
-  height: 17px;
-  line-height: 13px;
-
-  text-align: center;
-  white-space: nowrap;
-}
-
-/* =========================
-   SOURCE
-========================= */
-
-.source-header {
-  width: 105px;
-  min-width: 105px;
-  max-width: 105px;
-
-  background: #050505;
-  color: white;
-
-  font-size: 11px;
-}
-
-.source-cell {
-  width: 105px;
-  min-width: 105px;
-  max-width: 105px;
-
-  font-size: 9px;
-  font-weight: 700;
-
-  background: #ffffff;
-}
-
-.total-row .source-cell {
-  background: #000000;
-  color: white;
-}
-
-/* =========================
-   GROUP HEADERS
-========================= */
-
-.group-header {
-  height: 25px;
-
-  font-size: 12px;
-  font-weight: 800;
-
-  color: #111827;
-}
-
-.sub-header {
-  height: 20px;
-
-  font-size: 9px;
-  font-weight: 800;
-}
-
-/* =========================
-   GROUP COLORS
-========================= */
-
-.orders {
-  background: #b9e5ef;
-}
-
-.meals {
-  background: #c6df96;
-}
-
-.value {
-  background: #f5c59d;
-}
-
-.prepaid {
-  background: #9dc9e4;
-}
-
-.discount {
-  background: #d99a9e;
-}
-
-.revenue {
-  background: #b4b0a9;
-}
-
-.complaints {
-  background: #5b8dce;
-}
-
-.feedback {
-  background: #8acb48;
-}
-
-.undelivered {
-  background: #4d4d4d;
-  color: white;
-}
-
-/* =========================
-   SOURCE ROW COLORS
-========================= */
-
-.matrix-table tbody tr:nth-child(even) td {
-  filter: brightness(0.98);
-}
-
-.matrix-table tbody tr:hover td {
-  outline: 1px solid #2563eb;
-  background-color: #e7f0ff !important;
-}
-
-/* TOTAL */
-.total-row td {
-  font-weight: 800;
-}
-
-/* SOURCE COLORS */
-.matrix-table tbody tr:not(.total-row) .source-cell {
-  background: #ef1818;
-  color: white;
-}
-
-.matrix-table tbody tr:nth-child(3) .source-cell {
-  background: #ef1818;
-}
-
-.matrix-table tbody tr:nth-child(4) .source-cell {
-  background: #ef1818;
-}
-
-.matrix-table tbody tr:nth-child(5) .source-cell {
-  background: #ef1818;
-}
-
-/* =========================
-   OUTLETS
-========================= */
-
-.outlets-header,
-.outlet-cell {
-  width: 38px;
-  min-width: 38px;
-  max-width: 38px;
-
-  background: #fff000;
-  font-weight: 800;
-}
-
-.outlets-header {
-  background: #ff9f00;
-  color: white;
-}
-
-/* =========================
-   STICKY SOURCE COLUMN
-========================= */
-
-.sticky-source {
-  position: sticky;
-  left: 0;
-  z-index: 5;
-}
-
-thead .sticky-source {
-  z-index: 20;
-}
-
-tbody .sticky-source {
-  box-shadow: 3px 0 5px rgba(0, 0, 0, 0.12);
-}
-
-/* =========================
-   DATE STAYS VISIBLE
-========================= */
-
-.date-bar {
-  position: sticky;
-  left: 0;
-  z-index: 15;
-}
-
-/* =========================
-   NOTE
-========================= */
-
-.report-note {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #64748b;
-}
-
-/* =========================
-   SCROLLBAR
-========================= */
-
-.matrix-scroll::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-
-.matrix-scroll::-webkit-scrollbar-track {
-  background: #eef1f5;
-}
-
-.matrix-scroll::-webkit-scrollbar-thumb {
-  background: #8b95a5;
-  border-radius: 8px;
-}
-
-.matrix-scroll::-webkit-scrollbar-thumb:hover {
-  background: #5c6675;
-}
-
-/* Firefox */
-.matrix-scroll {
-  scrollbar-width: auto;
-  scrollbar-color: #8b95a5 #eef1f5;
-}
-
-/* =========================
-   MOBILE
-========================= */
-
-@media (max-width: 900px) {
-  .report-toolbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-  }
-
-  .search {
-    width: 200px;
-  }
-
-  .matrix-scroll {
-    height: calc(100vh - 230px);
-  }
+const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
+
+export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatrixProps) {
+  const renderMainReportRow = (label: string, ftd: any, mtd: any, isTotal = false) => {
+    const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
+    const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(0)}%` : '0%';
+    const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
+    const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
+    const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
+    const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
+    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
+
+    return (
+      <tr className={`portal-data-row border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
+        <td className={`p-1 border border-gray-400 text-[10px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-black text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+          {label}
+        </td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{orderAsp}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{delPct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mealAsp}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mpo}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{prepaidPct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{discountPct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{revenuePct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.complaints}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{complaintPct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.feedback}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{feedbackPct}</td>
+
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{undeliveredPct}</td>
+      </tr>
+    );
+  };
+
+  const q = searchTerm.trim().toLowerCase();
+  const filteredBlocks = blocks.filter((blk) => String(blk.dateLabel || '').toLowerCase().includes(q));
+
+  return (
+    <div className="main-report-matrix space-y-6 max-h-[75vh] overflow-y-auto pr-1">
+      {filteredBlocks.map((blk, bIdx) => (
+        <div
+          key={`${blk.rawDate || blk.dateLabel}-${bIdx}`}
+          className="report-scroll w-full overflow-x-auto overflow-y-hidden rounded-xl border shadow-sm"
+          onWheel={(e) => {
+            const el = e.currentTarget;
+            if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+              e.preventDefault();
+              el.scrollLeft += e.deltaX || e.deltaY;
+            }
+          }}
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'auto',
+            scrollbarColor: '#cbd5e1 #f8fafc',
+            touchAction: 'pan-x pan-y',
+            overscrollBehaviorX: 'contain',
+          }}
+        >
+          <table className="portal-report-table portal-table-main min-w-[2400px] border-separate border-spacing-0 text-[10px] whitespace-nowrap">
+            <thead>
+              <tr>
+                <th colSpan={38} className="bg-red-600 text-white font-bold py-2.5 text-center text-xs tracking-wider">
+                  {blk.dateLabel}
+                </th>
+                <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[60px]">Outlets</th>
+              </tr>
+
+              <tr className="text-white font-bold text-center text-[10px]">
+                <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">Source</th>
+                <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white py-1">ORDERS</th>
+                <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white py-1">MEALS</th>
+                <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white py-1">VALUE</th>
+                <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white py-1">PREPAID</th>
+                <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white py-1">DISCOUNT</th>
+                <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white py-1">REVENUE</th>
+                <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white py-1">Complaints</th>
+                <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white py-1">Feedback</th>
+                <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white py-1">IRCTC Undelivered</th>
+                <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base min-w-[60px] align-middle">{blk.outletsCount}</th>
+              </tr>
+
+              <tr className="text-[10px] text-center font-bold bg-gray-100 text-gray-800">
+                <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">Del%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">MPO</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
+              {SOURCES.map((src) => (
+                <React.Fragment key={src}>
+                  {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
 }
