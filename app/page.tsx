@@ -1423,18 +1423,18 @@ export default function Page() {
       ]);
     } else if (selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') {
       head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)', 'Feedback Good', 'Feedback Bad']];
-      body = stationSummary.map((s) => [
-        s.station,
-        s.state || '-',
-        s.totalOrders,
-        s.delivered,
-        s.cancelled,
-        `₹${s.sellingPrice.toFixed(2)}`,
-        `₹${s.vendorPrice.toFixed(2)}`,
-        `₹${s.rfComm.toFixed(2)}`,
-        `₹${s.gst.toFixed(2)}`,
-        s.feedbackGood || 0,
-        s.feedbackBad || 0,
+      body = stationSummary.map((s: any) => [
+        s['Station Code'],
+        s['State'] || '-',
+        s['Total Orders'],
+        s['Delivered'],
+        s['Cancelled'],
+        `₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`,
+        `₹${Number(s['Vendor Price'] || 0).toFixed(2)}`,
+        `₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`,
+        `₹${Number(s['Final GST'] || 0).toFixed(2)}`,
+        s['Feedback Good'] || 0,
+        s['Feedback Bad'] || 0,
       ]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
       head = [['Vendor Name', 'Outlet ID', 'State', 'Total Orders', 'Delivered', 'Selling Amount', 'Vendor Payout', 'RF Commission', 'Penalty Total']];
