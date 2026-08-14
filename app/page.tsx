@@ -1642,7 +1642,128 @@ export default function Page() {
     }
   };
 
+  const exportMainReportPDF = () => {
+    if (!mainReportBlocks.length) return alert('No Data available to generate PDF!');
+
+    const doc = new jsPDF('landscape', 'pt', 'a3');
+    const groups = [
+      { name: 'ORDERS', start: 0, span: 5, color: [114, 185, 210] },
+      { name: 'MEALS', start: 5, span: 5, color: [181, 211, 123] },
+      { name: 'VALUE', start: 10, span: 3, color: [243, 179, 126] },
+      { name: 'PREPAID', start: 13, span: 4, color: [141, 197, 222] },
+      { name: 'DISCOUNT', start: 17, span: 4, color: [217, 147, 151] },
+      { name: 'REVENUE', start: 21, span: 4, color: [153, 153, 153] },
+      { name: 'Complaints', start: 25, span: 4, color: [91, 145, 200] },
+      { name: 'Feedback', start: 29, span: 4, color: [135, 195, 79] },
+      { name: 'IRCTC Undelivered', start: 33, span: 4, color: [85, 85, 85] },
+    ];
+    const subHeaders = ['FTD','MTD','LMTD','ASP','Del%','FTD','MTD','LMTD','ASP','MPO','FTD','MTD','LMTD','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%','FTD','MTD','LMTD','%'];
+
+    const metricRow = (label: string, ftd: any, mtd: any, outletValue?: number | null) => {
+      const num = (v: any) => Number(v || 0);
+      const integer = (v: any) => Math.round(num(v));
+      const percent = (a: any, b: any, digits = 2) => b > 0 ? `${((num(a) / num(b)) * 100).toFixed(digits)}%` : `0.${'0'.repeat(digits)}%`;
+      const orderAsp = num(ftd.orders) > 0 ? integer(ftd.value) / num(ftd.orders) : 0;
+      const mealAsp = num(ftd.meals) > 0 ? integer(ftd.value) / num(ftd.meals) : 0;
+      const mpo = num(ftd.orders) > 0 ? (num(ftd.meals) / num(ftd.orders)).toFixed(2) : '0.00';
+      return [
+        label,
+        ftd.orders, mtd.orders, 0, Math.round(orderAsp), percent(ftd.deliveredOrders, ftd.orders, 0),
+        ftd.meals, mtd.meals, 0, Math.round(mealAsp), mpo,
+        integer(ftd.value), integer(mtd.value), 0,
+        integer(ftd.prepaidValue), integer(mtd.prepaidValue), 0, percent(ftd.prepaidValue, ftd.value),
+        integer(ftd.discount), integer(mtd.discount), 0, percent(ftd.discount, ftd.value),
+        integer(ftd.revenue), integer(mtd.revenue), 0, percent(ftd.revenue, ftd.value),
+        ftd.complaints, mtd.complaints, 0, percent(ftd.complaints, ftd.deliveredOrders),
+        ftd.feedback, mtd.feedback, 0, percent(ftd.feedback, ftd.deliveredOrders),
+        ftd.undelivered, mtd.undelivered, 0, percent(ftd.undelivered, ftd.orders),
+        outletValue ?? ''
+      ];
+    };
+
+    const dataFills: Record<number, [number, number, number]> = {
+      1:[204,229,238],2:[204,229,238],3:[204,229,238],4:[204,229,238],5:[204,229,238],
+      6:[217,232,200],7:[217,232,200],8:[217,232,200],9:[217,232,200],10:[217,232,200],
+      11:[248,223,202],12:[248,223,202],13:[248,223,202],14:[214,234,242],15:[214,234,242],16:[214,234,242],17:[214,234,242],
+      18:[240,214,217],19:[240,214,217],20:[240,214,217],21:[240,214,217],22:[208,208,208],23:[208,208,208],24:[208,208,208],25:[208,208,208],
+      26:[200,221,240],27:[200,221,240],28:[200,221,240],29:[200,221,240],30:[217,234,203],31:[217,234,203],32:[217,234,203],33:[217,234,203],
+      34:[102,102,102],35:[102,102,102],36:[102,102,102],37:[102,102,102],38:[255,242,0]
+    };
+
+    let firstTable = true;
+    mainReportBlocks.forEach((blk: any) => {
+      if (!firstTable) doc.addPage();
+      firstTable = false;
+
+      const pageW = doc.internal.pageSize.getWidth();
+      doc.setFillColor(255, 0, 0);
+      doc.rect(18, 18, pageW - 36, 24, 'F');
+      doc.setTextColor(255,255,255);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(13);
+      doc.text(blk.dateLabel, pageW / 2, 34, { align: 'center' });
+
+      const total = metricRow('Total', blk.dayTotal, blk.mtdTotal, Number(blk.outletsCount || 0));
+      const bodyRows = [
+        total,
+        ...SOURCES.map((src) => metricRow(src, blk.dayStats[src] || {}, blk.mtdBySource[src] || {}, null)),
+      ];
+
+      const head = [[
+        { content: 'Source', rowSpan: 2 },
+        ...groups.map(g => ({ content: g.name, colSpan: g.span })),
+        { content: 'Outlets', rowSpan: 2 }
+      ], subHeaders.map(x => ({ content: x }))];
+
+      autoTable(doc, {
+        head,
+        body: bodyRows,
+        startY: 48,
+        theme: 'grid',
+        tableWidth: pageW - 36,
+        margin: { left: 18, right: 18, top: 48, bottom: 18 },
+        styles: {
+          font: 'helvetica', fontSize: 5.6, cellPadding: 1.5, lineWidth: 0.35,
+          lineColor: [34,34,34], textColor: [0,0,0], halign: 'center', valign: 'middle', overflow: 'hidden'
+        },
+        headStyles: { fontStyle: 'bold', fontSize: 6.1, textColor: [0,0,0], halign: 'center', valign: 'middle' },
+        columnStyles: { 0: { cellWidth: 62 }, 38: { cellWidth: 32 } },
+        didParseCell: (hook: any) => {
+          const r = hook.row.index;
+          const c = hook.column.index;
+          if (hook.section === 'head') {
+            if (r === 0) {
+              const group = groups.find(g => c >= g.start + 1 && c < g.start + 1 + g.span);
+              if (c === 0) { hook.cell.styles.fillColor = [0,0,0]; hook.cell.styles.textColor = [255,255,255]; }
+              else if (c === 38) { hook.cell.styles.fillColor = [242,169,0]; hook.cell.styles.textColor = [255,255,255]; }
+              else if (group) { hook.cell.styles.fillColor = group.color; hook.cell.styles.textColor = group.name === 'IRCTC Undelivered' ? [255,255,255] : [0,0,0]; }
+            } else if (r === 1) {
+              const source = c + 1;
+              const g = groups.find(x => source >= x.start + 1 && source < x.start + 1 + x.span);
+              hook.cell.styles.fillColor = g ? g.color.map(v => Math.min(255, v + 35)) : [220,231,236];
+              hook.cell.styles.fontSize = 5.5;
+              if (g?.name === 'IRCTC Undelivered') hook.cell.styles.textColor = [255,255,255];
+            }
+          } else {
+            if (c === 0) { hook.cell.styles.fillColor = [239,0,0]; hook.cell.styles.textColor = [255,255,255]; hook.cell.styles.fontStyle = 'bold'; }
+            else if (c === 38) { hook.cell.styles.fillColor = [255,242,0]; hook.cell.styles.textColor = [17,17,17]; hook.cell.styles.fontStyle = 'bold'; }
+            else { hook.cell.styles.fillColor = dataFills[c] || [237,244,247]; }
+            if ((c === 21 || c === 22) && Number(hook.cell.raw) !== 0) hook.cell.styles.textColor = [0,140,105];
+            if (c === 34 || c === 35) hook.cell.styles.textColor = [255,48,48];
+            if (r === 0) hook.cell.styles.fontStyle = 'bold';
+          }
+        }
+      });
+    });
+
+    doc.save(`RELFOOD_MAIN_REPORT_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const exportCurrentPDF = () => {
+    if (selectedReport === 'MAIN_REPORT') {
+      exportMainReportPDF();
+      return;
+    }
     if (!data.length && Object.keys(outletsMasterInfo).length === 0) {
       return alert('No Data available to generate PDF!');
     }
