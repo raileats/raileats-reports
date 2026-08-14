@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx-js-style';
+import * as XLSX from 'xlsx';
 
 // Helper date formatter: "Saturday, 1 August, 2026"
 const formatDisplayDate = (dateStr: string): string => {
@@ -422,57 +422,6 @@ export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[
   // Create Sheet
   const ws = XLSX.utils.aoa_to_sheet(excelRows);
   ws['!merges'] = merges;
-
-  // Match the dashboard's Excel-style color formatting in the downloaded XLSX.
-  const fill = (rgb: string) => ({ patternType: 'solid', fgColor: { rgb } });
-  const border = {
-    top: { style: 'thin', color: { rgb: '222222' } },
-    bottom: { style: 'thin', color: { rgb: '222222' } },
-    left: { style: 'thin', color: { rgb: '222222' } },
-    right: { style: 'thin', color: { rgb: '222222' } },
-  };
-  const groupFills: Record<number, string> = {
-    0: '000000', 1: '72B9D2', 6: 'B5D37B', 11: 'F3B37E', 14: '8DC5DE',
-    18: 'D99397', 22: '999999', 26: '5B91C8', 30: '87C34F', 34: '555555', 38: 'F2A900'
-  };
-  const subFills: Record<number, string> = {
-    0: '000000', 1: 'B9DCE8', 6: 'D2E7BF', 11: 'F8D8C0', 14: 'C4E0EC',
-    18: 'EFC7CA', 22: 'CFCFCF', 26: 'C4D9EF', 30: 'D4E8C5', 34: '666666', 38: 'F2A900'
-  };
-  const dataFills = ['CCE5EE','CCE5EE','CCE5EE','CCE5EE','CCE5EE','D9E8C8','D9E8C8','D9E8C8','D9E8C8','D9E8C8','F8DFCA','F8DFCA','F8DFCA','D6EAF2','D6EAF2','D6EAF2','D6EAF2','F0D6D9','F0D6D9','F0D6D9','F0D6D9','D0D0D0','D0D0D0','D0D0D0','D0D0D0','C8DDF0','C8DDF0','C8DDF0','C8DDF0','D9EACB','D9EACB','D9EACB','D9EACB','666666','666666','666666','666666'];
-  const rowCount = excelRows.length;
-  for (let r = 0; r < rowCount; r++) {
-    for (let c = 0; c < 39; c++) {
-      const ref = XLSX.utils.encode_cell({ r, c });
-      const cell = ws[ref];
-      if (!cell) continue;
-      const isDate = excelRows[r][0] && c === 0 && merges.some(m => m.s.r === r && m.s.c === 0 && m.e.c === 38);
-      const isGroup = r >= 0 && excelRows[r][c] && r > 0 && excelRows[r - 1]?.[0] && merges.some(m => m.s.r === r && m.s.c === c);
-      const style: any = { alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border };
-      if (isDate) { style.fill = fill('FF0000'); style.font = { bold: true, color: { rgb: 'FFFFFF' }, sz: 14 }; }
-      else if (r > 0 && c in groupFills && [1,6,11,14,18,22,26,30,34,38].includes(c)) {
-        style.fill = fill(groupFills[c]); style.font = { bold: true, color: { rgb: c === 0 || c === 34 ? 'FFFFFF' : '000000' }, sz: 10 };
-      } else if (r > 0 && r < rowCount && excelRows[r][c] && r > 0 && Object.values(subFills).length) {
-        // Identify the sub-header rows by their known labels.
-        const labels = ['FTD','MTD','LMTD','ASP','Del%','MPO','%'];
-        if (labels.includes(String(excelRows[r][c]))) {
-          let start = c; while (start > 0 && !subFills[start]) start--;
-          style.fill = fill(subFills[start] || 'DCE7EC'); style.font = { bold: true, color: { rgb: start === 34 ? 'FFFFFF' : '000000' }, sz: 9 };
-        } else if (c === 0) {
-          style.fill = fill('000000'); style.font = { bold: true, color: { rgb: 'FFFFFF' }, sz: 9 };
-        } else {
-          style.fill = fill(dataFills[c - 1] || 'EDF4F7'); style.font = { sz: 9, bold: r % 7 === 3 };
-        }
-      } else if (c === 0) {
-        style.fill = fill(r % 7 === 3 ? '000000' : 'EF0000'); style.font = { bold: true, color: { rgb: 'FFFFFF' }, sz: 9 };
-      } else {
-        style.fill = fill(dataFills[c - 1] || 'EDF4F7'); style.font = { sz: 9, bold: r % 7 === 3 };
-      }
-      if (c === 38) { style.fill = fill('FFF200'); style.font = { bold: true, color: { rgb: '111111' }, sz: 10 }; }
-      ws[ref].s = style;
-    }
-  }
-  ws['!rows'] = excelRows.map((_, r) => ({ hpt: r === 0 ? 24 : 18 }));
 
   // Set Auto Column Widths
   ws['!cols'] = [
