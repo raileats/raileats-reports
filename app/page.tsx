@@ -1663,7 +1663,7 @@ export default function Page() {
       doc.setFontSize(12);
       doc.text('RELFOOD ENTERPRISE PORTAL - MAIN REPORT', marginX, 24);
 
-      const groups = [
+      const groups: { title: string; count: number; color: [number, number, number] }[] = [
         { title: 'ORDERS', count: 5, color: [114, 185, 210] },
         { title: 'MEALS', count: 5, color: [181, 211, 123] },
         { title: 'VALUE', count: 3, color: [243, 179, 126] },
