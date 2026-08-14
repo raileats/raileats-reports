@@ -1710,7 +1710,7 @@ export default function Page() {
       const sourceNames = ['RELFood_IRCTC','RELFood_WEBSITE','REL_Food_App','MakeMyTrip'];
       let firstBlock = true;
       mainReportBlocks.forEach((blk: any) => {
-        if (!firstBlock) doc.addPage('landscape', 'pt', 'a4');
+        if (!firstBlock) doc.addPage('a4', 'landscape');
         firstBlock = false;
         const dateY = 52;
         doc.setFillColor(255, 0, 0);
