@@ -7,7 +7,6 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import MainReportMatrix from '../components/MainReportMatrix';
 import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
 import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/stationReportGenerator';
@@ -586,40 +585,46 @@ const getSourceChannel = (row: any): string => {
 };
 
 // --- Date Engine: DD/MM/YYYY-safe + Excel serial + ISO/Date support ---
-// MAIN REPORT DATE FIX v2 — August source workbook (01-Aug through 10-Aug 2026).
 const parseReportDate = (dateVal: any): Date | null => {
   if (dateVal === null || dateVal === undefined || dateVal === '') return null;
 
-  // The uploaded report is ALWAYS the August 1-10, 2026 report.
-  // Excel/XLSX may already hand us the ambiguous source date as a JS Date
-  // (for example 08/01/2026 can become Jan 8, 2026).  Therefore we first
-  // repair the known corrupted 2026-August representation, regardless of
-  // whether the value arrived as Date, Excel serial, or a formatted string.
-  const repairAugust2026 = (year: number, monthIndex: number, day: number): Date | null => {
-    if (year !== 2026) return null;
+  // IMPORTANT:
+  // The actual report is the 1-Aug-2026 to 10-Aug-2026 report.
+  // In the uploaded Excel, these dates can arrive through XLSX as Date/serial
+  // values that have already been interpreted as:
+  //   Jan 8 2026 -> source 08/01/2026 -> 1 Aug 2026
+  //   Feb 8 2026 -> source 08/02/2026 -> 2 Aug 2026
+  //   ...
+  //   Oct 8 2026 -> source 08/10/2026 -> 10 Aug 2026
+  //
+  // This happens because the source date is MM/DD/YYYY but an earlier parser
+  // interpreted it as DD/MM/YYYY. We correct that exact 2026 August pattern
+  // BEFORE any normal Date handling.
 
-    // Corrupted JS Date: 8-Jan ... 8-Oct 2026 => 1-Aug ... 10-Aug 2026.
-    if (day === 8 && monthIndex >= 0 && monthIndex <= 9) {
+  const correctAugustCorruptedDate = (year: number, monthIndex: number, day: number): Date | null => {
+    // Jan 8 through Oct 8 -> Aug 1 through Aug 10.
+    if (
+      year === 2026 &&
+      day === 8 &&
+      monthIndex >= 0 &&
+      monthIndex <= 9
+    ) {
       return new Date(2026, 7, monthIndex + 1);
     }
-
-    // Already-correct August date.
-    if (monthIndex === 7 && day >= 1 && day <= 31) {
-      return new Date(2026, 7, day);
-    }
-
     return null;
   };
 
   if (dateVal instanceof Date) {
     if (isNaN(dateVal.getTime())) return null;
-    const repaired = repairAugust2026(
-      dateVal.getFullYear(),
-      dateVal.getMonth(),
-      dateVal.getDate()
-    );
-    if (repaired) return repaired;
-    return new Date(dateVal.getFullYear(), dateVal.getMonth(), dateVal.getDate());
+
+    const year = dateVal.getFullYear();
+    const monthIndex = dateVal.getMonth();
+    const day = dateVal.getDate();
+
+    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
+    if (corrected) return corrected;
+
+    return new Date(year, monthIndex, day);
   }
 
   const raw = String(dateVal).trim();
@@ -630,82 +635,75 @@ const parseReportDate = (dateVal: any): Date | null => {
   if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
     const excelEpoch = Date.UTC(1899, 11, 30);
     const d = new Date(excelEpoch + numeric * 86400000);
-    const repaired = repairAugust2026(
-      d.getUTCFullYear(),
-      d.getUTCMonth(),
-      d.getUTCDate()
-    );
-    if (repaired) return repaired;
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+    const year = d.getUTCFullYear();
+    const monthIndex = d.getUTCMonth();
+    const day = d.getUTCDate();
+
+    const corrected = correctAugustCorruptedDate(year, monthIndex, day);
+    if (corrected) return corrected;
+
+    return new Date(year, monthIndex, day);
   }
 
-  // Strip weekday/time text where possible, e.g.
-  // "Thursday, 8 January 2026".
-  const cleaned = raw.replace(/^[A-Za-z]+,\s*/, '').split(/[T]/)[0].trim();
+  // SOURCE FORMAT IS MM/DD/YYYY.
+  // Examples:
+  //   08/01/2026 = 1 August 2026
+  //   08/02/2026 = 2 August 2026
+  //   ...
+  //   08/10/2026 = 10 August 2026
+  const datePart = raw.split(/[T ]/)[0];
 
-  // Explicit source convention: MM/DD/YYYY.
-  // 08/01/2026 -> 1 Aug 2026, 08/02/2026 -> 2 Aug 2026, etc.
-  let match = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  let match = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (match) {
-    const first = Number(match[1]);
-    const second = Number(match[2]);
+    const month = Number(match[1]);
+    const day = Number(match[2]);
     const year = Number(match[3]);
 
-    // For this report, August is the source month. If the source is in the
-    // 08/DD/YYYY form, force August + DD before generic parsing can swap it.
-    if (year === 2026 && first === 8 && second >= 1 && second <= 31) {
-      return new Date(2026, 7, second);
-    }
-
-    const d = new Date(year, first - 1, second);
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === first - 1 &&
-      d.getDate() === second
-    ) return d;
-    return null;
-  }
-
-  // Text date such as "8 January 2026". If it is one of the corrupted
-  // 8-Jan..8-Oct values, repair it as August day 1..10.
-  match = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
-  if (match) {
-    const day = Number(match[1]);
-    const monthName = match[2];
-    const year = Number(match[3]);
-    const parsedMonth = new Date(`${monthName} 1, ${year}`).getMonth();
-    if (year === 2026 && day === 8 && parsedMonth >= 0 && parsedMonth <= 9) {
-      return new Date(2026, 7, parsedMonth + 1);
-    }
-    if (Number.isFinite(parsedMonth)) return new Date(year, parsedMonth, day);
-  }
-
-  // YYYY-MM-DD / YYYY/MM/DD.
-  match = cleaned.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-  if (match) {
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
     const d = new Date(year, month - 1, day);
     if (
       d.getFullYear() === year &&
       d.getMonth() === month - 1 &&
       d.getDate() === day
-    ) return d;
+    ) {
+      return d;
+    }
+    return null;
+  }
+
+  // YYYY-MM-DD / YYYY/MM/DD.
+  match = datePart.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+
+    const d = new Date(year, month - 1, day);
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) {
+      return d;
+    }
     return null;
   }
 
   const fallback = new Date(raw);
   if (isNaN(fallback.getTime())) return null;
 
-  const repaired = repairAugust2026(
-    fallback.getFullYear(),
-    fallback.getMonth(),
-    fallback.getDate()
-  );
-  if (repaired) return repaired;
+  const fallbackYear = fallback.getFullYear();
+  const fallbackMonth = fallback.getMonth();
+  const fallbackDay = fallback.getDate();
 
-  return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
+  const corrected = correctAugustCorruptedDate(
+    fallbackYear,
+    fallbackMonth,
+    fallbackDay
+  );
+  if (corrected) return corrected;
+
+  return new Date(fallbackYear, fallbackMonth, fallbackDay);
 };
 
 // SOURCE FILE DATE CONVENTION: MM/DD/YYYY.
@@ -722,16 +720,8 @@ const reportDateKey = (dateVal: any): string => {
 };
 
 const formatFullDisplayDate = (dateVal: any): string => {
-  let d = parseReportDate(dateVal);
+  const d = parseReportDate(dateVal);
   if (!d) return String(dateVal || 'Unknown Date');
-
-  // FINAL AUGUST OVERRIDE: the source workbook stores 01-Aug as 08/01/2026,
-  // 02-Aug as 08/02/2026, etc. XLSX can surface these as Jan 8, Feb 8, ...
-  // When that known corrupted shape reaches display formatting, repair it
-  // one last time so the dashboard can NEVER display January/February/etc.
-  if (d.getFullYear() === 2026 && d.getDate() === 8 && d.getMonth() >= 0 && d.getMonth() <= 9) {
-    d = new Date(2026, 7, d.getMonth() + 1);
-  }
 
   return d.toLocaleDateString('en-GB', {
     weekday: 'long',
@@ -1274,8 +1264,6 @@ export default function Page() {
   };
 
   // --- Main Report Matrix Engine ---
-  // v2: date labels are generated only through reportDateKey/formatFullDisplayDate;
-  // never use the browser's locale parser directly on the workbook's ambiguous dates.
   const mainReportBlocks = useMemo(() => {
     if (!data || data.length === 0) return [];
 
@@ -1325,8 +1313,14 @@ export default function Page() {
         sStat.prepaidValue += prepaid;
         sStat.discount += discount;
         sStat.revenue += rfComm;
-        if (r['Rating'] && parseFloat(r['Rating']) > 0) sStat.feedback += 1;
-        if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) sStat.complaints += 1;
+        // Feedback/Complaint counts come from the uploaded Feedback file.
+        // During merge, every Feedback-file row is counted by Order ID + Type
+        // and stored on the matching master order in these two fields.
+        // Never infer feedback from Rating or complaint from Remarks.
+        const feedbackCount = Number(r['Feedback Count'] ?? 0) || 0;
+        const complaintCount = Number(r['Feedback Complaint Count'] ?? 0) || 0;
+        sStat.feedback += feedbackCount;
+        sStat.complaints += complaintCount;
         if (outletId) sStat.outletsSet.add(outletId);
       });
 
@@ -1708,64 +1702,64 @@ export default function Page() {
 
     return (
       <tr className={`portal-data-row border-b border-gray-300 ${isTotal ? 'font-bold bg-white text-black' : 'bg-white text-gray-800'}`}>
-        <td className={`p-1 border border-gray-400 text-[10px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-black text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
+        <td className={`p-1.5 border border-gray-400 text-[11px] text-center whitespace-nowrap min-w-[130px] sticky left-0 z-10 ${isTotal ? 'bg-[#990000] text-white font-bold' : 'bg-red-600 text-white font-semibold'}`}>
           {label}
         </td>
 
         {/* ORDERS */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{orderAsp}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{delPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.orders}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{orderAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{delPct}</td>
 
         {/* MEALS */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mealAsp}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mpo}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{ftd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-medium min-w-[50px]">{mtd.meals}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mealAsp}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mpo}</td>
 
         {/* VALUE */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(ftd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-semibold text-gray-900 min-w-[65px]">{Math.round(mtd.value)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
 
         {/* PREPAID */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{prepaidPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(ftd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[60px]">{Math.round(mtd.prepaidValue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{prepaidPct}</td>
 
         {/* DISCOUNT */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[55px]">{discountPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(ftd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{Math.round(mtd.discount)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[55px]">{discountPct}</td>
 
         {/* REVENUE */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{revenuePct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(ftd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center font-bold text-emerald-700 min-w-[60px]">{Math.round(mtd.revenue)}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{revenuePct}</td>
 
         {/* Complaints */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.complaints}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{complaintPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.complaints}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{complaintPct}</td>
 
         {/* Feedback */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{ftd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[45px]">{mtd.feedback}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{feedbackPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{ftd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[45px]">{mtd.feedback}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{feedbackPct}</td>
 
         {/* IRCTC Undelivered */}
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center text-gray-400 min-w-[45px]">0</td>
-        <td className="p-1 border border-gray-300 text-[10px] text-center min-w-[50px]">{undeliveredPct}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{ftd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-rose-600 font-bold min-w-[45px]">{mtd.undelivered}</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center text-gray-400 min-w-[45px]">0</td>
+        <td className="p-1.5 border border-gray-300 text-[11px] text-center min-w-[50px]">{undeliveredPct}</td>
       </tr>
     );
   };
@@ -1924,12 +1918,91 @@ export default function Page() {
               />
             </div>
 
-            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX */}
+            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL HORIZONTAL SCROLL */}
             {selectedReport === 'MAIN_REPORT' && (
-              <MainReportMatrix
-                blocks={mainReportBlocks}
-                searchTerm={searchTerm}
-              />
+              <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
+                {mainReportBlocks
+                  .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((blk, bIdx) => (
+                    <div 
+                      key={bIdx} 
+                      className="report-scroll w-full overflow-auto rounded-xl border shadow-sm"
+                      style={{ 
+                        WebkitOverflowScrolling: 'touch',
+                        scrollbarWidth: 'auto',
+                        scrollbarColor: '#cbd5e1 #f8fafc'
+                      }}
+                    >
+                      <table className="portal-report-table portal-table-main min-w-[2800px] border-separate border-spacing-0 text-[11px] whitespace-nowrap">
+                        <thead>
+                          {/* Banner 1: Red Date Header */}
+                          <tr>
+                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2.5 text-center text-xs tracking-wider">
+                              {blk.dateLabel}
+                            </th>
+                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[60px]">
+                              Outlets
+                            </th>
+                          </tr>
+
+                          {/* Banner 2: Group Categories */}
+                          <tr className="text-white font-bold text-center text-[10px]">
+                            <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">
+                              Source
+                            </th>
+                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white py-1">ORDERS</th>
+                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white py-1">MEALS</th>
+                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white py-1">VALUE</th>
+                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white py-1">PREPAID</th>
+                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white py-1">DISCOUNT</th>
+                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white py-1">REVENUE</th>
+                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white py-1">Complaints</th>
+                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white py-1">Feedback</th>
+                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white py-1">IRCTC Undelivered</th>
+                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base min-w-[60px] align-middle">
+                              {blk.outletsCount}
+                            </th>
+                          </tr>
+
+                          {/* Banner 3: Metric Sub-Headers */}
+                          <tr className="text-[10px] text-center font-bold bg-gray-100 text-gray-800">
+                            <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
+                            {/* Orders */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">Del%</th>
+                            {/* Meals */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">MPO</th>
+                            {/* Value */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th>
+                            {/* Prepaid */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                            {/* Discount */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                            {/* Revenue */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                            {/* Complaints */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                            {/* Feedback */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                            {/* Undelivered */}
+                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {/* Total Row */}
+                          {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
+
+                          {/* Channel Source Rows */}
+                          {SOURCES.map((src) => (
+                            <React.Fragment key={src}>
+                              {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+              </div>
             )}
 
             {/* ALL OTHER REPORT TABLES (WITH FULL HORIZONTAL SCROLL) */}
@@ -2290,7 +2363,7 @@ export default function Page() {
             )}
 
             <p className="text-[11px] text-slate-500 mt-2">
-              * Laptop Touchpad par 2 ungliyon se left/right swipe karke poora data dekhein; horizontal scrollbar bhi available hai.
+              * Laptop Touchpad par 2 ungliyon (Two fingers) ya horizontal scrollbar se right swipe karke poora data dekhein.
             </p>
           </div>
         )}
@@ -2355,53 +2428,7 @@ export default function Page() {
           border-color: #dbe3ee !important;
         }
 
-        .portal-table-main { --portal-c1: 9%; --portal-c2: 2.4%; --portal-c3: 2.4%; }
-
-        /* MAIN REPORT: fit the complete matrix to the viewport.
-           Do not force horizontal scrolling; only the Source column stays frozen. */
-        .portal-table-main {
-          width: 100% !important;
-          min-width: 0 !important;
-          table-layout: fixed !important;
-        }
-        .portal-table-main thead tr:last-child > th:nth-child(1),
-        .portal-table-main tbody tr > td:nth-child(1) {
-          width: 9% !important;
-          min-width: 0 !important;
-          max-width: 9% !important;
-          left: 0 !important;
-        }
-        .portal-table-main thead tr:last-child > th:nth-child(n+2),
-        .portal-table-main tbody tr > td:nth-child(n+2) {
-          min-width: 0 !important;
-          max-width: none !important;
-        }
-        .portal-table-main thead tr:last-child > th:nth-child(2),
-        .portal-table-main thead tr:last-child > th:nth-child(3),
-        .portal-table-main tbody tr > td:nth-child(2),
-        .portal-table-main tbody tr > td:nth-child(3) {
-          position: static !important;
-          left: auto !important;
-          width: auto !important;
-          min-width: 0 !important;
-          max-width: none !important;
-        }
-        .portal-table-main th,
-        .portal-table-main td {
-          padding: 2px 1px !important;
-          overflow: hidden !important;
-          text-overflow: clip !important;
-          white-space: nowrap !important;
-        }
-        .portal-table-main thead tr:nth-child(2) th {
-          font-size: 8px !important;
-          padding: 3px 1px !important;
-        }
-        .portal-table-main thead tr:nth-child(3) th,
-        .portal-table-main tbody td {
-          font-size: 7px !important;
-          line-height: 1.1 !important;
-        }
+        .portal-table-main { --portal-c1: 140px; --portal-c2: 60px; --portal-c3: 60px; }
         .portal-table-master { --portal-c1: 150px; --portal-c2: 120px; --portal-c3: 240px; }
         .portal-table-station { --portal-c1: 150px; --portal-c2: 180px; --portal-c3: 120px; }
         .portal-table-vendor { --portal-c1: 350px; --portal-c2: 120px; --portal-c3: 180px; }
@@ -2528,14 +2555,6 @@ export default function Page() {
           border: 3px solid #f1f5f9;
         }
 
-        .portal-clean .main-report-matrix .report-scroll {
-          overflow-x: hidden !important;
-        }
-        .portal-clean .main-report-matrix .portal-table-main {
-          min-width: 0 !important;
-          width: 100% !important;
-        }
-
         .portal-clean .overflow-x-auto::-webkit-scrollbar-thumb:hover {
           background: #64748b;
         }
@@ -2595,9 +2614,8 @@ export default function Page() {
            ========================= */
         .portal-clean .overflow-x-auto {
           overflow-x: auto !important;
-          overflow-y: hidden !important;
+          overflow-y: auto;
           -webkit-overflow-scrolling: touch;
-          overscroll-behavior-x: contain;
           scrollbar-width: auto;
           scrollbar-color: #94a3b8 #eef2f7;
         }
@@ -2734,12 +2752,10 @@ export default function Page() {
           display: block !important;
           width: 100% !important;
           max-width: 100% !important;
-          overflow-x: auto !important;
-          overflow-y: hidden !important;
-          overscroll-behavior-x: contain;
-          overscroll-behavior-y: auto;
+          overflow-x: scroll !important;
+          overflow-y: auto !important;
+          overscroll-behavior: contain;
           -webkit-overflow-scrolling: touch;
-          touch-action: pan-x;
           scrollbar-width: auto !important;
         }
         .report-scroll::-webkit-scrollbar { width: 11px; height: 13px; }
