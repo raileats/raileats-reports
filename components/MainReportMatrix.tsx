@@ -9,9 +9,6 @@ interface MainReportMatrixProps {
 
 const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
-const cell = 'mr-cell';
-const headCell = 'mr-subhead';
-
 export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatrixProps) {
   const renderMainReportRow = (label: string, ftd: any, mtd: any, isTotal = false) => {
     const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
@@ -21,363 +18,209 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
     const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
     const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
     const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
-    const complaintPct = '0.00%';
-    const feedbackPct = '0.00%';
+    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
+    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
     const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
 
     return (
-      <tr className={`mr-data-row ${isTotal ? 'mr-total-row' : 'mr-source-row'}`}>
-        <td className={`mr-source-cell ${isTotal ? 'mr-total-label' : ''}`}>{label}</td>
+      <tr className={`portal-data-row main-matrix-row ${isTotal ? 'is-total' : ''}`}>
+        <td className={`main-matrix-source ${isTotal ? 'is-total-source' : 'is-source'}`}>
+          {label}
+        </td>
 
-        <td className={cell}>{ftd.orders}</td><td className={cell}>{mtd.orders}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{orderAsp}</td><td className={cell}>{delPct}</td>
-        <td className={cell}>{ftd.meals}</td><td className={cell}>{mtd.meals}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{mealAsp}</td><td className={cell}>{mpo}</td>
-        <td className={`${cell} mr-value-number`}>{Math.round(ftd.value)}</td><td className={`${cell} mr-value-number`}>{Math.round(mtd.value)}</td><td className={`${cell} mr-muted`}>0</td>
-        <td className={cell}>{Math.round(ftd.prepaidValue)}</td><td className={cell}>{Math.round(mtd.prepaidValue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{prepaidPct}</td>
-        <td className={cell}>{Math.round(ftd.discount)}</td><td className={cell}>{Math.round(mtd.discount)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{discountPct}</td>
-        <td className={`${cell} mr-revenue-number`}>{Math.round(ftd.revenue)}</td><td className={`${cell} mr-revenue-number`}>{Math.round(mtd.revenue)}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{revenuePct}</td>
-        <td className={cell}>{ftd.complaints}</td><td className={cell}>{mtd.complaints}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{complaintPct}</td>
-        <td className={cell}>{ftd.feedback}</td><td className={cell}>{mtd.feedback}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{feedbackPct}</td>
-        <td className={`${cell} mr-undelivered-number`}>{ftd.undelivered}</td><td className={`${cell} mr-undelivered-number`}>{mtd.undelivered}</td><td className={`${cell} mr-muted`}>0</td><td className={cell}>{undeliveredPct}</td>
-        <td className="mr-outlet-cell">{ftd.outletsSet?.size ?? 0}</td>
+        <td className="main-matrix-cell">{ftd.orders}</td>
+        <td className="main-matrix-cell">{mtd.orders}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{orderAsp}</td>
+        <td className="main-matrix-cell">{delPct}</td>
+
+        <td className="main-matrix-cell">{ftd.meals}</td>
+        <td className="main-matrix-cell">{mtd.meals}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{mealAsp}</td>
+        <td className="main-matrix-cell">{mpo}</td>
+
+        <td className="main-matrix-cell">{Math.round(ftd.value)}</td>
+        <td className="main-matrix-cell">{Math.round(mtd.value)}</td>
+        <td className="main-matrix-cell">0</td>
+
+        <td className="main-matrix-cell">{Math.round(ftd.prepaidValue)}</td>
+        <td className="main-matrix-cell">{Math.round(mtd.prepaidValue)}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{prepaidPct}</td>
+
+        <td className="main-matrix-cell">{Math.round(ftd.discount)}</td>
+        <td className="main-matrix-cell">{Math.round(mtd.discount)}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{discountPct}</td>
+
+        <td className="main-matrix-cell">{Math.round(ftd.revenue)}</td>
+        <td className="main-matrix-cell">{Math.round(mtd.revenue)}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{revenuePct}</td>
+
+        <td className="main-matrix-cell">{ftd.complaints}</td>
+        <td className="main-matrix-cell">{mtd.complaints}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{complaintPct}</td>
+
+        <td className="main-matrix-cell">{ftd.feedback}</td>
+        <td className="main-matrix-cell">{mtd.feedback}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{feedbackPct}</td>
+
+        <td className="main-matrix-cell">{ftd.undelivered}</td>
+        <td className="main-matrix-cell">{mtd.undelivered}</td>
+        <td className="main-matrix-cell">0</td>
+        <td className="main-matrix-cell">{undeliveredPct}</td>
       </tr>
     );
   };
 
   const q = searchTerm.trim().toLowerCase();
-  const filteredBlocks = blocks.filter((blk) =>
-    String(blk.dateLabel || '').toLowerCase().includes(q)
-  );
-
-  const subHeaders = [
-    'FTD','MTD','LMTD','ASP','Del%',
-    'FTD','MTD','LMTD','ASP','MPO',
-    'FTD','MTD','LMTD',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-    'FTD','MTD','LMTD','%',
-  ];
+  const filteredBlocks = blocks.filter((blk) => String(blk.dateLabel || '').toLowerCase().includes(q));
 
   return (
-    <>
+    <div className="main-report-matrix space-y-3 max-h-[78vh] overflow-y-auto pr-0">
       <style jsx global>{`
+        .main-report-block {
+          width: 100% !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+          background: #fff !important;
+          border: 1px solid #9aa4b2 !important;
+          border-radius: 8px !important;
+        }
+        .main-report-fit {
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: 100% !important;
+          table-layout: fixed !important;
+          border-collapse: collapse !important;
+          font-size: 9px !important;
+        }
+        .main-report-fit th, .main-report-fit td {
+          box-sizing: border-box !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          padding: 2px 3px !important;
+          height: 18px !important;
+          line-height: 1 !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: clip !important;
+          border: 1px solid #9ca3af !important;
+          text-align: center !important;
+        }
+        .main-report-fit th:first-child, .main-report-fit td:first-child { width: 5.7% !important; }
+        .main-report-fit th:nth-child(39), .main-report-fit td:nth-child(39) { width: 2.8% !important; }
+        .main-report-fit th:not(:first-child):not(:nth-child(39)), .main-report-fit td:not(:first-child):not(:nth-child(39)) { width: 2.41% !important; }
 
-/* Main Report Matrix — Excel-style compact colours */
-.main-report-matrix {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: hidden !important;
-  overflow-y: auto;
-  box-sizing: border-box;
-  background: #fff !important;
-}
+        .main-date-banner {
+          background: #ff0000 !important; color: #fff !important; border-color: #ff0000 !important;
+          height: 25px !important; padding: 3px !important; font-size: 13px !important;
+          font-weight: 900 !important; text-align: center !important;
+        }
+        .main-date-outlets {
+          background: #ff0000 !important; color:#fff !important; border-color:#ff0000 !important;
+          font-size:9px !important; font-weight:900 !important;
+        }
+        .main-group-source { background:#000 !important; color:#fff !important; font-weight:900 !important; }
+        .main-group-orders { background:#5da0dc !important; color:#fff !important; }
+        .main-group-meals { background:#78b778 !important; color:#fff !important; }
+        .main-group-value { background:#f2a879 !important; color:#fff !important; }
+        .main-group-prepaid { background:#7db4db !important; color:#fff !important; }
+        .main-group-discount { background:#e5989b !important; color:#fff !important; }
+        .main-group-revenue { background:#7f7f7f !important; color:#fff !important; }
+        .main-group-complaints { background:#5f95cf !important; color:#fff !important; }
+        .main-group-feedback { background:#8bc05d !important; color:#fff !important; }
+        .main-group-undelivered { background:#333 !important; color:#fff !important; }
+        .main-group-outlets { background:#ffff00 !important; color:#111 !important; font-weight:900 !important; }
 
-.mr-date-block {
-  width: 100%;
-  margin: 0 0 12px 0;
-  overflow: hidden;
-  background: #fff !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
+        .main-subheaders { background:#eef2f5 !important; color:#111827 !important; font-size:8px !important; font-weight:900 !important; }
+        .main-sub-source { background:#c9dbe7 !important; color:#111827 !important; font-weight:900 !important; }
+        .main-sub-cell { font-size:8px !important; font-weight:900 !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+2):nth-child(-n+6) { background:#b9dcec !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+7):nth-child(-n+11) { background:#d2e8c1 !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+12):nth-child(-n+14) { background:#f9d2b9 !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+15):nth-child(-n+18) { background:#c5e0ef !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+19):nth-child(-n+22) { background:#f1c5c8 !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+23):nth-child(-n+26) { background:#d0d0d0 !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+27):nth-child(-n+30) { background:#c5d9ee !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+31):nth-child(-n+34) { background:#d2e8bf !important; }
+        .main-subheaders .main-sub-cell:nth-child(n+35):nth-child(-n+38) { background:#777 !important; color:#fff !important; }
 
-.mr-table {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  table-layout: fixed !important;
-  border-collapse: collapse !important;
-  border-spacing: 0 !important;
-  font-size: 9px !important;
-  line-height: 1 !important;
-  color: #000 !important;
-}
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+2):nth-child(-n+6) { background:#d9edf7 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+7):nth-child(-n+11) { background:#e3f0d5 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+12):nth-child(-n+14) { background:#fce4d6 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+15):nth-child(-n+18) { background:#d9edf7 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+19):nth-child(-n+22) { background:#f4d7d9 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+23):nth-child(-n+26) { background:#d9d9d9 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+27):nth-child(-n+30) { background:#cfe2f3 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+31):nth-child(-n+34) { background:#d9ead3 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(n+35):nth-child(-n+38) { background:#666 !important; color:#fff !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(39) { background:#ffff00 !important; color:#111 !important; font-weight:900 !important; }
 
-.mr-table th,
-.mr-table td {
-  box-sizing: border-box !important;
-  border: 1px solid #222 !important;
-  padding: 2px 1px !important;
-  height: 14px !important;
-  min-width: 0 !important;
-  max-width: 100% !important;
-  overflow: hidden !important;
-  text-overflow: clip !important;
-  white-space: nowrap !important;
-  text-align: center !important;
-  vertical-align: middle !important;
-}
+        .main-report-fit tbody .main-matrix-row .main-matrix-source {
+          position: sticky !important; left: 0 !important; z-index: 6 !important;
+          width:5.7% !important; color:#fff !important; font-weight:900 !important;
+        }
+        .main-report-fit tbody .main-matrix-row .is-total-source { background:#000 !important; }
+        .main-report-fit tbody .main-matrix-row .is-source { background:#ff0000 !important; }
+        .main-report-fit tbody .main-matrix-row td { color:#111827; font-weight:600; }
+        .main-report-fit tbody .main-matrix-row.is-total td { font-weight:900 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(25),
+        .main-report-fit tbody .main-matrix-row td:nth-child(26) { color:#047857 !important; font-weight:900 !important; }
+        .main-report-fit tbody .main-matrix-row td:nth-child(35),
+        .main-report-fit tbody .main-matrix-row td:nth-child(36) { color:#ff3b3b !important; font-weight:900 !important; }
+        .main-report-fit tbody .main-matrix-row:hover td { filter: brightness(0.97); }
+        .main-report-fit thead th { position:static !important; }
+        .main-report-fit thead tr:first-child th { position:static !important; }
+        .main-report-fit thead tr:nth-child(2) th:first-child,
+        .main-report-fit thead tr:nth-child(3) th:first-child { position:sticky !important; left:0 !important; z-index:9 !important; }
+      `}</style>
 
-/* Column sizing: source + 37 metric columns + outlets */
-.mr-source-col { width: 7% !important; }
-.mr-data-col { width: 2.43% !important; }
-.mr-outlet-col { width: 2.34% !important; }
-
-/* Excel-like red date strip */
-.mr-date-header {
-  background: #ff0000 !important;
-  color: #fff !important;
-  border: 0 !important;
-  height: 24px !important;
-  padding: 3px 4px !important;
-  font-size: 13px !important;
-  font-weight: 800 !important;
-  text-align: center !important;
-}
-
-/* Group colours copied from the supplied Excel reference */
-.mr-source-header {
-  background: #000 !important;
-  color: #fff !important;
-  font-weight: 800 !important;
-}
-
-.mr-orders {
-  background: #77bdd6 !important;
-  color: #000 !important;
-}
-
-.mr-meals {
-  background: #b6d67a !important;
-  color: #000 !important;
-}
-
-.mr-value {
-  background: #f6bd8f !important;
-  color: #000 !important;
-}
-
-.mr-prepaid {
-  background: #8fc5df !important;
-  color: #000 !important;
-}
-
-.mr-discount {
-  background: #d98f93 !important;
-  color: #000 !important;
-}
-
-.mr-revenue {
-  background: #9a9a9a !important;
-  color: #000 !important;
-}
-
-.mr-complaints {
-  background: #5b8fc8 !important;
-  color: #000 !important;
-}
-
-.mr-feedback {
-  background: #86c445 !important;
-  color: #000 !important;
-}
-
-.mr-undelivered {
-  background: #555 !important;
-  color: #fff !important;
-}
-
-.mr-outlets-header {
-  background: #f2a900 !important;
-  color: #fff !important;
-}
-
-.mr-sub-header th {
-  background: #e8eef2 !important;
-  color: #000 !important;
-  font-weight: 800 !important;
-  height: 16px !important;
-}
-
-.mr-sub-source {
-  background: #000 !important;
-}
-
-/* Body matches Excel: very light cells, red source rows */
-.mr-data-row td {
-  background: #edf4f7 !important;
-  color: #000 !important;
-  font-weight: 400 !important;
-}
-
-.mr-data-row.mr-total-row td {
-  background: #eef4f7 !important;
-  color: #000 !important;
-  font-weight: 800 !important;
-}
-
-.mr-source-cell {
-  background: #ef0000 !important;
-  color: #fff !important;
-  font-weight: 800 !important;
-  text-align: left !important;
-  padding-left: 3px !important;
-}
-
-.mr-total-label {
-  background: #000 !important;
-  color: #fff !important;
-  text-align: left !important;
-}
-
-.mr-muted {
-  color: #333 !important;
-}
-
-.mr-value-number {
-  background: #f8e2d1 !important;
-}
-
-.mr-revenue-number {
-  color: #008c69 !important;
-  font-weight: 800 !important;
-}
-
-.mr-undelivered-number {
-  background: #555 !important;
-  color: #fff !important;
-}
-
-.mr-outlet-cell {
-  background: #fff200 !important;
-  color: #000 !important;
-  font-weight: 900 !important;
-  border-color: #222 !important;
-}
-
-/* Keep source column visually fixed without forcing horizontal scroll. */
-.mr-source-cell,
-.mr-source-header,
-.mr-sub-source {
-  position: sticky !important;
-  left: 0 !important;
-  z-index: 10 !important;
-}
-
-.mr-source-header,
-.mr-sub-source {
-  z-index: 20 !important;
-}
-
-/* Make the whole matrix fit the viewport, matching the supplied compact Excel view. */
-@media (max-width: 1400px) {
-  .mr-table {
-    font-size: 8px !important;
-  }
-
-  .mr-table th,
-  .mr-table td {
-    height: 13px !important;
-    padding: 1px !important;
-  }
-
-  .mr-date-header {
-    font-size: 11px !important;
-    height: 21px !important;
-  }
-}
-
-@media (max-width: 1000px) {
-  .mr-table {
-    font-size: 5px !important;
-  }
-
-  .mr-date-header {
-    font-size: 10px !important;
-  }
-}
-
-
-      
-/* Final one-view readable matrix */
-.main-report-matrix,
-.main-report-matrix .mr-day-block,
-.main-report-matrix .mr-table-wrap {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  overflow-x: hidden !important;
-}
-
-.main-report-matrix table {
-  width: 100% !important;
-  min-width: 0 !important;
-  table-layout: fixed !important;
-  border-collapse: collapse !important;
-}
-
-.main-report-matrix th,
-.main-report-matrix td {
-  font-size: 10px !important;
-  line-height: 1.15 !important;
-  padding: 3px 2px !important;
-  white-space: nowrap !important;
-  overflow: hidden !important;
-  text-overflow: clip !important;
-}
-
-.main-report-matrix .mr-date-title {
-  font-size: 18px !important;
-  line-height: 1.2 !important;
-}
-
-.main-report-matrix .mr-source-col {
-  width: 8% !important;
-}
-
-.main-report-matrix .mr-data-col {
-  width: 2.34% !important;
-}
-
-.main-report-matrix .mr-outlet-col {
-  width: 2.34% !important;
-}
-`}</style>
-      <div className="main-report-matrix">
       {filteredBlocks.map((blk, bIdx) => (
         <div
           key={`${blk.rawDate || blk.dateLabel}-${bIdx}`}
-          className="mr-date-block"
+          className="main-report-block w-full overflow-hidden rounded-xl border shadow-sm"
         >
-          <table className="portal-report-table portal-table-main mr-table">
-            <colgroup>
-              <col className="mr-source-col" />
-              {Array.from({ length: 37 }).map((_, i) => <col key={i} className="mr-data-col" />)}
-              <col className="mr-outlet-col" />
-            </colgroup>
-
+          <table className="portal-report-table portal-table-main border-separate border-spacing-0 text-[10px] whitespace-nowrap">
             <thead>
               <tr>
-                <th colSpan={39} className="mr-date-header">
+                <th colSpan={38} className="main-date-banner">
                   {blk.dateLabel}
                 </th>
+                <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold">Outlets</th>
               </tr>
 
-              <tr className="mr-group-header">
-                <th className="mr-source-header">Source</th>
-                <th colSpan={5} className="mr-orders">ORDERS</th>
-                <th colSpan={5} className="mr-meals">MEALS</th>
-                <th colSpan={3} className="mr-value">VALUE</th>
-                <th colSpan={4} className="mr-prepaid">PREPAID</th>
-                <th colSpan={4} className="mr-discount">DISCOUNT</th>
-                <th colSpan={4} className="mr-revenue">REVENUE</th>
-                <th colSpan={4} className="mr-complaints">Complaints</th>
-                <th colSpan={4} className="mr-feedback">Feedback</th>
-                <th colSpan={4} className="mr-undelivered">IRCTC Undelivered</th>
-                <th className="mr-outlets-header">Outlets</th>
+              <tr className="text-white font-bold text-center text-[10px]">
+                <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">Source</th>
+                <th colSpan={5} className="main-group-orders">ORDERS</th>
+                <th colSpan={5} className="main-group-meals">MEALS</th>
+                <th colSpan={3} className="main-group-value">VALUE</th>
+                <th colSpan={4} className="main-group-prepaid">PREPAID</th>
+                <th colSpan={4} className="main-group-discount">DISCOUNT</th>
+                <th colSpan={4} className="main-group-revenue">REVENUE</th>
+                <th colSpan={4} className="main-group-complaints">Complaints</th>
+                <th colSpan={4} className="main-group-feedback">Feedback</th>
+                <th colSpan={4} className="main-group-undelivered">IRCTC Undelivered</th>
+                <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base align-middle">{blk.outletsCount}</th>
               </tr>
 
-              <tr className="mr-sub-header">
-                <th className="mr-sub-source"></th>
-                {subHeaders.map((x, i) => (
-                  <th key={i} className={headCell}>{x}</th>
-                ))}
+              <tr className="main-subheaders">
+                <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">ASP</th><th className="main-sub-cell">Del%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">ASP</th><th className="main-sub-cell">MPO</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
               </tr>
             </thead>
-
             <tbody>
               {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
               {SOURCES.map((src) => (
@@ -389,7 +232,6 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
           </table>
         </div>
       ))}
-      </div>
-    </>
+    </div>
   );
 }
