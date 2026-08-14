@@ -17,7 +17,7 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
   const q = searchTerm.trim().toLowerCase();
   const filteredBlocks = blocks.filter((b) => String(b.dateLabel || '').toLowerCase().includes(q));
 
-  const row = (label: string, ftd: any, mtd: any, total = false) => {
+  const row = (label: string, ftd: any, mtd: any, total = false, outletCount = 0) => {
     const orderAsp = n(ftd.orders) > 0 ? round(n(ftd.value) / n(ftd.orders)) : 0;
     const mealAsp = n(ftd.meals) > 0 ? round(n(ftd.value) / n(ftd.meals)) : 0;
     const mpo = n(ftd.orders) > 0 ? (n(ftd.meals) / n(ftd.orders)).toFixed(2) : '0.00';
@@ -44,7 +44,9 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
       <tr className={total ? 'mr-total-row' : ''}>
         <td className={total ? 'mr-total-label' : 'mr-source-cell'}>{label}</td>
         {values.map((v, i) => <td key={i} className={`mr-data-cell mr-group-${i}`}>{v}</td>)}
-        <td className="mr-outlet-empty">0</td>
+        {total && (
+          <td rowSpan={5} className="mr-outlet-empty">{outletCount}</td>
+        )}
       </tr>
     );
   };
@@ -105,7 +107,7 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
               </tr>
             </thead>
             <tbody>
-              {row('Total', blk.dayTotal, blk.mtdTotal, true)}
+              {row('Total', blk.dayTotal, blk.mtdTotal, true, Number(blk.outletsCount || 0))}
               {SOURCES.map(src => row(src, blk.dayStats[src] || {}, blk.mtdBySource[src] || {}, false))}
             </tbody>
           </table>
