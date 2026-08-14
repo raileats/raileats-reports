@@ -196,7 +196,14 @@ export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[
         const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
         const prepaid = parseFloat(r['PPD'] || 0) || 0;
         const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
-        const outletId = String(r['Outlet ID'] || '').trim();
+        const outletId = cleanOutletId(
+          r['Outlet Id'] ??
+          r['Outlet ID'] ??
+          r['OutletId'] ??
+          r['Aggregator Outlet ID'] ??
+          r['Aggregator Outlet Id'] ??
+          ''
+        );
 
         stats.orders += 1;
         if (isDelivered) stats.deliveredOrders += 1;

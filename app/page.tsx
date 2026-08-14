@@ -1395,7 +1395,14 @@ export default function Page() {
         const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
         const prepaid = parseFloat(r['PPD'] || 0) || 0;
         const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
-        const outletId = String(r['Outlet ID'] || '').trim();
+        const outletId = cleanOutletId(
+          r['Outlet Id'] ??
+          r['Outlet ID'] ??
+          r['OutletId'] ??
+          r['Aggregator Outlet ID'] ??
+          r['Aggregator Outlet Id'] ??
+          ''
+        );
 
         const sStat = dayStats[src] || dayStats['RELFood_IRCTC'];
         sStat.orders += 1;
