@@ -14,6 +14,7 @@ import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vend
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
 import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
+import MainReportMatrix from '@/components/MainReportMatrix';
 
 // --- Native IndexedDB Storage Engine ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -2012,91 +2013,9 @@ export default function Page() {
               />
             </div>
 
-            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL HORIZONTAL SCROLL */}
+            {/* MAIN REPORT: DATE-WISE EXCEL-STYLE MATRIX — FITS ENTIRE VIEW */}
             {selectedReport === 'MAIN_REPORT' && (
-              <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
-                {mainReportBlocks
-                  .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
-                  .map((blk, bIdx) => (
-                    <div 
-                      key={bIdx} 
-                      className="report-scroll w-full overflow-auto rounded-xl border shadow-sm"
-                      style={{ 
-                        WebkitOverflowScrolling: 'touch',
-                        scrollbarWidth: 'auto',
-                        scrollbarColor: '#cbd5e1 #f8fafc'
-                      }}
-                    >
-                      <table className="portal-report-table portal-table-main min-w-[2800px] border-separate border-spacing-0 text-[11px] whitespace-nowrap">
-                        <thead>
-                          {/* Banner 1: Red Date Header */}
-                          <tr>
-                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2.5 text-center text-xs tracking-wider">
-                              {blk.dateLabel}
-                            </th>
-                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[60px]">
-                              Outlets
-                            </th>
-                          </tr>
-
-                          {/* Banner 2: Group Categories */}
-                          <tr className="text-white font-bold text-center text-[10px]">
-                            <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">
-                              Source
-                            </th>
-                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white py-1">ORDERS</th>
-                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white py-1">MEALS</th>
-                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white py-1">VALUE</th>
-                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white py-1">PREPAID</th>
-                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white py-1">DISCOUNT</th>
-                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white py-1">REVENUE</th>
-                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white py-1">Complaints</th>
-                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white py-1">Feedback</th>
-                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white py-1">IRCTC Undelivered</th>
-                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base min-w-[60px] align-middle">
-                              {blk.outletsCount}
-                            </th>
-                          </tr>
-
-                          {/* Banner 3: Metric Sub-Headers */}
-                          <tr className="text-[10px] text-center font-bold bg-gray-100 text-gray-800">
-                            <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
-                            {/* Orders */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">Del%</th>
-                            {/* Meals */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">MPO</th>
-                            {/* Value */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th>
-                            {/* Prepaid */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Discount */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Revenue */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Complaints */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Feedback */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Undelivered */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {/* Total Row */}
-                          {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
-
-                          {/* Channel Source Rows */}
-                          {SOURCES.map((src) => (
-                            <React.Fragment key={src}>
-                              {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ))}
-              </div>
+              <MainReportMatrix blocks={mainReportBlocks} searchTerm={searchTerm} />
             )}
 
             {/* ALL OTHER REPORT TABLES (WITH FULL HORIZONTAL SCROLL) */}

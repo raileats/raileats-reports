@@ -9,225 +9,104 @@ interface MainReportMatrixProps {
 
 const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
+const n = (v: any) => Number(v || 0);
+const round = (v: any) => Math.round(n(v));
+const pct = (a: any, b: any, digits = 0) => b > 0 ? `${((n(a) / n(b)) * 100).toFixed(digits)}%` : `${(0).toFixed(digits)}%`;
+
 export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatrixProps) {
-  const renderMainReportRow = (label: string, ftd: any, mtd: any, isTotal = false) => {
-    const orderAsp = ftd.orders > 0 ? Math.round(ftd.value / ftd.orders) : 0;
-    const delPct = ftd.orders > 0 ? `${((ftd.deliveredOrders / ftd.orders) * 100).toFixed(0)}%` : '0%';
-    const mealAsp = ftd.meals > 0 ? Math.round(ftd.value / ftd.meals) : 0;
-    const mpo = ftd.orders > 0 ? (ftd.meals / ftd.orders).toFixed(2) : '0.00';
-    const prepaidPct = ftd.value > 0 ? `${((ftd.prepaidValue / ftd.value) * 100).toFixed(2)}%` : '0.00%';
-    const discountPct = ftd.value > 0 ? `${((ftd.discount / ftd.value) * 100).toFixed(2)}%` : '0.00%';
-    const revenuePct = ftd.value > 0 ? `${((ftd.revenue / ftd.value) * 100).toFixed(1)}%` : '0.0%';
-    const complaintPct = ftd.deliveredOrders > 0 ? `${((ftd.complaints / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
-    const feedbackPct = ftd.deliveredOrders > 0 ? `${((ftd.feedback / ftd.deliveredOrders) * 100).toFixed(2)}%` : '0.00%';
-    const undeliveredPct = ftd.orders > 0 ? `${((ftd.undelivered / ftd.orders) * 100).toFixed(2)}%` : '0.00%';
+  const q = searchTerm.trim().toLowerCase();
+  const filteredBlocks = blocks.filter((b) => String(b.dateLabel || '').toLowerCase().includes(q));
+
+  const row = (label: string, ftd: any, mtd: any, total = false) => {
+    const orderAsp = n(ftd.orders) > 0 ? round(n(ftd.value) / n(ftd.orders)) : 0;
+    const mealAsp = n(ftd.meals) > 0 ? round(n(ftd.value) / n(ftd.meals)) : 0;
+    const mpo = n(ftd.orders) > 0 ? (n(ftd.meals) / n(ftd.orders)).toFixed(2) : '0.00';
+    const prepaidPct = pct(ftd.prepaidValue, ftd.value, 2);
+    const discountPct = pct(ftd.discount, ftd.value, 2);
+    const revenuePct = pct(ftd.revenue, ftd.value, 1);
+    const complaintPct = pct(ftd.complaints, ftd.deliveredOrders, 2);
+    const feedbackPct = pct(ftd.feedback, ftd.deliveredOrders, 2);
+    const undeliveredPct = pct(ftd.undelivered, ftd.orders, 2);
+
+    const values = [
+      ftd.orders, mtd.orders, 0, orderAsp, pct(ftd.deliveredOrders, ftd.orders, 0),
+      ftd.meals, mtd.meals, 0, mealAsp, mpo,
+      round(ftd.value), round(mtd.value), 0,
+      round(ftd.prepaidValue), round(mtd.prepaidValue), 0, prepaidPct,
+      round(ftd.discount), round(mtd.discount), 0, discountPct,
+      round(ftd.revenue), round(mtd.revenue), 0, revenuePct,
+      ftd.complaints, mtd.complaints, 0, complaintPct,
+      ftd.feedback, mtd.feedback, 0, feedbackPct,
+      ftd.undelivered, mtd.undelivered, 0, undeliveredPct,
+    ];
 
     return (
-      <tr className={`portal-data-row main-matrix-row ${isTotal ? 'is-total' : ''}`}>
-        <td className={`main-matrix-source ${isTotal ? 'is-total-source' : 'is-source'}`}>
-          {label}
-        </td>
-
-        <td className="main-matrix-cell">{ftd.orders}</td>
-        <td className="main-matrix-cell">{mtd.orders}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{orderAsp}</td>
-        <td className="main-matrix-cell">{delPct}</td>
-
-        <td className="main-matrix-cell">{ftd.meals}</td>
-        <td className="main-matrix-cell">{mtd.meals}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{mealAsp}</td>
-        <td className="main-matrix-cell">{mpo}</td>
-
-        <td className="main-matrix-cell">{Math.round(ftd.value)}</td>
-        <td className="main-matrix-cell">{Math.round(mtd.value)}</td>
-        <td className="main-matrix-cell">0</td>
-
-        <td className="main-matrix-cell">{Math.round(ftd.prepaidValue)}</td>
-        <td className="main-matrix-cell">{Math.round(mtd.prepaidValue)}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{prepaidPct}</td>
-
-        <td className="main-matrix-cell">{Math.round(ftd.discount)}</td>
-        <td className="main-matrix-cell">{Math.round(mtd.discount)}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{discountPct}</td>
-
-        <td className="main-matrix-cell">{Math.round(ftd.revenue)}</td>
-        <td className="main-matrix-cell">{Math.round(mtd.revenue)}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{revenuePct}</td>
-
-        <td className="main-matrix-cell">{ftd.complaints}</td>
-        <td className="main-matrix-cell">{mtd.complaints}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{complaintPct}</td>
-
-        <td className="main-matrix-cell">{ftd.feedback}</td>
-        <td className="main-matrix-cell">{mtd.feedback}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{feedbackPct}</td>
-
-        <td className="main-matrix-cell">{ftd.undelivered}</td>
-        <td className="main-matrix-cell">{mtd.undelivered}</td>
-        <td className="main-matrix-cell">0</td>
-        <td className="main-matrix-cell">{undeliveredPct}</td>
+      <tr className={total ? 'mr-total-row' : ''}>
+        <td className={total ? 'mr-total-label' : 'mr-source-cell'}>{label}</td>
+        {values.map((v, i) => <td key={i} className={`mr-data-cell mr-group-${i}`}>{v}</td>)}
+        <td className="mr-outlet-empty">0</td>
       </tr>
     );
   };
 
-  const q = searchTerm.trim().toLowerCase();
-  const filteredBlocks = blocks.filter((blk) => String(blk.dateLabel || '').toLowerCase().includes(q));
-
   return (
-    <div className="main-report-matrix space-y-3 max-h-[78vh] overflow-y-auto pr-0">
+    <div className="mr-root">
       <style jsx global>{`
-        .main-report-block {
-          width: 100% !important;
-          max-width: 100% !important;
-          overflow-x: hidden !important;
-          background: #fff !important;
-          border: 1px solid #9aa4b2 !important;
-          border-radius: 8px !important;
-        }
-        .main-report-fit {
-          width: 100% !important;
-          min-width: 0 !important;
-          max-width: 100% !important;
-          table-layout: fixed !important;
-          border-collapse: collapse !important;
-          font-size: 9px !important;
-        }
-        .main-report-fit th, .main-report-fit td {
-          box-sizing: border-box !important;
-          min-width: 0 !important;
-          max-width: none !important;
-          padding: 2px 3px !important;
-          height: 18px !important;
-          line-height: 1 !important;
-          white-space: nowrap !important;
-          overflow: hidden !important;
-          text-overflow: clip !important;
-          border: 1px solid #9ca3af !important;
-          text-align: center !important;
-        }
-        .main-report-fit th:first-child, .main-report-fit td:first-child { width: 5.7% !important; }
-        .main-report-fit th:nth-child(39), .main-report-fit td:nth-child(39) { width: 2.8% !important; }
-        .main-report-fit th:not(:first-child):not(:nth-child(39)), .main-report-fit td:not(:first-child):not(:nth-child(39)) { width: 2.41% !important; }
-
-        .main-date-banner {
-          background: #ff0000 !important; color: #fff !important; border-color: #ff0000 !important;
-          height: 25px !important; padding: 3px !important; font-size: 13px !important;
-          font-weight: 900 !important; text-align: center !important;
-        }
-        .main-date-outlets {
-          background: #ff0000 !important; color:#fff !important; border-color:#ff0000 !important;
-          font-size:9px !important; font-weight:900 !important;
-        }
-        .main-group-source { background:#000 !important; color:#fff !important; font-weight:900 !important; }
-        .main-group-orders { background:#5da0dc !important; color:#fff !important; }
-        .main-group-meals { background:#78b778 !important; color:#fff !important; }
-        .main-group-value { background:#f2a879 !important; color:#fff !important; }
-        .main-group-prepaid { background:#7db4db !important; color:#fff !important; }
-        .main-group-discount { background:#e5989b !important; color:#fff !important; }
-        .main-group-revenue { background:#7f7f7f !important; color:#fff !important; }
-        .main-group-complaints { background:#5f95cf !important; color:#fff !important; }
-        .main-group-feedback { background:#8bc05d !important; color:#fff !important; }
-        .main-group-undelivered { background:#333 !important; color:#fff !important; }
-        .main-group-outlets { background:#ffff00 !important; color:#111 !important; font-weight:900 !important; }
-
-        .main-subheaders { background:#eef2f5 !important; color:#111827 !important; font-size:8px !important; font-weight:900 !important; }
-        .main-sub-source { background:#c9dbe7 !important; color:#111827 !important; font-weight:900 !important; }
-        .main-sub-cell { font-size:8px !important; font-weight:900 !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+2):nth-child(-n+6) { background:#b9dcec !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+7):nth-child(-n+11) { background:#d2e8c1 !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+12):nth-child(-n+14) { background:#f9d2b9 !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+15):nth-child(-n+18) { background:#c5e0ef !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+19):nth-child(-n+22) { background:#f1c5c8 !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+23):nth-child(-n+26) { background:#d0d0d0 !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+27):nth-child(-n+30) { background:#c5d9ee !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+31):nth-child(-n+34) { background:#d2e8bf !important; }
-        .main-subheaders .main-sub-cell:nth-child(n+35):nth-child(-n+38) { background:#777 !important; color:#fff !important; }
-
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+2):nth-child(-n+6) { background:#d9edf7 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+7):nth-child(-n+11) { background:#e3f0d5 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+12):nth-child(-n+14) { background:#fce4d6 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+15):nth-child(-n+18) { background:#d9edf7 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+19):nth-child(-n+22) { background:#f4d7d9 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+23):nth-child(-n+26) { background:#d9d9d9 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+27):nth-child(-n+30) { background:#cfe2f3 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+31):nth-child(-n+34) { background:#d9ead3 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(n+35):nth-child(-n+38) { background:#666 !important; color:#fff !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(39) { background:#ffff00 !important; color:#111 !important; font-weight:900 !important; }
-
-        .main-report-fit tbody .main-matrix-row .main-matrix-source {
-          position: sticky !important; left: 0 !important; z-index: 6 !important;
-          width:5.7% !important; color:#fff !important; font-weight:900 !important;
-        }
-        .main-report-fit tbody .main-matrix-row .is-total-source { background:#000 !important; }
-        .main-report-fit tbody .main-matrix-row .is-source { background:#ff0000 !important; }
-        .main-report-fit tbody .main-matrix-row td { color:#111827; font-weight:600; }
-        .main-report-fit tbody .main-matrix-row.is-total td { font-weight:900 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(25),
-        .main-report-fit tbody .main-matrix-row td:nth-child(26) { color:#047857 !important; font-weight:900 !important; }
-        .main-report-fit tbody .main-matrix-row td:nth-child(35),
-        .main-report-fit tbody .main-matrix-row td:nth-child(36) { color:#ff3b3b !important; font-weight:900 !important; }
-        .main-report-fit tbody .main-matrix-row:hover td { filter: brightness(0.97); }
-        .main-report-fit thead th { position:static !important; }
-        .main-report-fit thead tr:first-child th { position:static !important; }
-        .main-report-fit thead tr:nth-child(2) th:first-child,
-        .main-report-fit thead tr:nth-child(3) th:first-child { position:sticky !important; left:0 !important; z-index:9 !important; }
+        .mr-root{width:100%;max-width:100%;overflow-x:hidden;overflow-y:auto;box-sizing:border-box;background:#fff}
+        .mr-block{width:100%;max-width:100%;overflow:hidden;margin:0 0 12px 0;background:#fff}
+        .mr-table{width:100%!important;min-width:0!important;max-width:100%!important;table-layout:fixed!important;border-collapse:collapse!important;border-spacing:0!important;font-family:Arial,Helvetica,sans-serif;font-size:8px;line-height:1}
+        .mr-table th,.mr-table td{box-sizing:border-box;min-width:0!important;padding:2px 1px;height:15px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:clip;text-align:center;vertical-align:middle;border:1px solid #222}
+        .mr-table .mr-source-col{width:5.55%!important}.mr-table .mr-outlet-col{width:2.75%!important}.mr-table .mr-data-col{width:2.478%!important}
+        .mr-date{background:#ff0000!important;color:#fff!important;font-size:13px!important;font-weight:900!important;height:25px!important;border:1px solid #ff0000!important;padding:3px!important;text-align:center}
+        .mr-source-head{background:#000!important;color:#fff!important;font-weight:900}
+        .mr-orders{background:#72b9d2!important;color:#000!important}.mr-meals{background:#b5d37b!important;color:#000!important}.mr-value{background:#f3b37e!important;color:#000!important}.mr-prepaid{background:#8dc5de!important;color:#000!important}.mr-discount{background:#d99397!important;color:#000!important}.mr-revenue{background:#999!important;color:#000!important}.mr-complaints{background:#5b91c8!important;color:#000!important}.mr-feedback{background:#87c34f!important;color:#000!important}.mr-undelivered{background:#555!important;color:#fff!important}.mr-outlet-head{background:#f2a900!important;color:#fff!important;font-weight:900}
+        .mr-sub{background:#dce7ec!important;color:#000!important;font-weight:900;font-size:7px!important;height:16px!important}
+        .mr-sub.orders{background:#b9dce8!important}.mr-sub.meals{background:#d2e7bf!important}.mr-sub.value{background:#f8d8c0!important}.mr-sub.prepaid{background:#c4e0ec!important}.mr-sub.discount{background:#efc7ca!important}.mr-sub.revenue{background:#cfcfcf!important}.mr-sub.complaints{background:#c4d9ef!important}.mr-sub.feedback{background:#d4e8c5!important}.mr-sub.undelivered{background:#666!important;color:#fff!important}
+        .mr-total-row td{font-weight:900!important}.mr-total-label{background:#000!important;color:#fff!important;font-weight:900!important}.mr-source-cell{background:#ef0000!important;color:#fff!important;font-weight:900!important;text-align:left!important;padding-left:4px!important}
+        .mr-data-cell{color:#000;background:#edf4f7!important}.mr-group-0,.mr-group-1,.mr-group-2,.mr-group-3,.mr-group-4{background:#cce5ee!important}.mr-group-5,.mr-group-6,.mr-group-7,.mr-group-8,.mr-group-9{background:#d9e8c8!important}.mr-group-10,.mr-group-11,.mr-group-12{background:#f8dfca!important}.mr-group-13,.mr-group-14,.mr-group-15,.mr-group-16{background:#d6eaf2!important}.mr-group-17,.mr-group-18,.mr-group-19,.mr-group-20{background:#f0d6d9!important}.mr-group-21,.mr-group-22,.mr-group-23,.mr-group-24{background:#d0d0d0!important}.mr-group-25,.mr-group-26,.mr-group-27,.mr-group-28{background:#c8ddf0!important}.mr-group-29,.mr-group-30,.mr-group-31,.mr-group-32{background:#d9eacb!important}.mr-group-33,.mr-group-34,.mr-group-35,.mr-group-36{background:#666!important;color:#fff!important}.mr-group-20,.mr-group-21{color:#008c69!important;font-weight:900!important}.mr-group-33,.mr-group-34{color:#ff3030!important;font-weight:900!important}.mr-outlet-empty{background:#fff200!important;color:#111!important;font-weight:900!important}
+        @media(max-width:1200px){.mr-table{font-size:7px}.mr-table th,.mr-table td{height:14px;padding:1px}.mr-date{font-size:12px!important;height:23px!important}}
+        @media(max-width:900px){.mr-table{font-size:6px}.mr-date{font-size:10px!important}}
       `}</style>
 
-      {filteredBlocks.map((blk, bIdx) => (
-        <div
-          key={`${blk.rawDate || blk.dateLabel}-${bIdx}`}
-          className="main-report-block w-full overflow-hidden rounded-xl border shadow-sm"
-        >
-          <table className="portal-report-table portal-table-main border-separate border-spacing-0 text-[10px] whitespace-nowrap">
+      {filteredBlocks.map((blk, index) => (
+        <div className="mr-block" key={`${blk.rawDate || blk.dateLabel}-${index}`}>
+          <table className="mr-table">
+            <colgroup>
+              <col className="mr-source-col" />
+              {Array.from({length:37}).map((_,i)=><col className="mr-data-col" key={i}/>)}
+              <col className="mr-outlet-col" />
+            </colgroup>
             <thead>
+              <tr><th colSpan={39} className="mr-date">{blk.dateLabel}</th></tr>
               <tr>
-                <th colSpan={38} className="main-date-banner">
-                  {blk.dateLabel}
-                </th>
-                <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold">Outlets</th>
+                <th className="mr-source-head">Source</th>
+                <th colSpan={5} className="mr-orders">ORDERS</th>
+                <th colSpan={5} className="mr-meals">MEALS</th>
+                <th colSpan={3} className="mr-value">VALUE</th>
+                <th colSpan={4} className="mr-prepaid">PREPAID</th>
+                <th colSpan={4} className="mr-discount">DISCOUNT</th>
+                <th colSpan={4} className="mr-revenue">REVENUE</th>
+                <th colSpan={4} className="mr-complaints">Complaints</th>
+                <th colSpan={4} className="mr-feedback">Feedback</th>
+                <th colSpan={4} className="mr-undelivered">IRCTC Undelivered</th>
+                <th rowSpan={2} className="mr-outlet-head">Outlets</th>
               </tr>
-
-              <tr className="text-white font-bold text-center text-[10px]">
-                <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">Source</th>
-                <th colSpan={5} className="main-group-orders">ORDERS</th>
-                <th colSpan={5} className="main-group-meals">MEALS</th>
-                <th colSpan={3} className="main-group-value">VALUE</th>
-                <th colSpan={4} className="main-group-prepaid">PREPAID</th>
-                <th colSpan={4} className="main-group-discount">DISCOUNT</th>
-                <th colSpan={4} className="main-group-revenue">REVENUE</th>
-                <th colSpan={4} className="main-group-complaints">Complaints</th>
-                <th colSpan={4} className="main-group-feedback">Feedback</th>
-                <th colSpan={4} className="main-group-undelivered">IRCTC Undelivered</th>
-                <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base align-middle">{blk.outletsCount}</th>
-              </tr>
-
-              <tr className="main-subheaders">
-                <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">ASP</th><th className="main-sub-cell">Del%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">ASP</th><th className="main-sub-cell">MPO</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
-                <th className="main-sub-cell">FTD</th><th className="main-sub-cell">MTD</th><th className="main-sub-cell">LMTD</th><th className="main-sub-cell">%</th>
+              <tr>
+                <th className="mr-sub"> </th>
+                {['FTD','MTD','LMTD','ASP','Del%'].map((x,i)=><th key={'o'+i} className="mr-sub orders">{x}</th>)}
+                {['FTD','MTD','LMTD','ASP','MPO'].map((x,i)=><th key={'m'+i} className="mr-sub meals">{x}</th>)}
+                {['FTD','MTD','LMTD'].map((x,i)=><th key={'v'+i} className="mr-sub value">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'p'+i} className="mr-sub prepaid">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'d'+i} className="mr-sub discount">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'r'+i} className="mr-sub revenue">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'c'+i} className="mr-sub complaints">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'f'+i} className="mr-sub feedback">{x}</th>)}
+                {['FTD','MTD','LMTD','%'].map((x,i)=><th key={'u'+i} className="mr-sub undelivered">{x}</th>)}
               </tr>
             </thead>
             <tbody>
-              {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
-              {SOURCES.map((src) => (
-                <React.Fragment key={src}>
-                  {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
-                </React.Fragment>
-              ))}
+              {row('Total', blk.dayTotal, blk.mtdTotal, true)}
+              {SOURCES.map(src => row(src, blk.dayStats[src] || {}, blk.mtdBySource[src] || {}, false))}
             </tbody>
           </table>
         </div>
