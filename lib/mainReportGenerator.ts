@@ -78,6 +78,20 @@ const feedbackCreatedAtKey = (value: any): string => {
     const d = new Date(Date.UTC(1899, 11, 30) + numeric * 86400000);
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   }
+  // Feedback CSV uses values like `2026-08-01 18:52:14 IST`.
+  // Parse the leading ISO date explicitly because native Date parsing can
+  // reject the trailing `IST` timezone text.
+  const isoMatch = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
   const datePart = raw.split(/[T ]/)[0];
   let m = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (m) {
@@ -143,8 +157,9 @@ export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[
     if (type === 'COMPLAINT') feedbackByDateSource[dateKey][src].complaint += 1;
     if (type === 'FEEDBACK') feedbackByDateSource[dateKey][src].feedback += 1;
 
-    // Feedback Created At controls only the Feedback/Complaint count date.
-    // Do not create a separate blank operational date block for feedback-only dates.
+    if (!dateGroups[dateKey]) {
+      dateGroups[dateKey] = { RELFood_IRCTC: [], RELFood_WEBSITE: [], REL_Food_App: [], MakeMyTrip: [] };
+    }
   });
 
   // Sort dates chronologically.
