@@ -1647,6 +1647,149 @@ export default function Page() {
       return alert('No Data available to generate PDF!');
     }
 
+    // MAIN REPORT PDF must export the SAME date-matrix report that is visible
+    // in the dashboard. It must never fall through to Master Data rows.
+    if (selectedReport === 'MAIN_REPORT') {
+      const doc = new jsPDF('landscape', 'pt', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginX = 18;
+      const tableWidth = pageWidth - marginX * 2;
+
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, pageWidth, 38, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.text('RELFOOD ENTERPRISE PORTAL - MAIN REPORT', marginX, 24);
+
+      const groups = [
+        { title: 'ORDERS', count: 5, color: [114, 185, 210] },
+        { title: 'MEALS', count: 5, color: [181, 211, 123] },
+        { title: 'VALUE', count: 3, color: [243, 179, 126] },
+        { title: 'PREPAID', count: 4, color: [141, 197, 222] },
+        { title: 'DISCOUNT', count: 4, color: [217, 147, 151] },
+        { title: 'REVENUE', count: 4, color: [153, 153, 153] },
+        { title: 'Complaints', count: 4, color: [91, 145, 200] },
+        { title: 'Feedback', count: 4, color: [135, 195, 79] },
+        { title: 'IRCTC Undelivered', count: 4, color: [85, 85, 85] },
+        { title: 'Outlets', count: 1, color: [242, 169, 0] },
+      ];
+      const subs = [
+        ['FTD','MTD','LMTD','ASP','Del%'],
+        ['FTD','MTD','LMTD','ASP','MPO'],
+        ['FTD','MTD','LMTD'],
+        ['FTD','MTD','LMTD','%'],
+        ['FTD','MTD','LMTD','%'],
+        ['FTD','MTD','LMTD','%'],
+        ['FTD','MTD','LMTD','%'],
+        ['FTD','MTD','LMTD','%'],
+        ['FTD','MTD','LMTD','%'],
+        [''],
+      ];
+      const rowsFor = (ftd: any, mtd: any, outletCount = 0) => {
+        const num = (v: any) => Number(v || 0);
+        const pct0 = (a: any,b: any,d=0) => b > 0 ? `${((num(a)/num(b))*100).toFixed(d)}%` : `0.${'0'.repeat(d)}%`;
+        const asp = num(ftd.orders) ? Math.round(num(ftd.value)/num(ftd.orders)) : 0;
+        const mealAsp = num(ftd.meals) ? Math.round(num(ftd.value)/num(ftd.meals)) : 0;
+        const mpo = num(ftd.orders) ? (num(ftd.meals)/num(ftd.orders)).toFixed(2) : '0.00';
+        return [
+          ftd.orders, mtd.orders, 0, asp, pct0(ftd.deliveredOrders, ftd.orders, 0),
+          ftd.meals, mtd.meals, 0, mealAsp, mpo,
+          Math.round(num(ftd.value)), Math.round(num(mtd.value)), 0,
+          Math.round(num(ftd.prepaidValue)), Math.round(num(mtd.prepaidValue)), 0, pct0(ftd.prepaidValue, ftd.value, 2),
+          Math.round(num(ftd.discount)), Math.round(num(mtd.discount)), 0, pct0(ftd.discount, ftd.value, 2),
+          Math.round(num(ftd.revenue)), Math.round(num(mtd.revenue)), 0, pct0(ftd.revenue, ftd.value, 1),
+          ftd.complaints, mtd.complaints, 0, pct0(ftd.complaints, ftd.deliveredOrders, 2),
+          ftd.feedback, mtd.feedback, 0, pct0(ftd.feedback, ftd.deliveredOrders, 2),
+          ftd.undelivered, mtd.undelivered, 0, pct0(ftd.undelivered, ftd.orders, 2),
+          outletCount,
+        ];
+      };
+
+      const sourceNames = ['RELFood_IRCTC','RELFood_WEBSITE','REL_Food_App','MakeMyTrip'];
+      let firstBlock = true;
+      mainReportBlocks.forEach((blk: any) => {
+        if (!firstBlock) doc.addPage('landscape', 'pt', 'a4');
+        firstBlock = false;
+        const dateY = 52;
+        doc.setFillColor(255, 0, 0);
+        doc.rect(marginX, dateY, tableWidth, 22, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.text(blk.dateLabel, pageWidth / 2, dateY + 15, { align: 'center' });
+
+        const head1 = ['Source', ...groups.map(g => g.title)];
+        const head2 = ['', ...groups.flatMap((g,i) => subs[i])];
+        const body = [
+          ['Total', ...rowsFor(blk.dayTotal, blk.mtdTotal, Number(blk.outletsCount || 0))],
+          ...sourceNames.map((src) => [''+src, ...rowsFor(blk.dayStats?.[src] || {}, blk.mtdBySource?.[src] || {}, 0)]),
+        ];
+        const bodyRows = body.map(r => r.map(v => String(v)));
+        const colStyles: Record<number, any> = { 0: { cellWidth: 70, halign: 'left' } };
+        for (let i=1;i<39;i++) colStyles[i] = { cellWidth: (tableWidth-70)/38, halign: 'center' };
+
+        autoTable(doc, {
+          head: [head1, head2],
+          body: bodyRows,
+          startY: dateY + 25,
+          margin: { left: marginX, right: marginX },
+          tableWidth,
+          theme: 'grid',
+          styles: { fontSize: 5.5, cellPadding: 1.2, lineColor: [34,34,34], lineWidth: 0.35, textColor: [0,0,0], overflow: 'hidden', halign: 'center', valign: 'middle' },
+          headStyles: { fontSize: 5.5, fontStyle: 'bold', textColor: [0,0,0], fillColor: [220,231,236], lineColor: [34,34,34], lineWidth: 0.35 },
+          columnStyles: colStyles,
+          didParseCell: (hook) => {
+            if (hook.section === 'head' && hook.row.index === 0) {
+              if (hook.column.index === 0) hook.cell.styles.fillColor = [0,0,0], hook.cell.styles.textColor = [255,255,255];
+              else {
+                let cursor = 1;
+                for (const g of groups) {
+                  if (hook.column.index >= cursor && hook.column.index < cursor + g.count) {
+                    hook.cell.styles.fillColor = g.color;
+                    hook.cell.styles.textColor = g.title === 'IRCTC Undelivered' ? [255,255,255] : [0,0,0];
+                    break;
+                  }
+                  cursor += g.count;
+                }
+              }
+            }
+            if (hook.section === 'head' && hook.row.index === 1) {
+              const idx = hook.column.index;
+              if (idx === 0) hook.cell.styles.fillColor = [0,0,0], hook.cell.styles.textColor = [255,255,255];
+              else if (idx >= 1 && idx <= 5) hook.cell.styles.fillColor = [185,220,232];
+              else if (idx <= 10) hook.cell.styles.fillColor = [210,231,191];
+              else if (idx <= 13) hook.cell.styles.fillColor = [248,216,192];
+              else if (idx <= 17) hook.cell.styles.fillColor = [196,224,236];
+              else if (idx <= 21) hook.cell.styles.fillColor = [239,199,202];
+              else if (idx <= 25) hook.cell.styles.fillColor = [207,207,207];
+              else if (idx <= 29) hook.cell.styles.fillColor = [196,217,239];
+              else if (idx <= 33) hook.cell.styles.fillColor = [212,232,197];
+              else if (idx <= 37) hook.cell.styles.fillColor = [102,102,102], hook.cell.styles.textColor = [255,255,255];
+              else hook.cell.styles.fillColor = [242,255,0];
+            }
+            if (hook.section === 'body') {
+              const idx = hook.column.index;
+              if (idx === 0) hook.cell.styles.fillColor = hook.row.index === 0 ? [0,0,0] : [239,0,0], hook.cell.styles.textColor = [255,255,255], hook.cell.styles.fontStyle = 'bold';
+              else if (idx >= 1 && idx <= 5) hook.cell.styles.fillColor = [204,229,238];
+              else if (idx <= 10) hook.cell.styles.fillColor = [217,232,200];
+              else if (idx <= 13) hook.cell.styles.fillColor = [248,223,202];
+              else if (idx <= 17) hook.cell.styles.fillColor = [214,234,242];
+              else if (idx <= 21) hook.cell.styles.fillColor = [240,214,217];
+              else if (idx <= 25) hook.cell.styles.fillColor = [208,208,208];
+              else if (idx <= 29) hook.cell.styles.fillColor = [200,221,240];
+              else if (idx <= 33) hook.cell.styles.fillColor = [217,234,203];
+              else if (idx <= 37) hook.cell.styles.fillColor = [102,102,102], hook.cell.styles.textColor = [255,255,255];
+              else hook.cell.styles.fillColor = [255,242,0], hook.cell.styles.fontStyle = 'bold';
+            }
+          },
+        });
+      });
+      doc.save(`RELFOOD_MAIN_REPORT_${new Date().toISOString().slice(0,10)}.pdf`);
+      return;
+    }
+
     const doc = new jsPDF('landscape', 'pt', 'a4');
     const today = new Date().toLocaleDateString('en-IN');
 
@@ -1663,150 +1806,42 @@ export default function Page() {
     let head: string[][] = [];
     let body: any[][] = [];
 
-    if (selectedReport === 'MASTER' || (selectedReport as string) === 'MAIN_REPORT') {
+    if (selectedReport === 'MASTER') {
       head = [['Order ID', 'Outlet ID', 'Vendor', 'Station', 'State', 'Status', 'Vendor ₹', 'Base ₹', 'GST ₹', 'RF Comm ₹', 'Selling ₹', 'Margin%']];
       body = data.map((r) => [
-        r['IRCTC Order ID'],
-        r['Outlet ID'],
-        String(r['Vendor Name']).substring(0, 18),
-        r['Station Code'],
-        r['State'],
-        r['Final Status'],
-        `₹${r['Final Vendor Price']}`,
-        `₹${r['Final Base Price']}`,
-        `₹${r['Final GST']}`,
-        `₹${r['Final RF Commission']}`,
-        `₹${r['Final Selling Price']}`,
-        `${r['Margin %']}%`,
+        r['IRCTC Order ID'], r['Outlet ID'], String(r['Vendor Name']).substring(0, 18), r['Station Code'], r['State'], r['Final Status'],
+        `₹${r['Final Vendor Price']}`, `₹${r['Final Base Price']}`, `₹${r['Final GST']}`, `₹${r['Final RF Commission']}`, `₹${r['Final Selling Price']}`, `${r['Margin %']}%`,
       ]);
     } else if (selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') {
       head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)', 'Feedback Good', 'Feedback Bad']];
-      body = stationSummary.map((s: any) => [
-        s['Station Code'],
-        s['State'] || '-',
-        s['Total Orders'],
-        s['Delivered'],
-        s['Cancelled'],
-        `₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`,
-        `₹${Number(s['Vendor Price'] || 0).toFixed(2)}`,
-        `₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`,
-        `₹${Number(s['Final GST'] || 0).toFixed(2)}`,
-        s['Feedback Good'] || 0,
-        s['Feedback Bad'] || 0,
-      ]);
+      body = stationSummary.map((s: any) => [s['Station Code'], s['State'] || '-', s['Total Orders'], s['Delivered'], s['Cancelled'], `₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`, `₹${Number(s['Vendor Price'] || 0).toFixed(2)}`, `₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`, `₹${Number(s['Final GST'] || 0).toFixed(2)}`, s['Feedback Good'] || 0, s['Feedback Bad'] || 0]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
-      // Vendor Report / Vendor RDS uses the same named fields as the
-      // Vendor Excel generator. Do not use the old simplified property
-      // names (vendor/outletId/state/etc.) here because VendorReportRow
-      // is column-name based.
-      head = [[
-        'Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name',
-        'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission',
-        'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount',
-        'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges',
-        'Final Selling Price', 'Final Order Total', 'Discounted Base Price',
-        'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders',
-        'Not Delivered', 'Not Delivered %', 'Prepaid %'
-      ]];
-      body = vendorSummary.map((v) => [
-        v['Aggregator Outlet ID'],
-        v['Station Code'],
-        v['Rank'],
-        v['Station Name'],
-        String(v['Vendor Name'] || '').substring(0, 22),
-        `₹${Number(v['Vendor Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Net Payment'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Base Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Total Commission'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final IRCTC Comm'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final RF Commission'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final GST'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Vendor Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final RF Discount'] || 0).toFixed(2)}`,
-        `₹${Number(v['Delivery Charges'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Selling Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['Final Order Total'] || 0).toFixed(2)}`,
-        `₹${Number(v['Discounted Base Price'] || 0).toFixed(2)}`,
-        `₹${Number(v['PPD'] || 0).toFixed(2)}`,
-        `₹${Number(v['COD'] || 0).toFixed(2)}`,
-        `₹${Number(v['Meals'] || 0).toFixed(2)}`,
-        v['Check'] || '-',
-        v['Count of Delivered Orders'] || 0,
-        v['Count of Not_Delivered As per IRCTC Status'] || 0,
-        v['Not_Delivered %'] || '0.00%',
-        v['Prepaid %'] || '0.00%',
-      ]);
+      head = [['Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name', 'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission', 'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount', 'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges', 'Final Selling Price', 'Final Order Total', 'Discounted Base Price', 'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders', 'Not Delivered', 'Not Delivered %', 'Prepaid %']];
+      body = vendorSummary.map((v) => [v['Aggregator Outlet ID'],v['Station Code'],v['Rank'],v['Station Name'],String(v['Vendor Name']||'').substring(0,22),`₹${Number(v['Vendor Price']||0).toFixed(2)}`,`₹${Number(v['Net Payment']||0).toFixed(2)}`,`₹${Number(v['Final Base Price']||0).toFixed(2)}`,`₹${Number(v['Final Total Commission']||0).toFixed(2)}`,`₹${Number(v['Final IRCTC Comm']||0).toFixed(2)}`,`₹${Number(v['Final RF Commission']||0).toFixed(2)}`,`₹${Number(v['Final GST']||0).toFixed(2)}`,`₹${Number(v['Final Discount']||0).toFixed(2)}`,`₹${Number(v['Final Vendor Discount']||0).toFixed(2)}`,`₹${Number(v['Final RF Discount']||0).toFixed(2)}`,`₹${Number(v['Delivery Charges']||0).toFixed(2)}`,`₹${Number(v['Final Selling Price']||0).toFixed(2)}`,`₹${Number(v['Final Order Total']||0).toFixed(2)}`,`₹${Number(v['Discounted Base Price']||0).toFixed(2)}`,`₹${Number(v['PPD']||0).toFixed(2)}`,`₹${Number(v['COD']||0).toFixed(2)}`,`₹${Number(v['Meals']||0).toFixed(2)}`,v['Check']||'-',v['Count of Delivered Orders']||0,v['Count of Not_Delivered As per IRCTC Status']||0,v['Not_Delivered %']||'0.00%',v['Prepaid %']||'0.00%']);
     } else if (selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') {
       head = [['Date', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Price', 'RF Commission']];
-      body = dateSummary.map((d) => [
-        d.date,
-        d.totalOrders,
-        d.delivered,
-        d.cancelled,
-        `₹${d.sellingPrice.toFixed(2)}`,
-        `₹${d.vendorPrice.toFixed(2)}`,
-        `₹${d.rfComm.toFixed(2)}`,
-      ]);
+      body = dateSummary.map((d) => [d.date,d.totalOrders,d.delivered,d.cancelled,`₹${d.sellingPrice.toFixed(2)}`,`₹${d.vendorPrice.toFixed(2)}`,`₹${d.rfComm.toFixed(2)}`]);
     } else if (selectedReport === 'OUTLETS_MASTER') {
       head = [['Outlet ID', 'Outlet Name', 'Station', 'State', 'GST Number', 'IRCTC Status']];
-      body = Object.values(outletsMasterInfo).map((o) => [
-        o.outletId,
-        o.outletName || '-',
-        o.station || '-',
-        o.state || '-',
-        o.gst || '-',
-        o.irctcStatus || '-',
-      ]);
+      body = Object.values(outletsMasterInfo).map((o) => [o.outletId,o.outletName||'-',o.station||'-',o.state||'-',o.gst||'-',o.irctcStatus||'-']);
     } else if (selectedReport === 'FEEDBACK_REPORT') {
-      head = [[
-        'Outlet ID', 'Outlet Name', 'Station Code',
-        'Old Count', 'Old Ratings', 'Old Sum',
-        'Complaint', 'Feedback', 'Current Count', 'Current Rating', 'Current Sum',
-        'Total Count', 'Total Rating Sum', 'Till Date Ratings'
-      ]];
-      body = feedbackReportRows.map((r) => [
-        r['Outlet Id'],
-        String(r['Outlet Name'] || '-').substring(0, 28),
-        r['Station Code'] || '-',
-        r['Old Count'],
-        r['Old Ratings'],
-        r['Old Sum'],
-        r.Complaint,
-        r.Feedback,
-        r['Current Count'],
-        r['Current Rating'],
-        r['Current Sum'],
-        r['Total Count'],
-        r['Total Rating Sum'],
-        r['Total Rating'],
-      ]);
-
+      head = [['Outlet ID','Outlet Name','Station Code','Old Count','Old Ratings','Old Sum','Complaint','Feedback','Current Count','Current Rating','Current Sum','Total Count','Total Rating Sum','Till Date Ratings']];
+      body = feedbackReportRows.map((r) => [r['Outlet Id'],String(r['Outlet Name']||'-').substring(0,28),r['Station Code']||'-',r['Old Count'],r['Old Ratings'],r['Old Sum'],r.Complaint,r.Feedback,r['Current Count'],r['Current Rating'],r['Current Sum'],r['Total Count'],r['Total Rating Sum'],r['Total Rating']]);
     } else if (selectedReport === 'PENALTIES') {
-      head = [['Outlet ID', 'Order ID', 'Transaction Mode', 'Vendor Name', 'Date', 'Amount (₹)', 'Remarks']];
-      body = penaltyRawRecords.map((p) => [
-        p.outletId,
-        p.orderId || '-',
-        p.mode,
-        p.vendorName || '-',
-        p.date || '-',
-        `₹${p.amount.toFixed(2)}`,
-        p.remarks || '-',
-      ]);
+      head = [['Outlet ID','Order ID','Transaction Mode','Vendor Name','Date','Amount (₹)','Remarks']];
+      body = penaltyRawRecords.map((p) => [p.outletId,p.orderId||'-',p.mode,p.vendorName||'-',p.date||'-',`₹${p.amount.toFixed(2)}`,p.remarks||'-']);
     }
 
     autoTable(doc, {
-      head: head,
-      body: body,
+      head, body,
       startY: 65,
       theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 4, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 8, cellPadding: 4, textColor: [30,41,59] },
+      headStyles: { fillColor: [37,99,235], textColor: [255,255,255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248,250,252] },
       margin: { top: 60, bottom: 30, left: 20, right: 20 },
     });
-
-    doc.save(`RELFOOD_${selectedReport}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`RELFOOD_${selectedReport}_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
   const renderMainReportRow = (label: string, ftd: MetricStats, mtd: MetricStats, isTotal: boolean = false) => {
