@@ -24,6 +24,30 @@ export interface RowMetrics {
 
 const SOURCES = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
 
+const cleanOutletId = (value: any): string => {
+  if (value === null || value === undefined || String(value).trim() === '') return '';
+  return String(value)
+    .trim()
+    .replace(/\u00A0/g, '')
+    .replace(/\s+/g, '')
+    .replace(/\.0+$/, '');
+};
+
+const getOutletIdFromRow = (row: any): string => {
+  if (!row) return '';
+  const candidates = [
+    row['Outlet ID'], row['Outlet Id'], row['OutletId'], row['OutletID'],
+    row['Aggregator Outlet ID'], row['Aggregator Outlet Id'],
+    row['Aggregator OutletId'], row['Aggregator OutletID'],
+    row['Outlet Code'], row['Outlet'],
+  ];
+  for (const value of candidates) {
+    const id = cleanOutletId(value);
+    if (id) return id;
+  }
+  return '';
+};
+
 const createEmptyMetrics = (): RowMetrics => ({
   orders: 0,
   deliveredOrders: 0,
@@ -95,7 +119,7 @@ export const processMainReportData = (masterData: any[]): ReportDayBlock[] => {
       const rfComm = parseFloat(r['Final RF Commission'] || r['RF Comm'] || 0) || 0;
       const prepaid = parseFloat(r['PPD'] || r['Prepaid'] || 0) || 0;
       const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
-      const outletId = String(r['Outlet ID'] || '').trim();
+      const outletId = getOutletIdFromRow(r);
 
       const st = dayStatsBySource[src] || dayStatsBySource['RELFood_IRCTC'];
       st.orders += 1;
@@ -109,7 +133,7 @@ export const processMainReportData = (masterData: any[]): ReportDayBlock[] => {
 
       if (r['Rating'] && parseFloat(r['Rating']) > 0) st.feedback += 1;
       if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) st.complaints += 1;
-      if (outletId) outletsSet.add(outletId);
+      if (isDelivered && outletId) outletsSet.add(outletId);
     });
 
     // Accumulate to Day Total & MTD

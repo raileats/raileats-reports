@@ -59,6 +59,36 @@ const normalizeOrderId = (value: any): string => {
   return String(value).trim().replace(/\u00A0/g, '').replace(/\s+/g, '').replace(/\.0+$/, '').toUpperCase();
 };
 
+const cleanOutletId = (value: any): string => {
+  if (value === null || value === undefined || String(value).trim() === '') return '';
+  return String(value)
+    .trim()
+    .replace(/\u00A0/g, '')
+    .replace(/\s+/g, '')
+    .replace(/\.0+$/, '');
+};
+
+const getOutletIdFromRow = (row: any): string => {
+  if (!row) return '';
+  const candidates = [
+    row['Outlet ID'],
+    row['Outlet Id'],
+    row['OutletId'],
+    row['OutletID'],
+    row['Aggregator Outlet ID'],
+    row['Aggregator Outlet Id'],
+    row['Aggregator OutletId'],
+    row['Aggregator OutletID'],
+    row['Outlet Code'],
+    row['Outlet'],
+  ];
+  for (const value of candidates) {
+    const id = cleanOutletId(value);
+    if (id) return id;
+  }
+  return '';
+};
+
 const normalizeFeedbackType = (value: any): 'FEEDBACK' | 'COMPLAINT' | '' => {
   const type = String(value ?? '').trim().toUpperCase();
   if (type === 'FEEDBACK') return 'FEEDBACK';
@@ -196,14 +226,7 @@ export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[
         const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
         const prepaid = parseFloat(r['PPD'] || 0) || 0;
         const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
-        const outletId = cleanOutletId(
-          r['Outlet Id'] ??
-          r['Outlet ID'] ??
-          r['OutletId'] ??
-          r['Aggregator Outlet ID'] ??
-          r['Aggregator Outlet Id'] ??
-          ''
-        );
+        const outletId = String(r['Outlet ID'] || '').trim();
 
         stats.orders += 1;
         if (isDelivered) stats.deliveredOrders += 1;
@@ -218,7 +241,7 @@ export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[
 
         // Feedback/Complaint is NOT inferred from Rating/Remarks.
         // It is added below from Feedback.Created At for this report date.
-        if (outletId) stats.outletsSet.add(outletId);
+        if (isDelivered && outletId) stats.outletsSet.add(outletId);
       });
 
       // Feedback/Complaint FTD is grouped by Feedback.Created At.

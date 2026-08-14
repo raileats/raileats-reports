@@ -90,8 +90,33 @@ const computeFinalStatus = (rfStatusRaw: string, irctcStatusRaw: string): string
 };
 
 const cleanOutletId = (val: any): string => {
-  if (!val && val !== 0) return '';
-  return String(val).trim().replace(/\.0$/, '');
+  if (val === null || val === undefined || String(val).trim() === '') return '';
+  return String(val)
+    .trim()
+    .replace(/\u00A0/g, '')
+    .replace(/\s+/g, '')
+    .replace(/\.0+$/, '');
+};
+
+const getOutletIdFromRow = (row: any): string => {
+  if (!row) return '';
+  const candidates = [
+    row['Outlet ID'],
+    row['Outlet Id'],
+    row['OutletId'],
+    row['OutletID'],
+    row['Aggregator Outlet ID'],
+    row['Aggregator Outlet Id'],
+    row['Aggregator OutletId'],
+    row['Aggregator OutletID'],
+    row['Outlet Code'],
+    row['Outlet'],
+  ];
+  for (const value of candidates) {
+    const id = cleanOutletId(value);
+    if (id) return id;
+  }
+  return '';
 };
 
 // ---------------------------------------------------------------------------
@@ -1219,7 +1244,7 @@ export default function Page() {
         const orderId = String(rf['IRCTC OrderId'] || rf['Order Id'] || '').trim().replace(/\.0$/, '');
         const irctc = irctcMap.get(orderId) || {};
         const fbCounts = fbCountMap.get(orderId) || { complaint: 0, feedback: 0 };
-        const outletId = cleanOutletId(rf['OutletId'] || rf['Outlet ID'] || irctc['Outlet Id'] || '');
+        const outletId = getOutletIdFromRow(rf) || getOutletIdFromRow(irctc) || '';
         const outletInfo = outletsMap[outletId] || outletsMasterInfo[outletId] || {};
 
         const rfRawStatus = rf['Order Status'] || '';
@@ -1395,14 +1420,7 @@ export default function Page() {
         const rfComm = parseFloat(r['Final RF Commission'] || 0) || 0;
         const prepaid = parseFloat(r['PPD'] || 0) || 0;
         const mealCount = parseInt(r['Meals'] || '1', 10) || 1;
-        const outletId = cleanOutletId(
-          r['Outlet Id'] ??
-          r['Outlet ID'] ??
-          r['OutletId'] ??
-          r['Aggregator Outlet ID'] ??
-          r['Aggregator Outlet Id'] ??
-          ''
-        );
+        const outletId = getOutletIdFromRow(r);
 
         const sStat = dayStats[src] || dayStats['RELFood_IRCTC'];
         sStat.orders += 1;
@@ -1413,7 +1431,8 @@ export default function Page() {
         sStat.prepaidValue += prepaid;
         sStat.discount += discount;
         sStat.revenue += rfComm;
-        if (outletId) sStat.outletsSet.add(outletId);
+        // Active restaurants = unique outlets that actually delivered an order on this date.
+        if (isDelivered && outletId) sStat.outletsSet.add(outletId);
       });
 
       // IMPORTANT: Feedback/Complaint FTD comes ONLY from Feedback.Created At.
