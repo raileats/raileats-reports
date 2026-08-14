@@ -14,6 +14,7 @@ import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vend
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
 import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
+import MainReportMatrix from '@/components/MainReportMatrix';
 
 // --- Native IndexedDB Storage Engine ---
 const DB_NAME = 'RelFoodMasterDB';
@@ -731,6 +732,51 @@ const formatFullDisplayDate = (dateVal: any): string => {
   });
 };
 
+// Feedback Date Engine: Main Report Feedback/Complaint FTD must use
+// the Feedback upload's exact `Created At` date, not Delivery Date/Rating/Remarks.
+// Supports Date objects, Excel serials, ISO timestamps and MM/DD/YYYY timestamps.
+const parseFeedbackCreatedAt = (dateVal: any): Date | null => {
+  if (dateVal === null || dateVal === undefined || String(dateVal).trim() === '') return null;
+
+  if (dateVal instanceof Date) {
+    return isNaN(dateVal.getTime()) ? null : new Date(dateVal.getTime());
+  }
+
+  const raw = String(dateVal).trim();
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    return new Date(excelEpoch + numeric * 86400000);
+  }
+
+  const iso = new Date(raw);
+  if (!isNaN(iso.getTime()) && /^\d{4}[-\/]/.test(raw)) {
+    return iso;
+  }
+
+  const datePart = raw.split(/[T ]/)[0];
+  const slash = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (slash) {
+    const first = Number(slash[1]);
+    const second = Number(slash[2]);
+    const year = Number(slash[3]);
+    // Feedback export uses the same MM/DD/YYYY convention as the current source files.
+    // If the first part cannot be a month, safely fall back to DD/MM/YYYY.
+    const month = first <= 12 ? first : second;
+    const day = first <= 12 ? second : first;
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) return d;
+  }
+
+  return isNaN(iso.getTime()) ? null : iso;
+};
+
+const feedbackCreatedAtKey = (dateVal: any): string => {
+  const d = parseFeedbackCreatedAt(dateVal);
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 type ReportType =
   | 'MASTER'
   | 'MAIN_REPORT'
@@ -1267,19 +1313,55 @@ export default function Page() {
   const mainReportBlocks = useMemo(() => {
     if (!data || data.length === 0) return [];
 
+    // Orders still drive the operational metrics/date blocks.
+    // Feedback/Complaint metrics are intentionally driven separately from
+    // feedbackRawData using the Feedback upload's `Created At` date.
     const dateMap: Record<string, any[]> = {};
+    const orderSourceMap = new Map<string, string>();
+
     data.forEach((row) => {
       const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
       const dateKey = reportDateKey(rawDate);
       if (!dateMap[dateKey]) dateMap[dateKey] = [];
       dateMap[dateKey].push(row);
+
+      const orderId = cleanOrderId(
+        row['IRCTC Order ID'] ?? row['Order ID'] ?? row['Order Id']
+      );
+      if (orderId) orderSourceMap.set(orderId, getSourceChannel(row));
     });
 
-    const sortedDates = Object.keys(dateMap).sort((a, b) => {
-      if (a === 'UNKNOWN') return 1;
-      if (b === 'UNKNOWN') return -1;
-      return a.localeCompare(b);
+    // Build Feedback/Complaint counts from EVERY row in the uploaded
+    // Feedback file, grouped by Created At date + source.
+    const feedbackByDateSource: Record<string, Record<string, { complaint: number; feedback: number }>> = {};
+
+    feedbackRawData.forEach((row) => {
+      const createdAt = row['Created At'] ?? row['CreatedAt'] ?? row['created_at'];
+      const dateKey = feedbackCreatedAtKey(createdAt);
+      const orderId = cleanOrderId(
+        row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']
+      );
+      const type = normalizeFeedbackType(
+        row['Type'] ?? row['Feedback Type'] ?? row['FeedbackType']
+      );
+      if (!dateKey || !type) return;
+
+      // Match the feedback row to its master order only for source/channel.
+      // The DATE always comes from Feedback.Created At.
+      const src = orderSourceMap.get(orderId) || 'RELFood_IRCTC';
+      if (!feedbackByDateSource[dateKey]) feedbackByDateSource[dateKey] = {};
+      if (!feedbackByDateSource[dateKey][src]) {
+        feedbackByDateSource[dateKey][src] = { complaint: 0, feedback: 0 };
+      }
+      if (type === 'Complaint') feedbackByDateSource[dateKey][src].complaint += 1;
+      if (type === 'Feedback') feedbackByDateSource[dateKey][src].feedback += 1;
+
+      // Created At controls the Feedback/Complaint count date, but the
+      // Main Report date blocks remain driven by the operational master data.
+      // Do not create an extra blank date block for a feedback-only date.
     });
+
+    const sortedDates = Object.keys(dateMap).sort((a, b) => a.localeCompare(b));
 
     const mtdBySource: Record<string, MetricStats> = {};
     SOURCES.forEach((s) => (mtdBySource[s] = createEmptyStats()));
@@ -1313,15 +1395,17 @@ export default function Page() {
         sStat.prepaidValue += prepaid;
         sStat.discount += discount;
         sStat.revenue += rfComm;
-        // Feedback/Complaint counts come from the uploaded Feedback file.
-        // During merge, every Feedback-file row is counted by Order ID + Type
-        // and stored on the matching master order in these two fields.
-        // Never infer feedback from Rating or complaint from Remarks.
-        const feedbackCount = Number(r['Feedback Count'] ?? 0) || 0;
-        const complaintCount = Number(r['Feedback Complaint Count'] ?? 0) || 0;
-        sStat.feedback += feedbackCount;
-        sStat.complaints += complaintCount;
         if (outletId) sStat.outletsSet.add(outletId);
+      });
+
+      // IMPORTANT: Feedback/Complaint FTD comes ONLY from Feedback.Created At.
+      // Do not infer it from Rating or Remarks on the master order.
+      const feedbackDay = feedbackByDateSource[dateKey] || {};
+      SOURCES.forEach((s) => {
+        const fb = feedbackDay[s];
+        if (!fb) return;
+        dayStats[s].complaints += fb.complaint;
+        dayStats[s].feedback += fb.feedback;
       });
 
       SOURCES.forEach((s) => {
@@ -1372,7 +1456,7 @@ export default function Page() {
         outletsCount: dayTotal.outletsSet.size,
       };
     });
-  }, [data]);
+  }, [data, feedbackRawData]);
 
   // --- Aggregate Views ---
   const stationSummary = useMemo(() => {
@@ -1481,7 +1565,7 @@ export default function Page() {
         exportMasterExcel();
         break;
       case 'MAIN_REPORT':
-        generateMainReportWorkbook(data);
+        generateMainReportWorkbook(data, feedbackRawData);
         break;
       case 'VENDOR_RDS':
         generateVendorRDSWorkbook(data, penaltySummary, currentMonthRecords, outletsMasterInfo);
@@ -1918,91 +2002,12 @@ export default function Page() {
               />
             </div>
 
-            {/* MAIN REPORT: DATE-WISE MULTI-DAY MATRIX WITH FULL HORIZONTAL SCROLL */}
+            {/* MAIN REPORT: COMPACT EXCEL-STYLE DATE MATRIX — ONE VIEW */}
             {selectedReport === 'MAIN_REPORT' && (
-              <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
-                {mainReportBlocks
-                  .filter((blk) => blk.dateLabel.toLowerCase().includes(searchTerm.toLowerCase()))
-                  .map((blk, bIdx) => (
-                    <div 
-                      key={bIdx} 
-                      className="report-scroll w-full overflow-auto rounded-xl border shadow-sm"
-                      style={{ 
-                        WebkitOverflowScrolling: 'touch',
-                        scrollbarWidth: 'auto',
-                        scrollbarColor: '#cbd5e1 #f8fafc'
-                      }}
-                    >
-                      <table className="portal-report-table portal-table-main min-w-[2800px] border-separate border-spacing-0 text-[11px] whitespace-nowrap">
-                        <thead>
-                          {/* Banner 1: Red Date Header */}
-                          <tr>
-                            <th colSpan={38} className="bg-red-600 text-white font-bold py-2.5 text-center text-xs tracking-wider">
-                              {blk.dateLabel}
-                            </th>
-                            <th className="bg-red-600 text-white text-[10px] text-center px-1 font-bold min-w-[60px]">
-                              Outlets
-                            </th>
-                          </tr>
-
-                          {/* Banner 2: Group Categories */}
-                          <tr className="text-white font-bold text-center text-[10px]">
-                            <th className="bg-black text-white p-2 border border-gray-400 sticky left-0 z-20 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.4)]">
-                              Source
-                            </th>
-                            <th colSpan={5} className="bg-[#5da0dc] border border-gray-300 text-white py-1">ORDERS</th>
-                            <th colSpan={5} className="bg-[#78b778] border border-gray-300 text-white py-1">MEALS</th>
-                            <th colSpan={3} className="bg-[#f2a879] border border-gray-300 text-white py-1">VALUE</th>
-                            <th colSpan={4} className="bg-[#7db4db] border border-gray-300 text-white py-1">PREPAID</th>
-                            <th colSpan={4} className="bg-[#e5989b] border border-gray-300 text-white py-1">DISCOUNT</th>
-                            <th colSpan={4} className="bg-[#83b0df] border border-gray-300 text-white py-1">REVENUE</th>
-                            <th colSpan={4} className="bg-[#7ea8db] border border-gray-300 text-white py-1">Complaints</th>
-                            <th colSpan={4} className="bg-[#9ec899] border border-gray-300 text-white py-1">Feedback</th>
-                            <th colSpan={4} className="bg-[#444444] border border-gray-300 text-white py-1">IRCTC Undelivered</th>
-                            <th rowSpan={2} className="bg-[#f0c808] text-black font-extrabold border border-gray-400 text-center text-base min-w-[60px] align-middle">
-                              {blk.outletsCount}
-                            </th>
-                          </tr>
-
-                          {/* Banner 3: Metric Sub-Headers */}
-                          <tr className="text-[10px] text-center font-bold bg-gray-100 text-gray-800">
-                            <th className="border border-gray-300 p-1 sticky left-0 z-20 bg-gray-200 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.3)]"></th>
-                            {/* Orders */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">Del%</th>
-                            {/* Meals */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">ASP</th><th className="border border-gray-300 px-2 py-1">MPO</th>
-                            {/* Value */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th>
-                            {/* Prepaid */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Discount */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Revenue */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Complaints */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Feedback */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                            {/* Undelivered */}
-                            <th className="border border-gray-300 px-2 py-1">FTD</th><th className="border border-gray-300 px-2 py-1">MTD</th><th className="border border-gray-300 px-2 py-1">LMTD</th><th className="border border-gray-300 px-2 py-1">%</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {/* Total Row */}
-                          {renderMainReportRow('Total', blk.dayTotal, blk.mtdTotal, true)}
-
-                          {/* Channel Source Rows */}
-                          {SOURCES.map((src) => (
-                            <React.Fragment key={src}>
-                              {renderMainReportRow(src, blk.dayStats[src], blk.mtdBySource[src], false)}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ))}
-              </div>
+              <MainReportMatrix
+                blocks={mainReportBlocks}
+                searchTerm={searchTerm}
+              />
             )}
 
             {/* ALL OTHER REPORT TABLES (WITH FULL HORIZONTAL SCROLL) */}
