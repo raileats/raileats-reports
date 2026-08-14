@@ -54,19 +54,64 @@ const createEmptyStats = (): MetricStats => ({
   outletsSet: new Set<string>(),
 });
 
-export const generateMainReportWorkbook = (masterData: any[]) => {
+const normalizeOrderId = (value: any): string => {
+  if (value === null || value === undefined || value === '') return '';
+  return String(value).trim().replace(/\u00A0/g, '').replace(/\s+/g, '').replace(/\.0+$/, '').toUpperCase();
+};
+
+const normalizeFeedbackType = (value: any): 'FEEDBACK' | 'COMPLAINT' | '' => {
+  const type = String(value ?? '').trim().toUpperCase();
+  if (type === 'FEEDBACK') return 'FEEDBACK';
+  if (type === 'COMPLAINT' || type === 'COMPLAIN') return 'COMPLAINT';
+  return '';
+};
+
+const feedbackCreatedAtKey = (value: any): string => {
+  if (value === null || value === undefined || String(value).trim() === '') return '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  const raw = String(value).trim();
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 30000 && numeric < 70000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + numeric * 86400000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  const datePart = raw.split(/[T ]/)[0];
+  let m = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (m) {
+    const first = Number(m[1]);
+    const second = Number(m[2]);
+    const year = Number(m[3]);
+    const month = first <= 12 ? first : second;
+    const day = first <= 12 ? second : first;
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+export const generateMainReportWorkbook = (masterData: any[], feedbackData: any[] = []) => {
   if (!masterData || masterData.length === 0) {
     alert('Koi data uplabdh nahi hai!');
     return;
   }
 
-  // 1. Group records by Date and Source
+  // 1. Group order records by Delivery/Booking Date + Source.
+  // Feedback/Complaint counts are kept in a separate map because their FTD
+  // date must come from Feedback upload's `Created At`.
   const dateGroups: Record<string, Record<string, any[]>> = {};
   const sourcesList = ['RELFood_IRCTC', 'RELFood_WEBSITE', 'REL_Food_App', 'MakeMyTrip'];
+  const orderSourceMap = new Map<string, string>();
+  const feedbackByDateSource: Record<string, Record<string, { complaint: number; feedback: number }>> = {};
 
   masterData.forEach((row) => {
     const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
-    // Normalize date format YYYY-MM-DD or standard
     const dateKey = String(rawDate).split(' ')[0].split('T')[0];
     const src = getOrderSource(row);
 
@@ -78,14 +123,32 @@ export const generateMainReportWorkbook = (masterData: any[]) => {
         MakeMyTrip: [],
       };
     }
-    if (!dateGroups[dateKey][src]) {
-      dateGroups[dateKey][src] = [];
-    }
+    if (!dateGroups[dateKey][src]) dateGroups[dateKey][src] = [];
     dateGroups[dateKey][src].push(row);
+
+    const orderId = normalizeOrderId(row['IRCTC Order ID'] || row['Order ID'] || row['Order Id']);
+    if (orderId) orderSourceMap.set(orderId, src);
   });
 
-  // Sort dates chronologically
-  const sortedDates = Object.keys(dateGroups).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  feedbackData.forEach((row) => {
+    const createdAt = row['Created At'] ?? row['CreatedAt'] ?? row['created_at'];
+    const dateKey = feedbackCreatedAtKey(createdAt);
+    const type = normalizeFeedbackType(row['Type'] ?? row['Feedback Type'] ?? row['FeedbackType']);
+    const orderId = normalizeOrderId(row['Order ID'] ?? row['Order Id'] ?? row['OrderID'] ?? row['IRCTC Order ID']);
+    if (!dateKey || !type) return;
+
+    const src = orderSourceMap.get(orderId) || 'RELFood_IRCTC';
+    if (!feedbackByDateSource[dateKey]) feedbackByDateSource[dateKey] = {};
+    if (!feedbackByDateSource[dateKey][src]) feedbackByDateSource[dateKey][src] = { complaint: 0, feedback: 0 };
+    if (type === 'COMPLAINT') feedbackByDateSource[dateKey][src].complaint += 1;
+    if (type === 'FEEDBACK') feedbackByDateSource[dateKey][src].feedback += 1;
+
+    // Feedback Created At controls only the Feedback/Complaint count date.
+    // Do not create a separate blank operational date block for feedback-only dates.
+  });
+
+  // Sort dates chronologically.
+  const sortedDates = Object.keys(dateGroups).sort((a, b) => a.localeCompare(b));
 
   // Matrix construction for Excel
   const excelRows: any[][] = [];
@@ -131,10 +194,18 @@ export const generateMainReportWorkbook = (masterData: any[]) => {
         stats.discount += discount;
         stats.revenue += rfComm;
 
-        if (r['Rating'] && parseFloat(r['Rating']) > 0) stats.feedback += 1;
-        if (r['Remarks'] && String(r['Remarks']).toLowerCase().includes('complaint')) stats.complaints += 1;
+        // Feedback/Complaint is NOT inferred from Rating/Remarks.
+        // It is added below from Feedback.Created At for this report date.
         if (outletId) stats.outletsSet.add(outletId);
       });
+
+      // Feedback/Complaint FTD is grouped by Feedback.Created At.
+      const feedbackDay = feedbackByDateSource[dateKey] || {};
+      const feedbackForSource = feedbackDay[s];
+      if (feedbackForSource) {
+        stats.feedback += feedbackForSource.feedback;
+        stats.complaints += feedbackForSource.complaint;
+      }
 
       dayStatsBySource[s] = stats;
 
