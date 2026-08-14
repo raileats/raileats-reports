@@ -91,7 +91,7 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
   table-layout: fixed !important;
   border-collapse: collapse !important;
   border-spacing: 0 !important;
-  font-size: 7px !important;
+  font-size: 9px !important;
   line-height: 1 !important;
   color: #000 !important;
 }
@@ -265,7 +265,7 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
 /* Make the whole matrix fit the viewport, matching the supplied compact Excel view. */
 @media (max-width: 1400px) {
   .mr-table {
-    font-size: 6px !important;
+    font-size: 8px !important;
   }
 
   .mr-table th,
@@ -291,7 +291,51 @@ export default function MainReportMatrix({ blocks, searchTerm }: MainReportMatri
 }
 
 
-      `}</style>
+      
+/* Final one-view readable matrix */
+.main-report-matrix,
+.main-report-matrix .mr-day-block,
+.main-report-matrix .mr-table-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow-x: hidden !important;
+}
+
+.main-report-matrix table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed !important;
+  border-collapse: collapse !important;
+}
+
+.main-report-matrix th,
+.main-report-matrix td {
+  font-size: 10px !important;
+  line-height: 1.15 !important;
+  padding: 3px 2px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+}
+
+.main-report-matrix .mr-date-title {
+  font-size: 18px !important;
+  line-height: 1.2 !important;
+}
+
+.main-report-matrix .mr-source-col {
+  width: 8% !important;
+}
+
+.main-report-matrix .mr-data-col {
+  width: 2.34% !important;
+}
+
+.main-report-matrix .mr-outlet-col {
+  width: 2.34% !important;
+}
+`}</style>
       <div className="main-report-matrix">
       {filteredBlocks.map((blk, bIdx) => (
         <div
