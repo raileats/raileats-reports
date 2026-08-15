@@ -80,14 +80,13 @@ const getValue = (row: any, keys: string[]): any => {
 // Main Generator
 // ---------------------------------------------------------------------------
 
-export const generateLastDayStationReportWorkbook = (
+export const generateLastDayStationWiseData = (
   masterData: any[],
   outletsMasterInfo: Record<string, any> = {},
   irctcOrders: any[] = []
 ) => {
   if (!masterData || masterData.length === 0) {
-    alert('Master Data khali hai! Pehle reports process karein.');
-    return;
+    return null;
   }
 
   // 1. Find Max / Last Delivery Date from Master Data
@@ -107,8 +106,7 @@ export const generateLastDayStationReportWorkbook = (
   });
 
   if (!lastDeliveryDateStr) {
-    alert('Koi valid Delivery Date nahi mili!');
-    return;
+    return null;
   }
 
   // 2. Filter Master rows for Last Day
@@ -535,6 +533,27 @@ export const generateLastDayStationReportWorkbook = (
     ];
   });
 
+  return {
+    lastDeliveryDateStr,
+    topSummaryRow,
+    headers,
+    rowsData,
+  };
+};
+
+export const generateLastDayStationReportWorkbook = (
+  masterData: any[],
+  outletsMasterInfo: Record<string, any> = {},
+  irctcOrders: any[] = []
+) => {
+  const report = generateLastDayStationWiseData(masterData, outletsMasterInfo, irctcOrders);
+
+  if (!report) {
+    alert('Master Data khali hai ya valid Delivery Date nahi mili. Pehle reports process karein.');
+    return;
+  }
+
+  const { lastDeliveryDateStr, topSummaryRow, headers, rowsData } = report;
   const fullSheetData = [topSummaryRow, headers, ...rowsData];
   const worksheet = XLSX.utils.aoa_to_sheet(fullSheetData);
 
