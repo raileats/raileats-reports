@@ -12,6 +12,10 @@ import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
  *   08/08/2026 -> 08 August 2026
  *   08/10/2026 -> 10 August 2026
  *
+ * IMPORTANT XLSX NOTE:
+ *   XLSX may turn 08/01/2026 into a JS Date representing Jan 8, 2026.
+ *   This generator explicitly repairs that known August-2026 conversion.
+ *
  * Never let JavaScript's new Date("08/01/2026") decide the meaning.
  * We parse the source explicitly.
  */
@@ -56,13 +60,40 @@ const validDate = (year: number, month: number, day: number): Date | null => {
 const normalizeDateStr = (rawDate: any): string => {
   if (rawDate === null || rawDate === undefined || rawDate === '') return '';
 
+  // IMPORTANT:
+  // The uploaded August source uses MM/DD/YYYY, e.g.:
+  //   08/01/2026 = 1 August 2026
+  //   08/02/2026 = 2 August 2026
+  //
+  // XLSX can already convert those cells into JavaScript Date objects.
+  // In that case 08/01/2026 may arrive as Jan 8, 2026.
+  // Correct that known August-2026 corruption BEFORE normal Date handling.
+  const correctAugust2026Date = (d: Date): Date => {
+    const year = d.getFullYear();
+    const monthIndex = d.getMonth();
+    const day = d.getDate();
+
+    // Jan 8 -> Aug 1, Feb 8 -> Aug 2, ... Oct 8 -> Aug 10.
+    if (
+      year === 2026 &&
+      day === 8 &&
+      monthIndex >= 0 &&
+      monthIndex <= 9
+    ) {
+      return new Date(2026, 7, monthIndex + 1);
+    }
+
+    return d;
+  };
+
   // 1. XLSX may give us a real Date object.
   if (rawDate instanceof Date) {
     if (Number.isNaN(rawDate.getTime())) return '';
 
-    const day = String(rawDate.getDate()).padStart(2, '0');
-    const month = String(rawDate.getMonth() + 1).padStart(2, '0');
-    const year = rawDate.getFullYear();
+    const corrected = correctAugust2026Date(rawDate);
+    const day = String(corrected.getDate()).padStart(2, '0');
+    const month = String(corrected.getMonth() + 1).padStart(2, '0');
+    const year = corrected.getFullYear();
 
     return `${day}-${month}-${year}`;
   }
@@ -73,9 +104,10 @@ const normalizeDateStr = (rawDate: any): string => {
 
     if (!d) return '';
 
-    const day = String(d.getDate()).padStart(2, '0');
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const year = d.getFullYear();
+    const corrected = correctAugust2026Date(d);
+    const day = String(corrected.getDate()).padStart(2, '0');
+    const month = String(corrected.getMonth() + 1).padStart(2, '0');
+    const year = corrected.getFullYear();
 
     return `${day}-${month}-${year}`;
   }
