@@ -409,8 +409,46 @@ export const generateVendorDateWiseReportWorkbook = (
     );
   });
 
+  // Total must be ABOVE the column header in Excel.
+  // Row 1 = Total, Row 2 = headers, Row 3+ = data.
+  const worksheet = XLSX.utils.json_to_sheet(excelRows);
+
+  // Insert a blank top row first, then write the Total row above the header.
+  XLSX.utils.sheet_add_json(worksheet, [totalRow], {
+    origin: 'A1',
+    skipHeader: true,
+  });
+  XLSX.utils.sheet_add_aoa(worksheet, [[]], { origin: 'A2' });
+
+  // Move the original header/data down by one row.
+  const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+  for (let r = range.e.r; r >= 1; r--) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const from = XLSX.utils.encode_cell({ r, c });
+      const to = XLSX.utils.encode_cell({ r + 1, c });
+      if (worksheet[from]) {
+        worksheet[to] = worksheet[from];
+      } else {
+        delete worksheet[to];
+      }
+    }
+  }
+
+  // Restore the header row at row 2.
+  const headers = Object.keys(excelRows[0] || {});
+  headers.forEach((header, c) => {
+    worksheet[XLSX.utils.encode_cell({ r: 1, c })] = {
+      t: 's',
+      v: header,
+    };
+  });
+
+  worksheet['!ref'] = XLSX.utils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: range.e.r + 1, c: range.e.c },
+  });
+
   const exportRows = [totalRow, ...excelRows];
-  const worksheet = XLSX.utils.json_to_sheet(exportRows);
 
   // SheetJS cell styles: zero cells are bold + red, matching the dashboard.
   // The explicit zero values above make the condition deterministic.
@@ -420,7 +458,7 @@ export const generateVendorDateWiseReportWorkbook = (
 
   for (let rowIndex = 0; rowIndex < exportRows.length; rowIndex++) {
     for (let colIndex = 3; colIndex < 3 + dateKeys.length; colIndex++) {
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
+      const address = XLSX.utils.encode_cell({ r: rowIndex + 2, c: colIndex });
       const cell = worksheet[address] as any;
       if (cell && Number(cell.v) === 0) {
         cell.s = zeroStyle;
@@ -428,9 +466,24 @@ export const generateVendorDateWiseReportWorkbook = (
     }
   }
 
+  // Increase Excel text size by 1 for readability.
+  for (const address of Object.keys(worksheet)) {
+    if (address.startsWith('!')) continue;
+    const cell: any = worksheet[address];
+    if (cell && cell.v !== undefined) {
+      cell.s = {
+        ...(cell.s || {}),
+        font: {
+          ...(cell.s?.font || {}),
+          sz: (cell.s?.font?.sz || 11) + 1,
+        },
+      };
+    }
+  }
+
   // Total row is bold for quick visibility.
   for (let colIndex = 0; colIndex < 3 + dateKeys.length; colIndex++) {
-    const address = XLSX.utils.encode_cell({ r: 1, c: colIndex });
+    const address = XLSX.utils.encode_cell({ r: 0, c: colIndex });
     const cell = worksheet[address] as any;
     if (cell) {
       cell.s = {
