@@ -12,7 +12,7 @@ import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRd
 import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
-import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
+import { generateVendorDateWiseReportWorkbook, generateVendorDateWiseData } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook, generateLastDayStationWiseData } from '@/lib/lastDayStationReportGenerator';
 import MainReportMatrix from '@/components/MainReportMatrix';
 
@@ -1555,6 +1555,14 @@ export default function Page() {
     });
   }, [data]);
 
+  // Vendor Date Wise dashboard MUST use the exact same data engine/order as
+  // the Vendor Date Wise Excel export. This keeps:
+  // Row Labels | Name | STN Code | 1 August 2026 | 2 August 2026 | ...
+  // identical in Dashboard and Excel.
+  const vendorDateWiseSummary = useMemo(() => {
+    return generateVendorDateWiseData(data, outletsMasterInfo);
+  }, [data, outletsMasterInfo]);
+
   // --- Outlet-wise Feedback / Complaint Report ---
   //
   // PERFORMANCE FIX:
@@ -2320,7 +2328,7 @@ export default function Page() {
                 )}
 
                 {/* 4. DATE WISE VIEW */}
-                {(selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') && (
+                {selectedReport === 'DATE_WISE' && (
                   <table className="portal-report-table portal-table-date w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       <tr>
@@ -2345,6 +2353,60 @@ export default function Page() {
                             <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
                             <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
                             <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* 4B. VENDOR DATE WISE VIEW - EXACT EXCEL DATA LAYOUT */}
+                {selectedReport === 'VENDOR_DATE_WISE' && (
+                  <table className="portal-report-table portal-table-date w-full min-w-max text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
+                      <tr>
+                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.5)] min-w-[110px] w-[110px]">
+                          Row Labels
+                        </th>
+                        <th className="p-3 font-semibold sticky left-[110px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[310px] w-[310px]">
+                          Name
+                        </th>
+                        <th className="p-3 font-semibold sticky left-[420px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[120px] w-[120px]">
+                          STN Code
+                        </th>
+                        {vendorDateWiseSummary.dateColumns.map((dateLabel: string, index: number) => (
+                          <th key={`${dateLabel}-${index}`} className="p-3 font-semibold text-center min-w-[110px]">
+                            {dateLabel}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {vendorDateWiseSummary.rows
+                        .filter((row: any) => {
+                          const q = searchTerm.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            String(row['Row Labels'] ?? '').toLowerCase().includes(q) ||
+                            String(row.Name ?? '').toLowerCase().includes(q) ||
+                            String(row['STN Code'] ?? '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map((row: any, rowIndex: number) => (
+                          <tr key={`${row['Row Labels']}-${rowIndex}`} className="portal-data-row hover:bg-slate-50">
+                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
+                              {row['Row Labels']}
+                            </td>
+                            <td className="p-3 font-medium text-white sticky left-[110px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px] max-w-[310px] truncate">
+                              {row.Name || '-'}
+                            </td>
+                            <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                              {row['STN Code'] || '-'}
+                            </td>
+                            {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => (
+                              <td key={`${dateKey}-${dateIndex}`} className="p-3 text-center min-w-[110px] font-medium">
+                                {row[dateKey] === '' || row[dateKey] === undefined || row[dateKey] === null ? '' : row[dateKey]}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                     </tbody>
