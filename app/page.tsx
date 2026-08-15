@@ -1563,6 +1563,22 @@ export default function Page() {
     return generateVendorDateWiseData(data, outletsMasterInfo);
   }, [data, outletsMasterInfo]);
 
+  // Vendor Date Wise total row: sum the delivered-order counts for every
+  // outlet for each date, matching the Excel-aligned date-wise report.
+  // The total row is always shown at the top, independent of search filtering.
+  const vendorDateWiseTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+
+    vendorDateWiseSummary.dateKeys.forEach((dateKey: string) => {
+      totals[dateKey] = vendorDateWiseSummary.rows.reduce((sum: number, row: any) => {
+        const value = Number(row[dateKey] ?? 0);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+    });
+
+    return totals;
+  }, [vendorDateWiseSummary]);
+
   // --- Outlet-wise Feedback / Complaint Report ---
   //
   // PERFORMANCE FIX:
@@ -2381,6 +2397,24 @@ export default function Page() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {/* Total row — always visible at the top, just like the Excel report. */}
+                      <tr className="portal-data-row bg-slate-800/90 font-bold text-white">
+                        <td className="p-3 font-bold text-indigo-300 sticky left-0 bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
+                          Total
+                        </td>
+                        <td className="p-3 font-bold text-white sticky left-[110px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
+                          
+                        </td>
+                        <td className="p-3 font-bold text-cyan-300 sticky left-[420px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                          
+                        </td>
+                        {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => (
+                          <td key={`total-${dateKey}-${dateIndex}`} className="p-3 text-center min-w-[110px] font-bold text-blue-300">
+                            {vendorDateWiseTotals[dateKey] || 0}
+                          </td>
+                        ))}
+                      </tr>
+
                       {vendorDateWiseSummary.rows
                         .filter((row: any) => {
                           const q = searchTerm.trim().toLowerCase();
