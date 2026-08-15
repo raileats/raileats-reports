@@ -13,7 +13,7 @@ import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/st
 import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vendorReportGenerator';
 import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
 import { generateVendorDateWiseReportWorkbook } from '@/lib/vendorDateWiseReportGenerator';
-import { generateLastDayStationReportWorkbook } from '@/lib/lastDayStationReportGenerator';
+import { generateLastDayStationReportWorkbook, generateLastDayStationWiseData } from '@/lib/lastDayStationReportGenerator';
 import MainReportMatrix from '@/components/MainReportMatrix';
 
 // --- Native IndexedDB Storage Engine ---
@@ -1500,6 +1500,21 @@ export default function Page() {
     return generateStationWiseData(data, outletsMasterInfo, irctcRawData);
   }, [data, outletsMasterInfo, irctcRawData]);
 
+  // LAST_DAY_STATION dashboard MUST use the exact same data engine/order as its Excel export.
+  // This prevents the dashboard from showing the generic Station Report data.
+  const lastDayStationSummary = useMemo(() => {
+    const report = generateLastDayStationWiseData(data, outletsMasterInfo, irctcRawData);
+    if (!report) return [];
+
+    return report.rowsData.map((values: any[]) => {
+      const row: Record<string, any> = {};
+      report.headers.forEach((header: string, index: number) => {
+        row[header] = values[index];
+      });
+      return row;
+    });
+  }, [data, outletsMasterInfo, irctcRawData]);
+
   const vendorSummary = useMemo(() => {
     return generateVendorWiseData(data, outletsMasterInfo, penaltySummary);
   }, [data, outletsMasterInfo, penaltySummary]);
@@ -2150,29 +2165,51 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 2. STATION / LAST DAY STATION VIEW - EXACT EXCEL DATA ORDER */}
-                {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (
-                  <table className="portal-report-table portal-table-station w-full min-w-[2800px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 z-10 text-slate-700">
-                      <tr>
-                        {[
-                          'Station Code','Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
-                        ].map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stationSummary
-                        .filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()))
-                        .map((row: any, i: number) => (
+                {/* 2. STATION / LAST DAY STATION VIEW */}
+                {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (() => {
+                  const isLastDay = selectedReport === 'LAST_DAY_STATION';
+
+                  // LAST_DAY_STATION columns are intentionally identical to the Excel generator.
+                  const columns = isLastDay
+                    ? [
+                        'Station Code','Rank','Delivery Date','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+                      ]
+                    : [
+                        'Station Code','Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+                      ];
+
+                  const rows = (isLastDay ? lastDayStationSummary : stationSummary)
+                    .filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()));
+
+                  return (
+                    <table className="portal-report-table portal-table-station w-full min-w-[2800px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                      <thead className="sticky top-0 z-10 text-slate-700">
+                        <tr>
+                          {columns.map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row: any, i: number) => (
                           <tr key={`${row['Station Code']}-${i}`} className="portal-data-row">
-                            {[
-                              row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Price'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Not Delivered Order'], row['Not Delivered %'], row['PPD % of Final Selling Price'], row['Feedback Good'], row['Feedback Bad'], row['Count of Delivered Outlets'], row['Total Station Vendors']
-                            ].map((value: any, j: number) => <td key={j} className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= 3 && typeof value === 'number' ? 'text-right' : ''}`}>{typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '-')}</td>)}
+                            {columns.map((column: string, j: number) => {
+                              const value = row[column];
+                              return (
+                                <td
+                                  key={column}
+                                  className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= (isLastDay ? 4 : 3) && typeof value === 'number' ? 'text-right' : ''}`}
+                                >
+                                  {typeof value === 'number'
+                                    ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                                    : (value ?? '-')}
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
-                )}
+                      </tbody>
+                    </table>
+                  );
+                })()}
 
                 {/* 3A. VENDOR REPORT VIEW - EXACT EXCEL DATA ORDER */}
                 {selectedReport === 'VENDOR_REPORT' && (
