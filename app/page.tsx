@@ -2397,15 +2397,16 @@ export default function Page() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {/* Total row — always visible at the top, just like the Excel report. */}
-                      <tr className="portal-data-row bg-slate-800/90 font-bold text-white">
-                        <td className="p-3 font-bold text-indigo-300 sticky left-0 bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
+                      {/* Total row — always visible at the top, just like the Excel report.
+                          Deliberately dark, extra-bold, and two text sizes larger than normal rows. */}
+                      <tr className="portal-data-row bg-slate-800/90 text-base font-extrabold text-slate-950">
+                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-0 bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
                           Total
                         </td>
-                        <td className="p-3 font-bold text-white sticky left-[110px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
+                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-[110px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
                           
                         </td>
-                        <td className="p-3 font-bold text-cyan-300 sticky left-[420px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-[420px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                           
                         </td>
                         {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
@@ -2414,8 +2415,8 @@ export default function Page() {
                           return (
                             <td
                               key={`total-${dateKey}-${dateIndex}`}
-                              className={`p-3 text-center min-w-[110px] font-bold ${
-                                totalIsZero ? 'text-red-500' : 'text-blue-300'
+                              className={`p-3 text-center min-w-[110px] text-base font-extrabold ${
+                                totalIsZero ? 'text-red-700' : 'text-slate-950'
                               }`}
                             >
                               {totalValue}
