@@ -425,7 +425,7 @@ export const generateVendorDateWiseReportWorkbook = (
   for (let r = range.e.r; r >= 1; r--) {
     for (let c = range.s.c; c <= range.e.c; c++) {
       const from = XLSX.utils.encode_cell({ r, c });
-      const to = XLSX.utils.encode_cell({ r + 1, c });
+      const to = XLSX.utils.encode_cell({ r: r + 1, c });
       if (worksheet[from]) {
         worksheet[to] = worksheet[from];
       } else {
