@@ -870,6 +870,8 @@ const VENDOR_RDS_COLUMNS = [
   'State',
   'Discounted Base Price',
   'Margin %',
+  'Vendor Payment Type',
+  'Discount Applied',
 ] as const;
 
 const VENDOR_RDS_MONEY_COLUMNS = new Set([
@@ -1175,6 +1177,8 @@ export default function Page() {
           paidToVendors: parseFloat(row['Paid to Vendors By Relfood'] || 0) || 0,
           receivedFromVendor: parseFloat(row['Payment Received from Vendor to Relfood'] || 0) || 0,
           creditNoteToVendor: parseFloat(row['Credit Note to Vendor by Relfood'] || 0) || 0,
+          vendorPaymentType: String(row['Vendor Payment Type'] || '').trim().toUpperCase(),
+          discountApplied: String(row['Discount Applied'] || '').trim(),
         }));
 
         await saveToDB('CURRENT_MONTH_DATA', currentMonthParsedList);
@@ -1211,6 +1215,12 @@ export default function Page() {
               irctcStatus: String(row['Status'] || row['STATUS'] || '').trim(),
               outletName: String(row['Outlet Name'] || '').trim(),
               station: String(row['Station'] || row['Station Name'] || '').trim(),
+              stationRank: (() => {
+                const rawRank = row['Station Rank'];
+                if (rawRank === undefined || rawRank === null || String(rawRank).trim() === '') return '';
+                const n = Number(rawRank);
+                return Number.isFinite(n) ? n : String(rawRank).trim();
+              })(),
             };
           }
         });
@@ -1286,6 +1296,7 @@ export default function Page() {
           'Outlet ID': outletId,
           'Vendor Name': rf['Vendor Name'] || irctc['Vendor Name'] || '',
           'Station Code': rf['Station Code'] || irctc['Delivery Station'] || '',
+          'Station Rank': outletInfo.stationRank ?? '',
           // Preserve the exact IRCTC feedback source inside master data.
           // This makes Station Report independent of IndexedDB raw-data state.
           'Delivery Station': irctc['Delivery Station'] || '',
@@ -1516,7 +1527,7 @@ export default function Page() {
   }, [data, outletsMasterInfo, irctcRawData]);
 
   const vendorSummary = useMemo(() => {
-    return generateVendorWiseData(data, outletsMasterInfo, penaltySummary);
+    return generateVendorWiseData(data, outletsMasterInfo, penaltySummary, currentMonthRecords);
   }, [data, outletsMasterInfo, penaltySummary]);
 
   const dateSummary = useMemo(() => {
@@ -1560,7 +1571,7 @@ export default function Page() {
   // Row Labels | Name | STN Code | 1 August 2026 | 2 August 2026 | ...
   // identical in Dashboard and Excel.
   const vendorDateWiseSummary = useMemo(() => {
-    return generateVendorDateWiseData(data, outletsMasterInfo);
+    return generateVendorDateWiseData(data, outletsMasterInfo, currentMonthRecords);
   }, [data, outletsMasterInfo]);
 
   // Vendor Date Wise total row: sum the delivered-order counts for every
@@ -1650,13 +1661,13 @@ export default function Page() {
         generateStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
         break;
       case 'VENDOR_REPORT':
-        generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary);
+        generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary, currentMonthRecords);
         break;
       case 'DATE_WISE':
         generateDateWiseReportWorkbook(data);
         break;
       case 'VENDOR_DATE_WISE':
-        generateVendorDateWiseReportWorkbook(data);
+        generateVendorDateWiseReportWorkbook(data, outletsMasterInfo, currentMonthRecords);
         break;
       case 'LAST_DAY_STATION':
         generateLastDayStationReportWorkbook(data, outletsMasterInfo, irctcRawData);
@@ -1852,11 +1863,12 @@ export default function Page() {
         `₹${r['Final Vendor Price']}`, `₹${r['Final Base Price']}`, `₹${r['Final GST']}`, `₹${r['Final RF Commission']}`, `₹${r['Final Selling Price']}`, `${r['Margin %']}%`,
       ]);
     } else if (selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') {
-      head = [['Station Code', 'State', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Payout', 'RF Comm', 'GST (5%)', 'Feedback Good', 'Feedback Bad']];
-      body = stationSummary.map((s: any) => [s['Station Code'], s['State'] || '-', s['Total Orders'], s['Delivered'], s['Cancelled'], `₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`, `₹${Number(s['Vendor Price'] || 0).toFixed(2)}`, `₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`, `₹${Number(s['Final GST'] || 0).toFixed(2)}`, s['Feedback Good'] || 0, s['Feedback Bad'] || 0]);
+      head = [['Station Code','Rank','Delivery Date','Station Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors']];
+      const stationRows: any[] = selectedReport === 'LAST_DAY_STATION' ? lastDayStationSummary : stationSummary;
+      body = stationRows.map((s: any) => [s['Station Code'],s['Rank'],s['Delivery Date'] || '',s['Station Rank'] ?? '',s['Station Name'] || '-',`₹${Number(s['Vendor Price'] || 0).toFixed(2)}`,`₹${Number(s['Final Base Price'] || 0).toFixed(2)}`,`₹${Number(s['Final Total Commission'] || 0).toFixed(2)}`,`₹${Number(s['Final IRCTC Comm'] || 0).toFixed(2)}`,`₹${Number(s['Final RF Commission'] || 0).toFixed(2)}`,`₹${Number(s['Final GST'] || 0).toFixed(2)}`,`₹${Number(s['Final Discount'] || 0).toFixed(2)}`,`₹${Number(s['Final Vendor Discount'] || 0).toFixed(2)}`,`₹${Number(s['Final RF Discount'] || 0).toFixed(2)}`,`₹${Number(s['Delivery Charges'] || 0).toFixed(2)}`,`₹${Number(s['Final Selling Price'] || 0).toFixed(2)}`,`₹${Number(s['Final Order Total'] || 0).toFixed(2)}`,`₹${Number(s['Discounted Base Price'] || 0).toFixed(2)}`,`₹${Number(s['PPD'] || 0).toFixed(2)}`,`₹${Number(s['COD'] || 0).toFixed(2)}`,`₹${Number(s['Meals'] || 0).toFixed(2)}`,s['Check'] || '-',s['Count of Delivered Orders'] || 0,s['Not Delivered Order'] || 0,s['Not Delivered %'] || '0.00%',s['PPD % of Final Selling Price'] || '0.00%',s['Feedback Good'] || 0,s['Feedback Bad'] || 0,s['Count of Delivered Outlets'] || 0,s['Total Station Vendors'] || 0]);
     } else if (selectedReport === 'VENDOR_REPORT' || selectedReport === 'VENDOR_RDS') {
-      head = [['Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name', 'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission', 'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount', 'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges', 'Final Selling Price', 'Final Order Total', 'Discounted Base Price', 'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders', 'Not Delivered', 'Not Delivered %', 'Prepaid %']];
-      body = vendorSummary.map((v) => [v['Aggregator Outlet ID'],v['Station Code'],v['Rank'],v['Station Name'],String(v['Vendor Name']||'').substring(0,22),`₹${Number(v['Vendor Price']||0).toFixed(2)}`,`₹${Number(v['Net Payment']||0).toFixed(2)}`,`₹${Number(v['Final Base Price']||0).toFixed(2)}`,`₹${Number(v['Final Total Commission']||0).toFixed(2)}`,`₹${Number(v['Final IRCTC Comm']||0).toFixed(2)}`,`₹${Number(v['Final RF Commission']||0).toFixed(2)}`,`₹${Number(v['Final GST']||0).toFixed(2)}`,`₹${Number(v['Final Discount']||0).toFixed(2)}`,`₹${Number(v['Final Vendor Discount']||0).toFixed(2)}`,`₹${Number(v['Final RF Discount']||0).toFixed(2)}`,`₹${Number(v['Delivery Charges']||0).toFixed(2)}`,`₹${Number(v['Final Selling Price']||0).toFixed(2)}`,`₹${Number(v['Final Order Total']||0).toFixed(2)}`,`₹${Number(v['Discounted Base Price']||0).toFixed(2)}`,`₹${Number(v['PPD']||0).toFixed(2)}`,`₹${Number(v['COD']||0).toFixed(2)}`,`₹${Number(v['Meals']||0).toFixed(2)}`,v['Check']||'-',v['Count of Delivered Orders']||0,v['Count of Not_Delivered As per IRCTC Status']||0,v['Not_Delivered %']||'0.00%',v['Prepaid %']||'0.00%']);
+      head = [['Outlet ID', 'Station Code', 'Rank', 'Station Name', 'Vendor Name', 'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission', 'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount', 'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges', 'Final Selling Price', 'Final Order Total', 'Discounted Base Price', 'PPD', 'COD', 'Meals', 'Check', 'Delivered Orders', 'Not Delivered', 'Not Delivered %', 'Prepaid %', 'Vendor Payment Type', 'Discount Applied']];
+      body = vendorSummary.map((v) => [v['Aggregator Outlet ID'],v['Station Code'],v['Rank'],v['Station Name'],String(v['Vendor Name']||'').substring(0,22),`₹${Number(v['Vendor Price']||0).toFixed(2)}`,`₹${Number(v['Net Payment']||0).toFixed(2)}`,`₹${Number(v['Final Base Price']||0).toFixed(2)}`,`₹${Number(v['Final Total Commission']||0).toFixed(2)}`,`₹${Number(v['Final IRCTC Comm']||0).toFixed(2)}`,`₹${Number(v['Final RF Commission']||0).toFixed(2)}`,`₹${Number(v['Final GST']||0).toFixed(2)}`,`₹${Number(v['Final Discount']||0).toFixed(2)}`,`₹${Number(v['Final Vendor Discount']||0).toFixed(2)}`,`₹${Number(v['Final RF Discount']||0).toFixed(2)}`,`₹${Number(v['Delivery Charges']||0).toFixed(2)}`,`₹${Number(v['Final Selling Price']||0).toFixed(2)}`,`₹${Number(v['Final Order Total']||0).toFixed(2)}`,`₹${Number(v['Discounted Base Price']||0).toFixed(2)}`,`₹${Number(v['PPD']||0).toFixed(2)}`,`₹${Number(v['COD']||0).toFixed(2)}`,`₹${Number(v['Meals']||0).toFixed(2)}`,v['Check']||'-',v['Count of Delivered Orders']||0,v['Count of Not_Delivered As per IRCTC Status']||0,v['Not_Delivered %']||'0.00%',v['Prepaid %']||'0.00%',v['Vendor Payment Type']||'-',v['Discount Applied']||'-']);
     } else if (selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') {
       head = [['Date', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Price', 'RF Commission']];
       body = dateSummary.map((d) => [d.date,d.totalOrders,d.delivered,d.cancelled,`₹${d.sellingPrice.toFixed(2)}`,`₹${d.vendorPrice.toFixed(2)}`,`₹${d.rfComm.toFixed(2)}`]);
@@ -2196,17 +2208,17 @@ export default function Page() {
                   // LAST_DAY_STATION columns are intentionally identical to the Excel generator.
                   const columns = isLastDay
                     ? [
-                        'Station Code','Rank','Delivery Date','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+                        'Station Code','Rank','Delivery Date','Station Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
                       ]
                     : [
-                        'Station Code','Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+                        'Station Code','Rank','Station Name','Station Rank','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
                       ];
 
                   const rows = (isLastDay ? lastDayStationSummary : stationSummary)
                     .filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()));
 
                   return (
-                    <table className="portal-report-table portal-table-station w-full min-w-[2800px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                    <table className="portal-report-table portal-table-station w-full min-w-[3000px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                       <thead className="sticky top-0 z-10 text-slate-700">
                         <tr>
                           {columns.map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
@@ -2241,7 +2253,7 @@ export default function Page() {
                     <thead className="sticky top-0 z-10 text-slate-700">
                       <tr>
                         {[
-                          'Aggregator Outlet ID','Station Code','Rank','Station Name','Vendor Name','Vendor Price','Net Payment','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Count of Not_Delivered As per IRCTC Status','Not_Delivered %','Prepaid %'
+                          'Aggregator Outlet ID','Station Code','Rank','Station Name','Vendor Name','Vendor Price','Net Payment','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Count of Not_Delivered As per IRCTC Status','Not_Delivered %','Prepaid %','Vendor Payment Type','Discount Applied'
                         ].map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
                       </tr>
                     </thead>
@@ -2251,7 +2263,7 @@ export default function Page() {
                         .map((row: any, i: number) => (
                           <tr key={`${row['Aggregator Outlet ID']}-${i}`} className="portal-data-row">
                             {[
-                              row['Aggregator Outlet ID'], row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Name'], row['Vendor Price'], row['Net Payment'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Count of Not_Delivered As per IRCTC Status'], row['Not_Delivered %'], row['Prepaid %']
+                              row['Aggregator Outlet ID'], row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Name'], row['Vendor Price'], row['Net Payment'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Count of Not_Delivered As per IRCTC Status'], row['Not_Delivered %'], row['Prepaid %'], row['Vendor Payment Type'], row['Discount Applied']
                             ].map((value: any, j: number) => <td key={j} className={`p-3 ${j < 5 ? 'font-medium' : ''} ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>{typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '-')}</td>)}
                           </tr>
                         ))}
@@ -2394,6 +2406,8 @@ export default function Page() {
                             {dateLabel}
                           </th>
                         ))}
+                        <th className="p-3 font-semibold text-center min-w-[150px]">Vendor Payment Type</th>
+                        <th className="p-3 font-semibold text-center min-w-[140px]">Discount Applied</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -2423,6 +2437,8 @@ export default function Page() {
                             </td>
                           );
                         })}
+                        <td className="p-3 text-center min-w-[150px]"></td>
+                        <td className="p-3 text-center min-w-[140px]"></td>
                       </tr>
 
                       {vendorDateWiseSummary.rows
@@ -2460,6 +2476,8 @@ export default function Page() {
                                 </td>
                               );
                             })}
+                            <td className="p-3 text-center min-w-[150px]">{row['Vendor Payment Type'] || '-'}</td>
+                            <td className="p-3 text-center min-w-[140px]">{row['Discount Applied'] || '-'}</td>
                           </tr>
                         ))}
                     </tbody>
@@ -2477,6 +2495,7 @@ export default function Page() {
                         <th className="p-3 font-semibold">State</th>
                         <th className="p-3 font-semibold">GST Number</th>
                         <th className="p-3 font-semibold">IRCTC Status</th>
+                        <th className="p-3 font-semibold">Station Rank</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -2494,6 +2513,7 @@ export default function Page() {
                                 {row.irctcStatus || 'Active'}
                               </span>
                             </td>
+                            <td className="p-3 text-violet-300 font-bold">{row.stationRank || '-'}</td>
                           </tr>
                         ))}
                     </tbody>
