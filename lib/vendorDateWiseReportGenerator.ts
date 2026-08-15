@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
 /**
@@ -306,16 +306,25 @@ export const generateVendorDateWiseData = (
     };
 
     sortedDateKeys.forEach((dateKey) => {
-      rowObj[dateKey] = item.dateCounts[dateKey]
-        ? item.dateCounts[dateKey]
-        : '';
+      // Every outlet/date cell is explicit: 0 means no delivered orders for
+      // that station/outlet on that date. Dashboard and Excel therefore use
+      // the same visible zero instead of an empty cell.
+      rowObj[dateKey] = item.dateCounts[dateKey] ?? 0;
     });
 
     return rowObj;
   });
 
-  // Sort by Outlet ID ascending.
+  // Sort by Station Code first (as requested), then Outlet ID, then Name.
+  // This keeps Dashboard and Excel in exactly the same station-wise order.
   rows.sort((a, b) => {
+    const stationCompare = String(a['STN Code'] ?? '').localeCompare(
+      String(b['STN Code'] ?? ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    );
+    if (stationCompare !== 0) return stationCompare;
+
     const aa = Number(a['Row Labels']);
     const bb = Number(b['Row Labels']);
 
@@ -323,11 +332,14 @@ export const generateVendorDateWiseData = (
       return aa - bb;
     }
 
-    return String(a['Row Labels']).localeCompare(
+    const outletCompare = String(a['Row Labels']).localeCompare(
       String(b['Row Labels']),
       undefined,
       { numeric: true }
     );
+    if (outletCompare !== 0) return outletCompare;
+
+    return String(a.Name ?? '').localeCompare(String(b.Name ?? ''), undefined, { sensitivity: 'base' });
   });
 
   // IMPORTANT:
@@ -384,6 +396,21 @@ export const generateVendorDateWiseReportWorkbook = (
 
   const worksheet = XLSX.utils.json_to_sheet(excelRows);
 
+  // SheetJS cell styles: zero cells are bold + red, matching the dashboard.
+  // The explicit zero values above make the condition deterministic.
+  const zeroStyle = {
+    font: { bold: true, color: { rgb: 'FFFF0000' } },
+  };
+  for (let rowIndex = 0; rowIndex < excelRows.length; rowIndex++) {
+    for (let colIndex = 3; colIndex < 3 + dateKeys.length; colIndex++) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
+      const cell = worksheet[address] as any;
+      if (cell && Number(cell.v) === 0) {
+        cell.s = zeroStyle;
+      }
+    }
+  }
+
   // Freeze first 3 columns so Outlet ID / Name / STN Code remain visible
   // while horizontally scrolling through dates.
   worksheet['!freeze'] = {
@@ -406,7 +433,8 @@ export const generateVendorDateWiseReportWorkbook = (
 
   XLSX.writeFile(
     workbook,
-    `${fileNamePrefix}_${todayStr}.xlsx`
+    `${fileNamePrefix}_${todayStr}.xlsx`,
+    { cellStyles: true } as any
   );
 };
 
