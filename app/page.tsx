@@ -2408,11 +2408,20 @@ export default function Page() {
                         <td className="p-3 font-bold text-cyan-300 sticky left-[420px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                           
                         </td>
-                        {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => (
-                          <td key={`total-${dateKey}-${dateIndex}`} className="p-3 text-center min-w-[110px] font-bold text-blue-300">
-                            {vendorDateWiseTotals[dateKey] || 0}
-                          </td>
-                        ))}
+                        {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
+                          const totalValue = Number(vendorDateWiseTotals[dateKey] ?? 0);
+                          const totalIsZero = totalValue === 0;
+                          return (
+                            <td
+                              key={`total-${dateKey}-${dateIndex}`}
+                              className={`p-3 text-center min-w-[110px] font-bold ${
+                                totalIsZero ? 'text-red-500' : 'text-blue-300'
+                              }`}
+                            >
+                              {totalValue}
+                            </td>
+                          );
+                        })}
                       </tr>
 
                       {vendorDateWiseSummary.rows
@@ -2436,11 +2445,20 @@ export default function Page() {
                             <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                               {row['STN Code'] || '-'}
                             </td>
-                            {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => (
-                              <td key={`${dateKey}-${dateIndex}`} className="p-3 text-center min-w-[110px] font-medium">
-                                {row[dateKey] === '' || row[dateKey] === undefined || row[dateKey] === null ? '' : row[dateKey]}
-                              </td>
-                            ))}
+                            {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
+                              const value = row[dateKey];
+                              const isZero = value === 0 || value === '0' || value === '' || value === undefined || value === null;
+                              return (
+                                <td
+                                  key={`${dateKey}-${dateIndex}`}
+                                  className={`p-3 text-center min-w-[110px] ${
+                                    isZero ? 'font-bold text-red-500' : 'font-medium'
+                                  }`}
+                                >
+                                  {isZero ? 0 : value}
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
                     </tbody>
