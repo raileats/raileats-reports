@@ -226,9 +226,15 @@ const formatDateHeader = (dStr: string): string => {
 
 export const generateVendorDateWiseData = (
   masterOrders: MasterOrderRow[],
-  outletsMasterInfo: Record<string, OutletMasterInfo> = {}
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  currentMonthRecords: any[] = []
 ) => {
   const uniqueDatesSet = new Set<string>();
+  const currentMonthMap: Record<string, any> = {};
+  (currentMonthRecords || []).forEach((c: any) => {
+    const oid = String(c?.outletId || c?.['Outlet Id'] || c?.['Outlet ID'] || '').trim().replace(/\.0$/, '');
+    if (oid) currentMonthMap[oid] = c;
+  });
 
   const outletDataMap: Record<
     string,
@@ -299,10 +305,14 @@ export const generateVendorDateWiseData = (
   // remain deterministic. The UI can format the same key using
   // formatDateHeader() and therefore cannot swap month/day.
   const rows = Object.values(outletDataMap).map((item) => {
+    const currentMonthInfo = currentMonthMap[item.outletId] || {};
+
     const rowObj: Record<string, any> = {
       'Row Labels': Number(item.outletId) || item.outletId,
       Name: item.vendorName,
       'STN Code': item.stnCode,
+      'Vendor Payment Type': String(currentMonthInfo.vendorPaymentType || currentMonthInfo['Vendor Payment Type'] || '').trim().toUpperCase(),
+      'Discount Applied': String(currentMonthInfo.discountApplied || currentMonthInfo['Discount Applied'] || '').trim(),
     };
 
     sortedDateKeys.forEach((dateKey) => {
@@ -366,11 +376,13 @@ export const generateVendorDateWiseData = (
 export const generateVendorDateWiseReportWorkbook = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  currentMonthRecords: any[] = [],
   fileNamePrefix: string = 'VENDOR_REPORT_DATE_WISE'
 ) => {
   const { rows, dateKeys } = generateVendorDateWiseData(
     masterOrders,
-    outletsMasterInfo
+    outletsMasterInfo,
+    currentMonthRecords
   );
 
   if (rows.length === 0) {
@@ -391,6 +403,10 @@ export const generateVendorDateWiseReportWorkbook = (
       out[header] = row[dateKey] ?? '';
     });
 
+    // Final two columns, as requested.
+    out['Vendor Payment Type'] = row['Vendor Payment Type'] || '';
+    out['Discount Applied'] = row['Discount Applied'] || '';
+
     return out;
   });
 
@@ -408,6 +424,9 @@ export const generateVendorDateWiseReportWorkbook = (
       0
     );
   });
+
+  totalRow['Vendor Payment Type'] = '';
+  totalRow['Discount Applied'] = '';
 
   // Total must be ABOVE the column header in Excel.
   // Row 1 = Total, Row 2 = headers, Row 3+ = data.
@@ -482,7 +501,7 @@ export const generateVendorDateWiseReportWorkbook = (
   }
 
   // Total row is bold for quick visibility.
-  for (let colIndex = 0; colIndex < 3 + dateKeys.length; colIndex++) {
+  for (let colIndex = 0; colIndex < 5 + dateKeys.length; colIndex++) {
     const address = XLSX.utils.encode_cell({ r: 0, c: colIndex });
     const cell = worksheet[address] as any;
     if (cell) {
@@ -506,6 +525,8 @@ export const generateVendorDateWiseReportWorkbook = (
     { wch: 42 },
     { wch: 14 },
     ...dateKeys.map(() => ({ wch: 18 })),
+    { wch: 20 },
+    { wch: 18 },
   ];
 
   const workbook = XLSX.utils.book_new();

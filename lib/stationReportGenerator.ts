@@ -5,6 +5,7 @@ export interface StationReportRow {
   'Station Code': string;
   'Rank': number;
   'Station Name': string;
+  'Station Rank': number | string;
   'Vendor Price': number;
   'Final Base Price': number;
   'Final Total Commission': number;
@@ -88,6 +89,20 @@ export const generateStationWiseData = (
     }
   });
 
+  // Station Rank is maintained in Outlet Master at Outlet-ID level.
+  // Convert it to a Station Code -> Rank map so station reports can use one
+  // stable station-level rank even when multiple outlets belong to a station.
+  const stationRankMap: Record<string, number> = {};
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const cleanSt = getCleanStationCode(out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '');
+    const rank = Number(out?.stationRank ?? out?.['Station Rank']);
+    if (cleanSt && Number.isFinite(rank)) {
+      stationRankMap[cleanSt] = Number.isFinite(stationRankMap[cleanSt])
+        ? Math.min(stationRankMap[cleanSt], rank)
+        : rank;
+    }
+  });
+
   // B. STEP 1: Feedback Good/Bad map.
   // Primary source = raw IRCTC file.
   // Fallback = master rows, which also carry Delivery Station + Feedback Type.
@@ -153,6 +168,7 @@ export const generateStationWiseData = (
       stationMap[stationCode] = {
         stationCode,
         stationName,
+        stationRank: stationRankMap[stationCode] ?? '',
         vendorPrice: 0,
         finalBasePrice: 0,
         totalComm: 0,
@@ -221,10 +237,13 @@ export const generateStationWiseData = (
     }
   });
 
-  // D. Sort descending by Base Price
-  const sortedStations = Object.values(stationMap).sort(
-    (a: any, b: any) => b.finalBasePrice - a.finalBasePrice
-  );
+  // D. Sort primarily by Station Rank (ascending), then by Final Base Price.
+  const sortedStations = Object.values(stationMap).sort((a: any, b: any) => {
+    const ar = Number.isFinite(Number(a.stationRank)) ? Number(a.stationRank) : Number.MAX_SAFE_INTEGER;
+    const br = Number.isFinite(Number(b.stationRank)) ? Number(b.stationRank) : Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+    return b.finalBasePrice - a.finalBasePrice;
+  });
 
   // E. Final Mapping with Feedback Data
   return sortedStations.map((st: any, idx: number): StationReportRow => {
@@ -254,6 +273,7 @@ export const generateStationWiseData = (
       'Station Code': st.stationCode,
       'Rank': idx + 1,
       'Station Name': st.stationName,
+      'Station Rank': st.stationRank ?? '',
       'Vendor Price': vPrice,
       'Final Base Price': bPrice,
       'Final Total Commission': tComm,

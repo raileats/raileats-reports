@@ -45,6 +45,8 @@ export interface CurrentMonthRow {
   paidToVendors?: number;
   receivedFromVendor?: number;
   creditNoteToVendor?: number;
+  vendorPaymentType?: string;
+  discountApplied?: string;
 }
 
 export interface OutletMasterInfo {
@@ -129,8 +131,8 @@ export const generateVendorRdsData = (
 
   allOutletIds.forEach((outletId) => {
     const orders = outletOrderMap[outletId] || [];
-    const outletInfo = outletsMasterInfo[outletId] || {};
-    const curMonthInfo = curMonthMap[outletId] || {};
+    const outletInfo: OutletMasterInfo = outletsMasterInfo[outletId] || {};
+    const curMonthInfo: Partial<CurrentMonthRow> = curMonthMap[outletId] || {};
     const firstRow = orders[0] || {};
 
     const vendorName = String(firstRow['Vendor Name'] || curMonthInfo.vendorName || outletInfo.outletName || '').trim();
@@ -279,6 +281,8 @@ export const generateVendorRdsData = (
       'State': state,
       'Discounted Base Price': discountedBasePrice,
       'Margin %': avgMarginPct,
+      'Vendor Payment Type': String(curMonthInfo.vendorPaymentType || '').trim(),
+      'Discount Applied': String(curMonthInfo.discountApplied || '').trim(),
     });
   });
 
@@ -330,6 +334,8 @@ export const generateVendorRdsData = (
       'State': row['State'],
       'Discounted Base Price': row['Discounted Base Price'],
       'Margin %': row['Margin %'],
+      'Vendor Payment Type': row['Vendor Payment Type'],
+      'Discount Applied': row['Discount Applied'],
     };
   });
 };

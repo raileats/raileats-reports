@@ -29,6 +29,8 @@ export interface VendorReportRow {
   'Count of Not_Delivered As per IRCTC Status': number;
   'Not_Delivered %': string;
   'Prepaid %': string;
+  'Vendor Payment Type': string;
+  'Discount Applied': string;
 }
 
 /**
@@ -37,7 +39,8 @@ export interface VendorReportRow {
 export const generateVendorWiseData = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
-  penaltySummary: Record<string, number> = {}
+  penaltySummary: Record<string, number> = {},
+  currentMonthRecords: any[] = []
 ): VendorReportRow[] => {
   const outletOrdersMap: Record<string, MasterOrderRow[]> = {};
 
@@ -58,6 +61,12 @@ export const generateVendorWiseData = (
     if (cleanId && !outletOrdersMap[cleanId]) {
       outletOrdersMap[cleanId] = [];
     }
+  });
+
+  const currentMonthMap: Record<string, any> = {};
+  (currentMonthRecords || []).forEach((c: any) => {
+    const oid = String(c?.outletId || c?.['Outlet Id'] || c?.['Outlet ID'] || '').trim().replace(/\.0$/, '');
+    if (oid) currentMonthMap[oid] = c;
   });
 
   const rawOutletList: any[] = [];
@@ -198,6 +207,8 @@ export const generateVendorWiseData = (
       notDeliveredOrdersCount,
       notDeliveredPct,
       prepaidPct,
+      vendorPaymentType: String(currentMonthMap[outletId]?.vendorPaymentType || currentMonthMap[outletId]?.['Vendor Payment Type'] || '').trim(),
+      discountApplied: String(currentMonthMap[outletId]?.discountApplied || currentMonthMap[outletId]?.['Discount Applied'] || '').trim(),
     });
   });
 
@@ -233,6 +244,8 @@ export const generateVendorWiseData = (
     'Count of Not_Delivered As per IRCTC Status': row.notDeliveredOrdersCount,
     'Not_Delivered %': row.notDeliveredPct,
     'Prepaid %': row.prepaidPct,
+    'Vendor Payment Type': row.vendorPaymentType,
+    'Discount Applied': row.discountApplied,
   }));
 };
 
@@ -243,6 +256,7 @@ export const generateVendorReportWorkbook = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
   penaltySummary: Record<string, number> | string = {},
+  currentMonthRecords: any[] = [],
   fileNamePrefix: string = 'VENDOR_OUTLET_WISE_REPORT'
 ) => {
   const penaltyMap: Record<string, number> =
@@ -250,7 +264,7 @@ export const generateVendorReportWorkbook = (
   const prefix: string =
     typeof penaltySummary === 'string' ? penaltySummary : fileNamePrefix || 'VENDOR_OUTLET_WISE_REPORT';
 
-  const vendorData = generateVendorWiseData(masterOrders, outletsMasterInfo, penaltyMap);
+  const vendorData = generateVendorWiseData(masterOrders, outletsMasterInfo, penaltyMap, currentMonthRecords);
   if (vendorData.length === 0) {
     alert('Vendor report export karne ke liye koi data available nahi hai.');
     return;
