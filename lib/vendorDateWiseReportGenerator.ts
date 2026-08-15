@@ -394,14 +394,31 @@ export const generateVendorDateWiseReportWorkbook = (
     return out;
   });
 
-  const worksheet = XLSX.utils.json_to_sheet(excelRows);
+  // Add the same top Total row as the dashboard/pivot layout.
+  // It appears immediately below the header and totals every date column.
+  const totalRow: Record<string, any> = {
+    'Row Labels': 'Total',
+    Name: '',
+    'STN Code': '',
+  };
+
+  dateKeys.forEach((dateKey) => {
+    totalRow[formatDateHeader(dateKey)] = rows.reduce(
+      (sum, row) => sum + (Number(row[dateKey]) || 0),
+      0
+    );
+  });
+
+  const exportRows = [totalRow, ...excelRows];
+  const worksheet = XLSX.utils.json_to_sheet(exportRows);
 
   // SheetJS cell styles: zero cells are bold + red, matching the dashboard.
   // The explicit zero values above make the condition deterministic.
   const zeroStyle = {
     font: { bold: true, color: { rgb: 'FFFF0000' } },
   };
-  for (let rowIndex = 0; rowIndex < excelRows.length; rowIndex++) {
+
+  for (let rowIndex = 0; rowIndex < exportRows.length; rowIndex++) {
     for (let colIndex = 3; colIndex < 3 + dateKeys.length; colIndex++) {
       const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
       const cell = worksheet[address] as any;
@@ -411,11 +428,23 @@ export const generateVendorDateWiseReportWorkbook = (
     }
   }
 
+  // Total row is bold for quick visibility.
+  for (let colIndex = 0; colIndex < 3 + dateKeys.length; colIndex++) {
+    const address = XLSX.utils.encode_cell({ r: 1, c: colIndex });
+    const cell = worksheet[address] as any;
+    if (cell) {
+      cell.s = {
+        ...(cell.s || {}),
+        font: { bold: true },
+      };
+    }
+  }
+
   // Freeze first 3 columns so Outlet ID / Name / STN Code remain visible
   // while horizontally scrolling through dates.
   worksheet['!freeze'] = {
     xSplit: 3,
-    ySplit: 1,
+    ySplit: 2,
   };
 
   // Basic readable widths.
