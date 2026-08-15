@@ -171,12 +171,27 @@ export const generateLastDayStationWiseData = (
     }
   });
 
+  // Station Rank is stored in Outlet Master by Outlet ID; reduce it to
+  // Station Code -> Station Rank for this station-level report.
+  const stationRankMap: Record<string, number> = {};
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const stCode = String(out?.station || out?.stationCode || out?.stn_code || out?.station_code || out?.deliveryStation || out?.stationName || '').trim().toUpperCase();
+    const cleanSt = stCode.replace(/[^A-Z0-9]/g, '');
+    const rank = Number(out?.stationRank ?? out?.['Station Rank']);
+    if (cleanSt && Number.isFinite(rank)) {
+      stationRankMap[cleanSt] = Number.isFinite(stationRankMap[cleanSt])
+        ? Math.min(stationRankMap[cleanSt], rank)
+        : rank;
+    }
+  });
+
   // 4. Group Station Level Data for Last Day
   const stationMap: Record<
     string,
     {
       stationCode: string;
       stationName: string;
+      stationRank: number | string;
       vendorPrice: number;
       finalBasePrice: number;
       finalTotalComm: number;
@@ -239,6 +254,7 @@ export const generateLastDayStationWiseData = (
       stationMap[stationCode] = {
         stationCode,
         stationName,
+        stationRank: stationRankMap[normalizeStationCode(stationCode)] ?? '',
         vendorPrice: 0,
         finalBasePrice: 0,
         finalTotalComm: 0,
@@ -319,6 +335,7 @@ export const generateLastDayStationWiseData = (
       stationMap[station] = {
         stationCode: station,
         stationName: station,
+        stationRank: stationRankMap[normalizeStationCode(station)] ?? '',
         vendorPrice: 0,
         finalBasePrice: 0,
         finalTotalComm: 0,
@@ -349,10 +366,13 @@ export const generateLastDayStationWiseData = (
     stationMap[station].feedbackBadCount = counts.bad;
   });
 
-  // Sort descending by Final Base Price
-  const sortedStations = Object.values(stationMap).sort(
-    (a, b) => b.finalBasePrice - a.finalBasePrice
-  );
+  // Sort primarily by Station Rank (ascending), then by Final Base Price.
+  const sortedStations = Object.values(stationMap).sort((a: any, b: any) => {
+    const ar = Number.isFinite(Number(a.stationRank)) ? Number(a.stationRank) : Number.MAX_SAFE_INTEGER;
+    const br = Number.isFinite(Number(b.stationRank)) ? Number(b.stationRank) : Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+    return b.finalBasePrice - a.finalBasePrice;
+  });
 
   // Grand Totals
   let sumVendorPrice = 0;
@@ -422,7 +442,7 @@ export const generateLastDayStationWiseData = (
 
   // Summary Top Row
   const topSummaryRow = [
-    '', '', '', '',
+    '', '', '', '', '',
     Number(sumVendorPrice.toFixed(2)),
     Number(sumFinalBasePrice.toFixed(2)),
     Number(sumFinalTotalComm.toFixed(2)),
@@ -455,6 +475,7 @@ export const generateLastDayStationWiseData = (
     'Station Code',
     'Rank',
     'Delivery Date',
+    'Station Rank',
     'Station Name',
     'Vendor Price',
     'Final Base Price',
@@ -504,6 +525,7 @@ export const generateLastDayStationWiseData = (
       st.stationCode,
       index + 1,
       lastDeliveryDateStr,
+      st.stationRank ?? '',
       st.stationName,
       vPrice,
       bPrice,
