@@ -3115,6 +3115,18 @@ export default function Page() {
                             );
                           })()}
 
+                          {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
+                            const value = Number(row[dateKey] ?? 0);
+                            const isZero = !Number.isFinite(value) || value === 0;
+                            return (
+                              <td
+                                key={`${row['Row Labels']}-${dateKey}-${dateIndex}`}
+                                className={`p-3 text-center min-w-[110px] font-medium ${isZero ? 'text-red-500 font-bold' : 'text-slate-300'}`}
+                              >
+                                {isZero ? 0 : value.toLocaleString('en-IN')}
+                              </td>
+                            );
+                          })}
 
                         </tr>
                       ))}
