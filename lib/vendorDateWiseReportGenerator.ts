@@ -490,6 +490,8 @@ export const generateVendorDateWiseReportWorkbook = (
       Name: row.Name,
       'STN Code': row['STN Code'],
       'Station Rank': row['Station Rank'] ?? '',
+      'Vendor Payment Type': row['Vendor Payment Type'] || '',
+      'Discount Applied': row['Discount Applied'] || '',
       'Orders Count': Number(row['Orders Count'] ?? 0),
     };
 
@@ -498,9 +500,6 @@ export const generateVendorDateWiseReportWorkbook = (
       out[header] = row[dateKey] ?? '';
     });
 
-    // Final two columns, as requested.
-    out['Vendor Payment Type'] = row['Vendor Payment Type'] || '';
-    out['Discount Applied'] = row['Discount Applied'] || '';
 
     return out;
   });
@@ -512,6 +511,8 @@ export const generateVendorDateWiseReportWorkbook = (
     Name: '',
     'STN Code': '',
     'Station Rank': '',
+    'Vendor Payment Type': '',
+    'Discount Applied': '',
     'Orders Count': rows.reduce((sum, row) => sum + (Number(row['Orders Count']) || 0), 0),
   };
 
@@ -522,8 +523,6 @@ export const generateVendorDateWiseReportWorkbook = (
     );
   });
 
-  totalRow['Vendor Payment Type'] = '';
-  totalRow['Discount Applied'] = '';
 
   // Total must be ABOVE the column header in Excel.
   // Row 1 = Total, Row 2 = headers, Row 3+ = data.
@@ -607,7 +606,7 @@ export const generateVendorDateWiseReportWorkbook = (
   }
 
   // Total row is bold for quick visibility.
-  for (let colIndex = 0; colIndex < 5 + dateKeys.length; colIndex++) {
+  for (let colIndex = 0; colIndex < 7 + dateKeys.length; colIndex++) {
     const address = XLSX.utils.encode_cell({ r: 0, c: colIndex });
     const cell = worksheet[address] as any;
     if (cell) {
@@ -618,10 +617,10 @@ export const generateVendorDateWiseReportWorkbook = (
     }
   }
 
-  // Freeze first 5 columns so Outlet ID / Name / STN Code / Station Rank / Orders Count remain visible
+  // Freeze first 7 columns so Outlet ID / Name / STN Code / Station Rank / Payment Type / Discount / Orders Count remain visible
   // while horizontally scrolling through dates.
   worksheet['!freeze'] = {
-    xSplit: 5,
+    xSplit: 7,
     ySplit: 2,
   };
 
@@ -631,10 +630,10 @@ export const generateVendorDateWiseReportWorkbook = (
     { wch: 42 },
     { wch: 14 },
     { wch: 12 },
-    { wch: 14 },
-    ...dateKeys.map(() => ({ wch: 18 })),
     { wch: 20 },
     { wch: 18 },
+    { wch: 14 },
+    ...dateKeys.map(() => ({ wch: 18 })),
   ];
 
   const workbook = XLSX.utils.book_new();
