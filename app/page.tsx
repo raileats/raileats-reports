@@ -2314,6 +2314,197 @@ export default function Page() {
   ]);
 
   // --- Exports ---
+  // ---------------------------------------------------------------------------
+  // DOWNLOAD ALL REPORTS - ONE XLSX / 8 REPORT SHEETS
+  // IMPORTANT: This uses the SAME data engines already used by the individual
+  // report dashboards/exports. It does not mutate filters or selectedReport.
+  // ---------------------------------------------------------------------------
+  const exportAllReportsExcel = () => {
+    if (!data.length && Object.keys(outletsMasterInfo).length === 0) {
+      return alert('No Data available to generate All Reports Excel!');
+    }
+
+    const workbook = XLSX.utils.book_new();
+
+    const appendJsonSheet = (sheetName: string, rows: any[], fallbackColumns: string[] = []) => {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      let worksheet: XLSX.WorkSheet;
+
+      if (safeRows.length > 0) {
+        worksheet = XLSX.utils.json_to_sheet(safeRows);
+      } else if (fallbackColumns.length > 0) {
+        worksheet = XLSX.utils.aoa_to_sheet([fallbackColumns]);
+      } else {
+        worksheet = XLSX.utils.aoa_to_sheet([['No Data']]);
+      }
+
+      const range = worksheet['!ref'];
+      if (range) {
+        worksheet['!autofilter'] = { ref: range };
+      }
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    };
+
+    // 1. MAIN REPORT - same date/source metrics used by MainReportMatrix.
+    const mainReportRows: any[] = [];
+    const mainMetricRow = (dateLabel: string, source: string, ftd: any, mtd: any) => {
+      const orders = Number(ftd?.orders || 0);
+      const delivered = Number(ftd?.deliveredOrders || 0);
+      const meals = Number(ftd?.meals || 0);
+      const value = Number(ftd?.value || 0);
+      const prepaid = Number(ftd?.prepaidValue || 0);
+      const discount = Number(ftd?.discount || 0);
+      const revenue = Number(ftd?.revenue || 0);
+      const complaints = Number(ftd?.complaints || 0);
+      const feedback = Number(ftd?.feedback || 0);
+      const undelivered = Number(ftd?.undelivered || 0);
+
+      return {
+        Date: dateLabel,
+        Source: source,
+        'FTD Orders': orders,
+        'MTD Orders': Number(mtd?.orders || 0),
+        'LMTD Orders': 0,
+        ASP: orders > 0 ? Math.round(value / orders) : 0,
+        'Delivered %': orders > 0 ? `${((delivered / orders) * 100).toFixed(0)}%` : '0%',
+        'FTD Meals': meals,
+        'MTD Meals': Number(mtd?.meals || 0),
+        'LMTD Meals': 0,
+        'Meal ASP': meals > 0 ? Math.round(value / meals) : 0,
+        'Meals / Order': orders > 0 ? (meals / orders).toFixed(2) : '0.00',
+        'FTD Selling Amount': Math.round(value),
+        'MTD Selling Amount': Math.round(Number(mtd?.value || 0)),
+        'LMTD Selling Amount': 0,
+        'FTD PPD': Math.round(prepaid),
+        'MTD PPD': Math.round(Number(mtd?.prepaidValue || 0)),
+        'LMTD PPD': 0,
+        'PPD %': value > 0 ? `${((prepaid / value) * 100).toFixed(2)}%` : '0.00%',
+        'FTD Discount': Math.round(discount),
+        'MTD Discount': Math.round(Number(mtd?.discount || 0)),
+        'LMTD Discount': 0,
+        'Discount %': value > 0 ? `${((discount / value) * 100).toFixed(2)}%` : '0.00%',
+        'FTD RF Commission': Math.round(revenue),
+        'MTD RF Commission': Math.round(Number(mtd?.revenue || 0)),
+        'LMTD RF Commission': 0,
+        'RF Commission %': value > 0 ? `${((revenue / value) * 100).toFixed(1)}%` : '0.0%',
+        'FTD Complaints': complaints,
+        'MTD Complaints': Number(mtd?.complaints || 0),
+        'LMTD Complaints': 0,
+        'Complaint %': delivered > 0 ? `${((complaints / delivered) * 100).toFixed(2)}%` : '0.00%',
+        'FTD Feedback': feedback,
+        'MTD Feedback': Number(mtd?.feedback || 0),
+        'LMTD Feedback': 0,
+        'Feedback %': delivered > 0 ? `${((feedback / delivered) * 100).toFixed(2)}%` : '0.00%',
+        'FTD Undelivered': undelivered,
+        'MTD Undelivered': Number(mtd?.undelivered || 0),
+        'LMTD Undelivered': 0,
+        'Undelivered %': orders > 0 ? `${((undelivered / orders) * 100).toFixed(2)}%` : '0.00%',
+        'Delivered Outlets': Number(ftd?.outletsSet?.size || 0),
+      };
+    };
+
+    mainReportBlocks.forEach((block: any) => {
+      mainReportRows.push(mainMetricRow(block.dateLabel, 'TOTAL', block.dayTotal, block.mtdTotal));
+      SOURCES.forEach((source) => {
+        mainReportRows.push(mainMetricRow(
+          block.dateLabel,
+          source,
+          block.dayStats?.[source] || createEmptyStats(),
+          block.mtdBySource?.[source] || createEmptyStats()
+        ));
+      });
+    });
+
+    appendJsonSheet('Main Report', mainReportRows);
+
+    // 2. DATE WISE SUMMARY - exact Date Wise engine output used by the dashboard.
+    const dateWiseRows = generateDateWiseData(data, outletsMasterInfo, irctcRawData);
+    appendJsonSheet('Date Wise Summary', dateWiseRows);
+
+    // 3. STATION REPORT - exact Station Report aggregation engine.
+    const stationRows = generateStationWiseData(data, outletsMasterInfo, irctcRawData);
+    appendJsonSheet('Station Report', stationRows);
+
+    // 4. VENDOR REPORT - exact Vendor Report aggregation engine.
+    const vendorRows = generateVendorWiseData(
+      data,
+      outletsMasterInfo,
+      penaltySummary,
+      currentMonthRecords
+    );
+    appendJsonSheet('Vendor Report', vendorRows);
+
+    // 5. VENDOR DATE WISE - exact same engine as the dashboard.
+    // Flatten the dynamic date-key structure so Excel has one normal header row.
+    const vendorDateWiseRows = (vendorDateWiseSummary?.rows || []).map((row: any) => ({
+      'Outlet ID': row['Row Labels'],
+      'Outlet Name': row.Name,
+      'Station Code': row['STN Code'],
+      'Station Rank': row['Station Rank'] ?? '',
+      'Vendor Payment Type': row['Vendor Payment Type'] ?? '',
+      'Discount Applied': row['Discount Applied'] ?? '',
+      'Orders Count': Number(row['Orders Count'] ?? 0),
+      ...(vendorDateWiseSummary.dateKeys || []).reduce((acc: Record<string, any>, dateKey: string, index: number) => {
+        acc[vendorDateWiseSummary.dateColumns?.[index] || dateKey] = Number(row[dateKey] ?? 0);
+        return acc;
+      }, {}),
+    }));
+    appendJsonSheet('Vendor Date Wise', vendorDateWiseRows);
+
+    // 6. LAST DAY STATION - exact Last Day Station engine output.
+    const lastDayReport = generateLastDayStationWiseData(data, outletsMasterInfo, irctcRawData);
+    const lastDayRows = lastDayReport
+      ? lastDayReport.rowsData.map((values: any[]) => {
+          const row: Record<string, any> = {};
+          lastDayReport.headers.forEach((header: string, index: number) => {
+            row[header] = values[index];
+          });
+          return row;
+        })
+      : [];
+    appendJsonSheet('Last Day Station', lastDayRows);
+
+    // 7. VENDOR RDS SUMMARY - exact 41-column Vendor RDS aggregation engine.
+    const vendorRdsAllRows = generateVendorRdsData(
+      data,
+      penaltySummary,
+      currentMonthRecords,
+      outletsMasterInfo
+    );
+    appendJsonSheet('Vendor RDS Summary', vendorRdsAllRows);
+
+    // 8. FEEDBACK REPORT - calculate directly so this works even when the
+    // Feedback Report screen is not currently selected (its normal dashboard
+    // calculation is intentionally lazy for performance).
+    const allFeedbackRows = buildFeedbackReport(
+      feedbackRawData,
+      irctcRawData,
+      data,
+      outletsMasterInfo,
+      oldRatingsRawData
+    );
+    const feedbackExportRows = allFeedbackRows.map((r) => ({
+      'Outlet Id': r['Outlet Id'],
+      'Outlet Name': r['Outlet Name'],
+      'Station Code': r['Station Code'],
+      'Old Count': r['Old Count'],
+      'Old Ratings': r['Old Ratings'],
+      'Old Sum': r['Old Sum'],
+      Complaint: r.Complaint,
+      Feedback: r.Feedback,
+      'Current Count': r['Current Count'],
+      'Current Rating': r['Current Rating'],
+      'Current Sum': r['Current Sum'],
+      'Total Count': r['Total Count'],
+      'Total Rating Sum': r['Total Rating Sum'],
+      'Till Date Ratings': r['Total Rating'],
+    }));
+    appendJsonSheet('Feedback Report', feedbackExportRows);
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `RELFOOD_ALL_REPORTS_${todayStr}.xlsx`);
+  };
+
   const exportMasterExcel = () => {
     if (!data.length) return alert('No Data available!');
     const ws = XLSX.utils.json_to_sheet(data);
@@ -2764,6 +2955,14 @@ export default function Page() {
                 className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition shadow-lg shadow-emerald-950 flex items-center gap-1.5"
               >
                 <span>📥</span> Excel (.xlsx)
+              </button>
+
+              <button
+                onClick={exportAllReportsExcel}
+                className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition shadow-lg shadow-indigo-950 flex items-center gap-1.5"
+                title="Download all 8 reports in one Excel workbook"
+              >
+                <span>📚</span> Download All Reports (.xlsx)
               </button>
 
               <button
