@@ -1630,6 +1630,40 @@ export default function Page() {
     return generateStationWiseData(data, outletsMasterInfo, irctcRawData);
   }, [data, outletsMasterInfo, irctcRawData]);
 
+  // Station Report business-position helper.  Station Rank comes from Outlet
+  // Master, while business position is calculated from Final Base Price high
+  // to low.  The same rule is mirrored in the Station Report Excel export.
+  const stationBusinessRankMap = useMemo(() => {
+    const result: Record<string, number> = {};
+    [...stationSummary]
+      .filter((row: any) => Number(row['Final Base Price'] || 0) > 0)
+      .sort((a: any, b: any) => {
+        const diff = Number(b['Final Base Price'] || 0) - Number(a['Final Base Price'] || 0);
+        return diff !== 0
+          ? diff
+          : String(a['Station Code'] || '').localeCompare(String(b['Station Code'] || ''));
+      })
+      .forEach((row: any, index: number) => {
+        result[String(row['Station Code'] || '')] = index + 1;
+      });
+    return result;
+  }, [stationSummary]);
+
+  const getStationReportTextColor = (row: any, isLastDay: boolean): string | undefined => {
+    if (isLastDay) return undefined;
+
+    // Base Price missing/zero: entire row text red.
+    if (Number(row['Final Base Price'] || 0) <= 0) return '#DC2626';
+
+    const stationRank = Number(row['Station Rank']);
+    const businessRank = stationBusinessRankMap[String(row['Station Code'] || '')];
+
+    // Correct station position for its business = dark green; otherwise dark brown.
+    return Number.isFinite(stationRank) && businessRank !== undefined && stationRank === businessRank
+      ? '#166534'
+      : '#6B3E26';
+  };
+
   // LAST_DAY_STATION dashboard MUST use the exact same data engine/order as its Excel export.
   // This prevents the dashboard from showing the generic Station Report data.
   const lastDayStationSummary = useMemo(() => {
@@ -2638,23 +2672,31 @@ export default function Page() {
                         </tr>
                       </thead>
                       <tbody>
-                        {rows.map((row: any, i: number) => (
-                          <tr key={`${row['Station Code']}-${i}`} className="portal-data-row">
-                            {columns.map((column: string, j: number) => {
-                              const value = row[column];
-                              return (
-                                <td
-                                  key={column}
-                                  className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= (isLastDay ? 4 : 3) && typeof value === 'number' ? 'text-right' : ''}`}
-                                >
-                                  {typeof value === 'number'
-                                    ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
-                                    : (value ?? '-')}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
+                        {rows.map((row: any, i: number) => {
+                          const rowTextColor = getStationReportTextColor(row, isLastDay);
+                          return (
+                            <tr
+                              key={`${row['Station Code']}-${i}`}
+                              className="portal-data-row"
+                              style={rowTextColor ? { color: rowTextColor } : undefined}
+                            >
+                              {columns.map((column: string, j: number) => {
+                                const value = row[column];
+                                return (
+                                  <td
+                                    key={column}
+                                    className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= (isLastDay ? 4 : 3) && typeof value === 'number' ? 'text-right' : ''}`}
+                                    style={rowTextColor ? { color: rowTextColor } : undefined}
+                                  >
+                                    {typeof value === 'number'
+                                      ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                                      : (value ?? '-')}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   );
