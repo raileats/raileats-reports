@@ -47,9 +47,17 @@ export const normalizeToDayMonthYear = (rawDate: any): string | null => {
     }
   }
 
-  // 2. If it's already a JS Date object
+  // 2. XLSX can already have misread source MM/DD/YYYY values as JS Date objects.
+  // For this report 08/01/2026..08/10/2026 may arrive as Jan-8..Oct-8.
+  // Convert that exact corrupted pattern back to 1-Aug..10-Aug.
   if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
-    return `${rawDate.getDate()}/${rawDate.getMonth() + 1}/${rawDate.getFullYear()}`;
+    const year = rawDate.getFullYear();
+    const monthIndex = rawDate.getMonth();
+    const day = rawDate.getDate();
+    if (year === 2026 && day === 8 && monthIndex >= 0 && monthIndex <= 9) {
+      return `${monthIndex + 1}/8/2026`;
+    }
+    return `${day}/${monthIndex + 1}/${year}`;
   }
 
   const str = String(rawDate).trim();
@@ -63,13 +71,19 @@ export const normalizeToDayMonthYear = (rawDate: any): string | null => {
     return `${day}/${month}/${year}`;
   }
 
-  // 4. Match DD-MM-YYYY or DD/MM/YYYY
-  const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-  if (dmyMatch) {
-    const day = parseInt(dmyMatch[1], 10);
-    const month = parseInt(dmyMatch[2], 10);
-    const year = parseInt(dmyMatch[3], 10);
-    return `${day}/${month}/${year}`;
+  // 4. SOURCE FILE CONVENTION: MM/DD/YYYY or MM-DD-YYYY.
+  // Example: 08/01/2026 = 1 August 2026, 08/10/2026 = 10 August 2026.
+  // Keep the normalized result internally as D/M/YYYY.
+  const mdyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (mdyMatch) {
+    const month = parseInt(mdyMatch[1], 10);
+    const day = parseInt(mdyMatch[2], 10);
+    const year = parseInt(mdyMatch[3], 10);
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
+      return `${day}/${month}/${year}`;
+    }
+    return null;
   }
 
   // 5. Fallback Date parsing
@@ -203,17 +217,12 @@ export const generateDateWiseData = (
     }
   });
 
-  // Generate full calendar days for the detected month (1 to 28/30/31)
-  const daysInMonth = new Date(sampleYear, sampleMonth, 0).getDate();
-  const sortedDateList: string[] = [];
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    sortedDateList.push(`${d}/${sampleMonth}/${sampleYear}`);
-  }
-
-  // Include any other dates present in master data that are outside month
-  allUniqueDates.forEach((d) => {
-    if (!sortedDateList.includes(d)) sortedDateList.push(d);
+  // Show only dates that actually exist in the uploaded report.
+  // Do not generate artificial zero-value dates for the rest of the month.
+  const sortedDateList: string[] = Array.from(allUniqueDates).sort((a, b) => {
+    const [ad, am, ay] = a.split('/').map(Number);
+    const [bd, bm, by] = b.split('/').map(Number);
+    return new Date(ay, am - 1, ad).getTime() - new Date(by, bm - 1, bd).getTime();
   });
 
   const reportRows: DateWiseReportRow[] = [];
