@@ -1001,6 +1001,16 @@ export default function Page() {
   const [vendorColumnFilters, setVendorColumnFilters] = useState<Record<string, string[] | undefined>>({});
   const [openVendorFilter, setOpenVendorFilter] = useState<string | null>(null);
   const [vendorFilterPosition, setVendorFilterPosition] = useState({ top: 0, left: 0, width: 320 });
+
+  // Vendor Date Wise gets the same Excel-style multi-select header filters.
+  // Filters work on Outlet ID, Outlet Name, STN Code, every date column,
+  // Vendor Payment Type and Discount Applied.
+  const [vendorDateWiseColumnFilters, setVendorDateWiseColumnFilters] =
+    useState<Record<string, string[] | undefined>>({});
+  const [openVendorDateWiseFilter, setOpenVendorDateWiseFilter] = useState<string | null>(null);
+  const [vendorDateWiseFilterPosition, setVendorDateWiseFilterPosition] =
+    useState({ top: 0, left: 0, width: 320 });
+
   const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
 
   useEffect(() => {
@@ -1788,7 +1798,154 @@ export default function Page() {
   // identical in Dashboard and Excel.
   const vendorDateWiseSummary = useMemo(() => {
     return generateVendorDateWiseData(data, outletsMasterInfo, currentMonthRecords);
-  }, [data, outletsMasterInfo]);
+  }, [data, outletsMasterInfo, currentMonthRecords]);
+
+  // Exact column model shared by Dashboard filters and the Excel header.
+  // The first three columns are Outlet ID / Outlet Name / STN Code.
+  const vendorDateWiseFilterColumns = useMemo(() => {
+    return [
+      'Row Labels',
+      'Name',
+      'STN Code',
+      ...vendorDateWiseSummary.dateKeys,
+      'Vendor Payment Type',
+      'Discount Applied',
+    ];
+  }, [vendorDateWiseSummary]);
+
+  const vendorDateWiseFilterLabels = useMemo(() => {
+    const labels: Record<string, string> = {
+      'Row Labels': 'Outlet ID',
+      Name: 'Outlet Name',
+      'STN Code': 'Station Code',
+      'Vendor Payment Type': 'Vendor Payment Type',
+      'Discount Applied': 'Discount Applied',
+    };
+
+    vendorDateWiseSummary.dateKeys.forEach((dateKey: string, index: number) => {
+      labels[dateKey] = vendorDateWiseSummary.dateColumns[index] || dateKey;
+    });
+
+    return labels;
+  }, [vendorDateWiseSummary]);
+
+  const vendorDateWiseFilterOptions = useMemo(() => {
+    const result: Record<string, { key: string; label: string }[]> = {};
+
+    vendorDateWiseFilterColumns.forEach((column) => {
+      const seen = new Map<string, string>();
+
+      vendorDateWiseSummary.rows.forEach((row: any) => {
+        const raw = row[column];
+        const key =
+          raw === null || raw === undefined || String(raw).trim() === ''
+            ? '__BLANK__'
+            : String(raw);
+
+        if (!seen.has(key)) {
+          const label =
+            key === '__BLANK__'
+              ? '(Blanks)'
+              : typeof raw === 'number'
+                ? raw.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                : key;
+          seen.set(key, label);
+        }
+      });
+
+      result[column] = Array.from(seen.entries())
+        .map(([key, label]) => ({ key, label }))
+        .sort((a, b) => {
+          if (a.key === '__BLANK__') return 1;
+          if (b.key === '__BLANK__') return -1;
+          return a.label.localeCompare(b.label, undefined, {
+            numeric: true,
+            sensitivity: 'base',
+          });
+        });
+    });
+
+    return result;
+  }, [vendorDateWiseFilterColumns, vendorDateWiseSummary]);
+
+  const filteredVendorDateWiseRows = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+
+    return vendorDateWiseSummary.rows.filter((row: any) => {
+      const matchesSearch =
+        !q ||
+        String(row['Row Labels'] ?? '').toLowerCase().includes(q) ||
+        String(row.Name ?? '').toLowerCase().includes(q) ||
+        String(row['STN Code'] ?? '').toLowerCase().includes(q);
+
+      if (!matchesSearch) return false;
+
+      return vendorDateWiseFilterColumns.every((column) => {
+        const selected = vendorDateWiseColumnFilters[column];
+        if (selected === undefined) return true;
+
+        const raw = row[column];
+        const key =
+          raw === null || raw === undefined || String(raw).trim() === ''
+            ? '__BLANK__'
+            : String(raw);
+
+        return selected.includes(key);
+      });
+    });
+  }, [
+    vendorDateWiseSummary,
+    vendorDateWiseFilterColumns,
+    vendorDateWiseColumnFilters,
+    searchTerm,
+  ]);
+
+  const openVendorDateWiseColumnFilter = (
+    column: string,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setVendorDateWiseFilterPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(300, Math.min(380, rect.width + 180)),
+    });
+    setOpenVendorDateWiseFilter(column);
+  };
+
+  const toggleVendorDateWiseFilterValue = (column: string, key: string) => {
+    setVendorDateWiseColumnFilters((previous) => {
+      const allKeys = (vendorDateWiseFilterOptions[column] || []).map((option) => option.key);
+      const current = previous[column];
+
+      if (current === undefined) {
+        return {
+          ...previous,
+          [column]: allKeys.filter((value) => value !== key),
+        };
+      }
+
+      const next = current.includes(key)
+        ? current.filter((value) => value !== key)
+        : [...current, key];
+
+      if (next.length === allKeys.length) {
+        const copy = { ...previous };
+        delete copy[column];
+        return copy;
+      }
+
+      return { ...previous, [column]: next };
+    });
+  };
+
+  const selectAllVendorDateWiseFilterValues = (column: string) => {
+    setVendorDateWiseColumnFilters((previous) => {
+      const copy = { ...previous };
+      delete copy[column];
+      return copy;
+    });
+  };
 
   // Vendor Date Wise total row: sum the delivered-order counts for every
   // outlet for each date, matching the Excel-aligned date-wise report.
@@ -2540,6 +2697,18 @@ export default function Page() {
                   />
                 )}
 
+                {selectedReport === 'VENDOR_DATE_WISE' && openVendorDateWiseFilter && (
+                  <VendorHeaderFilter
+                    column={vendorDateWiseFilterLabels[openVendorDateWiseFilter] || openVendorDateWiseFilter}
+                    options={vendorDateWiseFilterOptions[openVendorDateWiseFilter] || []}
+                    selected={vendorDateWiseColumnFilters[openVendorDateWiseFilter]}
+                    position={vendorDateWiseFilterPosition}
+                    onToggle={(key) => toggleVendorDateWiseFilterValue(openVendorDateWiseFilter, key)}
+                    onSelectAll={() => selectAllVendorDateWiseFilterValues(openVendorDateWiseFilter)}
+                    onClose={() => setOpenVendorDateWiseFilter(null)}
+                  />
+                )}
+
                 {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
                 {selectedReport === 'VENDOR_RDS' && (
                   <table className="portal-report-table portal-table-rds w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
@@ -2660,95 +2829,218 @@ export default function Page() {
                 {selectedReport === 'VENDOR_DATE_WISE' && (
                   <table className="portal-report-table portal-table-date w-full min-w-max text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                      <tr>
-                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.5)] min-w-[110px] w-[110px]">
-                          Row Labels
-                        </th>
-                        <th className="p-3 font-semibold sticky left-[110px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[310px] w-[310px]">
-                          Name
-                        </th>
-                        <th className="p-3 font-semibold sticky left-[420px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[120px] w-[120px]">
-                          STN Code
-                        </th>
-                        {vendorDateWiseSummary.dateColumns.map((dateLabel: string, index: number) => (
-                          <th key={`${dateLabel}-${index}`} className="p-3 font-semibold text-center min-w-[110px]">
-                            {dateLabel}
-                          </th>
-                        ))}
-                        <th className="p-3 font-semibold text-center min-w-[150px]">Vendor Payment Type</th>
-                        <th className="p-3 font-semibold text-center min-w-[140px]">Discount Applied</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {/* Total row — always visible at the top, just like the Excel report.
-                          Deliberately dark, extra-bold, and two text sizes larger than normal rows. */}
-                      <tr className="portal-data-row bg-slate-800/90 text-base font-extrabold text-slate-950">
-                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-0 bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
+                      {/* TOTAL ROW IS THE FIRST ROW — ABOVE THE HEADER */}
+                      <tr className="bg-slate-300 font-extrabold text-slate-950">
+                        <th className="p-3 text-base font-extrabold sticky left-0 bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[110px] w-[110px]">
                           Total
-                        </td>
-                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-[110px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
-                          
-                        </td>
-                        <td className="p-3 text-base font-extrabold text-slate-950 sticky left-[420px] bg-slate-800 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
-                          
-                        </td>
+                        </th>
+                        <th className="p-3 text-base font-extrabold sticky left-[110px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
+                        </th>
+                        <th className="p-3 text-base font-extrabold sticky left-[420px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                        </th>
                         {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
                           const totalValue = Number(vendorDateWiseTotals[dateKey] ?? 0);
                           const totalIsZero = totalValue === 0;
+
                           return (
-                            <td
+                            <th
                               key={`total-${dateKey}-${dateIndex}`}
                               className={`p-3 text-center min-w-[110px] text-base font-extrabold ${
                                 totalIsZero ? 'text-red-700' : 'text-slate-950'
                               }`}
                             >
                               {totalValue}
-                            </td>
+                            </th>
                           );
                         })}
-                        <td className="p-3 text-center min-w-[150px]"></td>
-                        <td className="p-3 text-center min-w-[140px]"></td>
+                        <th className="p-3 text-center min-w-[150px] text-base font-extrabold"></th>
+                        <th className="p-3 text-center min-w-[140px] text-base font-extrabold"></th>
                       </tr>
 
-                      {vendorDateWiseSummary.rows
-                        .filter((row: any) => {
-                          const q = searchTerm.trim().toLowerCase();
-                          if (!q) return true;
+                      {/* HEADER ROW — Excel-style filter on every column */}
+                      <tr className="bg-slate-900 text-slate-300">
+                        <th className="p-2 font-semibold sticky left-0 bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.5)] min-w-[110px] w-[110px] relative">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Outlet ID</span>
+                            <button
+                              type="button"
+                              title="Filter Outlet ID"
+                              aria-label="Filter Outlet ID"
+                              onClick={(event) => openVendorDateWiseColumnFilter('Row Labels', event)}
+                              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                vendorDateWiseColumnFilters['Row Labels'] !== undefined
+                                  ? 'bg-amber-400 text-slate-900'
+                                  : 'bg-white/10 text-slate-300'
+                              } hover:bg-white/25`}
+                            >
+                              <span className="text-[11px]">▼</span>
+                            </button>
+                          </div>
+                          {vendorDateWiseColumnFilters['Row Labels'] !== undefined && (
+                            <div className="mt-0.5 text-center text-[9px] text-amber-300">
+                              {vendorDateWiseColumnFilters['Row Labels']?.length || 0} selected
+                            </div>
+                          )}
+                        </th>
+
+                        <th className="p-2 font-semibold sticky left-[110px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[310px] w-[310px] relative">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Outlet Name</span>
+                            <button
+                              type="button"
+                              title="Filter Outlet Name"
+                              aria-label="Filter Outlet Name"
+                              onClick={(event) => openVendorDateWiseColumnFilter('Name', event)}
+                              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                vendorDateWiseColumnFilters.Name !== undefined
+                                  ? 'bg-amber-400 text-slate-900'
+                                  : 'bg-white/10 text-slate-300'
+                              } hover:bg-white/25`}
+                            >
+                              <span className="text-[11px]">▼</span>
+                            </button>
+                          </div>
+                          {vendorDateWiseColumnFilters.Name !== undefined && (
+                            <div className="mt-0.5 text-center text-[9px] text-amber-300">
+                              {vendorDateWiseColumnFilters.Name?.length || 0} selected
+                            </div>
+                          )}
+                        </th>
+
+                        <th className="p-2 font-semibold sticky left-[420px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[120px] w-[120px] relative">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Station Code</span>
+                            <button
+                              type="button"
+                              title="Filter Station Code"
+                              aria-label="Filter Station Code"
+                              onClick={(event) => openVendorDateWiseColumnFilter('STN Code', event)}
+                              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                vendorDateWiseColumnFilters['STN Code'] !== undefined
+                                  ? 'bg-amber-400 text-slate-900'
+                                  : 'bg-white/10 text-slate-300'
+                              } hover:bg-white/25`}
+                            >
+                              <span className="text-[11px]">▼</span>
+                            </button>
+                          </div>
+                          {vendorDateWiseColumnFilters['STN Code'] !== undefined && (
+                            <div className="mt-0.5 text-center text-[9px] text-amber-300">
+                              {vendorDateWiseColumnFilters['STN Code']?.length || 0} selected
+                            </div>
+                          )}
+                        </th>
+
+                        {vendorDateWiseSummary.dateColumns.map((dateLabel: string, index: number) => {
+                          const dateKey = vendorDateWiseSummary.dateKeys[index];
+                          const selected = vendorDateWiseColumnFilters[dateKey];
+
                           return (
-                            String(row['Row Labels'] ?? '').toLowerCase().includes(q) ||
-                            String(row.Name ?? '').toLowerCase().includes(q) ||
-                            String(row['STN Code'] ?? '').toLowerCase().includes(q)
-                          );
-                        })
-                        .map((row: any, rowIndex: number) => (
-                          <tr key={`${row['Row Labels']}-${rowIndex}`} className="portal-data-row hover:bg-slate-50">
-                            <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
-                              {row['Row Labels']}
-                            </td>
-                            <td className="p-3 font-medium text-white sticky left-[110px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px] max-w-[310px] truncate">
-                              {row.Name || '-'}
-                            </td>
-                            <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
-                              {row['STN Code'] || '-'}
-                            </td>
-                            {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
-                              const value = row[dateKey];
-                              const isZero = value === 0 || value === '0' || value === '' || value === undefined || value === null;
-                              return (
-                                <td
-                                  key={`${dateKey}-${dateIndex}`}
-                                  className={`p-3 text-center min-w-[110px] ${
-                                    isZero ? 'font-bold text-red-500' : 'font-medium'
-                                  }`}
+                            <th key={`${dateLabel}-${index}`} className="p-2 font-semibold text-center min-w-[110px] relative">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>{dateLabel}</span>
+                                <button
+                                  type="button"
+                                  title={`Filter ${dateLabel}`}
+                                  aria-label={`Filter ${dateLabel}`}
+                                  onClick={(event) => openVendorDateWiseColumnFilter(dateKey, event)}
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                    selected !== undefined
+                                      ? 'bg-amber-400 text-slate-900'
+                                      : 'bg-white/10 text-slate-300'
+                                  } hover:bg-white/25`}
                                 >
-                                  {isZero ? 0 : value}
-                                </td>
-                              );
-                            })}
-                            <td className="p-3 text-center min-w-[150px]">{row['Vendor Payment Type'] || '-'}</td>
-                            <td className="p-3 text-center min-w-[140px]">{row['Discount Applied'] || '-'}</td>
-                          </tr>
-                        ))}
+                                  <span className="text-[11px]">▼</span>
+                                </button>
+                              </div>
+                              {selected !== undefined && (
+                                <div className="mt-0.5 text-[9px] text-amber-300">
+                                  {selected.length} selected
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+
+                        {(['Vendor Payment Type', 'Discount Applied'] as const).map((column) => {
+                          const selected = vendorDateWiseColumnFilters[column];
+
+                          return (
+                            <th key={column} className="p-2 font-semibold text-center min-w-[150px] relative">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>{column}</span>
+                                <button
+                                  type="button"
+                                  title={`Filter ${column}`}
+                                  aria-label={`Filter ${column}`}
+                                  onClick={(event) => openVendorDateWiseColumnFilter(column, event)}
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                    selected !== undefined
+                                      ? 'bg-amber-400 text-slate-900'
+                                      : 'bg-white/10 text-slate-300'
+                                  } hover:bg-white/25`}
+                                >
+                                  <span className="text-[11px]">▼</span>
+                                </button>
+                              </div>
+                              {selected !== undefined && (
+                                <div className="mt-0.5 text-[9px] text-amber-300">
+                                  {selected.length} selected
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {filteredVendorDateWiseRows.map((row: any, rowIndex: number) => (
+                        <tr
+                          key={`${row['Row Labels']}-${rowIndex}`}
+                          className="portal-data-row hover:bg-slate-50"
+                        >
+                          <td className="p-3 font-bold text-indigo-300 font-mono sticky left-0 bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.4)] min-w-[110px] w-[110px]">
+                            {row['Row Labels']}
+                          </td>
+
+                          <td className="p-3 font-medium text-white sticky left-[110px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px] max-w-[310px] truncate">
+                            {row.Name || '-'}
+                          </td>
+
+                          <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                            {row['STN Code'] || '-'}
+                          </td>
+
+                          {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
+                            const value = row[dateKey];
+                            const isZero =
+                              value === 0 ||
+                              value === '0' ||
+                              value === '' ||
+                              value === undefined ||
+                              value === null;
+
+                            return (
+                              <td
+                                key={`${dateKey}-${dateIndex}`}
+                                className={`p-3 text-center min-w-[110px] ${
+                                  isZero ? 'font-bold text-red-500' : 'font-medium'
+                                }`}
+                              >
+                                {isZero ? 0 : value}
+                              </td>
+                            );
+                          })}
+
+                          <td className="p-3 text-center min-w-[150px]">
+                            {row['Vendor Payment Type'] || '-'}
+                          </td>
+                          <td className="p-3 text-center min-w-[140px]">
+                            {row['Discount Applied'] || '-'}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 )}
