@@ -348,8 +348,21 @@ export const generateVendorReportWorkbook = (
     totalSellingPrice > 0
       ? `${((Number(totals['PPD'] || 0) / totalSellingPrice) * 100).toFixed(2)}%`
       : '#DIV/0!';
-  totals['Vendor Payment Type'] = '';
-  totals['Discount Applied'] = '';
+  // Payment/discount totals count only actual business outlets.
+  // Require both Vendor Price and Final Base Price to be > 0 so rows with
+  // zero vendor business are not included in these categorical counts.
+  const businessOutlets = vendorData.filter((row: VendorReportRow) =>
+    Number(row['Vendor Price'] || 0) > 0 && Number(row['Final Base Price'] || 0) > 0
+  );
+  const countBusinessValue = (column: 'Vendor Payment Type' | 'Discount Applied', value: string) =>
+    businessOutlets.filter((row: VendorReportRow) =>
+      String(row[column] || '').trim().toUpperCase() === value
+    ).length;
+
+  totals['Vendor Payment Type'] =
+    `PPD ${countBusinessValue('Vendor Payment Type', 'PPD')} COD ${countBusinessValue('Vendor Payment Type', 'COD')}`;
+  totals['Discount Applied'] =
+    `No ${countBusinessValue('Discount Applied', 'NO')} Yes ${countBusinessValue('Discount Applied', 'YES')}`;
 
   const headerRow = columns.map((column) => column === 'Rank' ? 'Station Rank' : String(column));
   const totalRow = columns.map((column) => totals[column as string] ?? '');
