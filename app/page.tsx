@@ -2,7 +2,7 @@
 
 // UI BUILD: DAY/NIGHT THEME + ALL-REPORT HORIZONTAL SCROLL + 3 FROZEN COLUMNS + CLICK ROW HIGHLIGHT + EXCEL-ALIGNED DASHBOARD
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -923,6 +923,65 @@ const formatVendorRdsCell = (key: string, value: any): string => {
   return String(value);
 };
 
+// Excel-style multi-select filter used by the Vendor Report dashboard header.
+function VendorHeaderFilter({ column, options, selected, position, onToggle, onSelectAll, onClose }: {
+  column: string;
+  options: { key: string; label: string }[];
+  selected?: string[];
+  position: { top: number; left: number; width: number };
+  onToggle: (key: string) => void;
+  onSelectAll: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [optionSearch, setOptionSearch] = useState('');
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+  const filteredOptions = options.filter((option) => option.label.toLowerCase().includes(optionSearch.toLowerCase()));
+  const allSelected = selected === undefined;
+  const selectedSet = new Set(selected || []);
+  return (
+    <div ref={menuRef} className="fixed z-[9999] rounded-lg border border-slate-300 bg-white text-slate-800 shadow-2xl"
+      style={{ top: position.top, left: Math.max(8, Math.min(position.left, window.innerWidth - Math.max(300, position.width) - 8)), width: Math.max(300, position.width) }}
+      onMouseDown={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+        <div className="max-w-[230px] truncate text-sm font-bold">Filter: {column}</div>
+        <button type="button" onClick={onClose} className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100">✕</button>
+      </div>
+      <div className="border-b border-slate-200 p-2">
+        <input autoFocus value={optionSearch} onChange={(e) => setOptionSearch(e.target.value)} placeholder="Search values..."
+          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500" />
+      </div>
+      <div className="max-h-[330px] overflow-y-auto p-2">
+        <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 font-semibold hover:bg-slate-100">
+          <input type="checkbox" checked={allSelected} onChange={onSelectAll} /><span>(Select All)</span>
+        </label>
+        <div className="my-1 border-t border-slate-200" />
+        {filteredOptions.length === 0 ? <div className="px-2 py-3 text-sm text-slate-500">No values found</div> : filteredOptions.map((option) => (
+          <label key={option.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-100">
+            <input type="checkbox" checked={allSelected || selectedSet.has(option.key)} onChange={() => onToggle(option.key)} />
+            <span className="truncate" title={option.label}>{option.label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center justify-between border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
+        <span>{allSelected ? 'All values' : `${selected?.length || 0} selected`}</span>
+        <button type="button" onClick={onClose} className="rounded bg-indigo-600 px-3 py-1.5 font-semibold text-white hover:bg-indigo-700">OK</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Page() {
   const [data, setData] = useState<any[]>([]);
   // Raw IRCTC report is kept separately so Station Report can count
@@ -939,6 +998,9 @@ export default function Page() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedReport, setSelectedReport] = useState<ReportType>('MAIN_REPORT');
+  const [vendorColumnFilters, setVendorColumnFilters] = useState<Record<string, string[] | undefined>>({});
+  const [openVendorFilter, setOpenVendorFilter] = useState<string | null>(null);
+  const [vendorFilterPosition, setVendorFilterPosition] = useState({ top: 0, left: 0, width: 320 });
   const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
 
   useEffect(() => {
@@ -1614,6 +1676,75 @@ export default function Page() {
       : '#DIV/0!';
     return totals;
   }, [vendorSummary]);
+
+  const vendorFilterOptions = useMemo(() => {
+    const result: Record<string, { key: string; label: string }[]> = {};
+    VENDOR_REPORT_COLUMNS.forEach((column) => {
+      const seen = new Map<string, string>();
+      vendorSummary.forEach((row: any) => {
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        if (!seen.has(key)) {
+          const label = key === '__BLANK__' ? '(Blanks)' : (typeof raw === 'number' ? raw.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : key);
+          seen.set(key, label);
+        }
+      });
+      result[column] = Array.from(seen.entries()).map(([key, label]) => ({ key, label })).sort((a, b) => {
+        if (a.key === '__BLANK__') return 1;
+        if (b.key === '__BLANK__') return -1;
+        return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' });
+      });
+    });
+    return result;
+  }, [vendorSummary]);
+
+  const filteredVendorSummary = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return vendorSummary.filter((row: any) => {
+      const matchesSearch = !q ||
+        String(row['Vendor Name'] || '').toLowerCase().includes(q) ||
+        String(row['Aggregator Outlet ID'] || '').includes(searchTerm) ||
+        String(row['Station Code'] || '').toLowerCase().includes(q) ||
+        String(row['Station Name'] || '').toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+      return VENDOR_REPORT_COLUMNS.every((column) => {
+        const selected = vendorColumnFilters[column];
+        if (selected === undefined) return true;
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        return selected.includes(key);
+      });
+    });
+  }, [vendorSummary, searchTerm, vendorColumnFilters]);
+
+  const openVendorColumnFilter = (column: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setVendorFilterPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(300, Math.min(380, rect.width + 180)) });
+    setOpenVendorFilter(column);
+  };
+
+  const toggleVendorFilterValue = (column: string, key: string) => {
+    setVendorColumnFilters((previous) => {
+      const allKeys = (vendorFilterOptions[column] || []).map((option) => option.key);
+      const current = previous[column];
+      if (current === undefined) return { ...previous, [column]: allKeys.filter((value) => value !== key) };
+      const next = current.includes(key) ? current.filter((value) => value !== key) : [...current, key];
+      if (next.length === allKeys.length) {
+        const copy = { ...previous };
+        delete copy[column];
+        return copy;
+      }
+      return { ...previous, [column]: next };
+    });
+  };
+
+  const selectAllVendorFilterValues = (column: string) => {
+    setVendorColumnFilters((previous) => {
+      const copy = { ...previous };
+      delete copy[column];
+      return copy;
+    });
+  };
 
   const dateSummary = useMemo(() => {
     const map: Record<string, any> = {};
@@ -2361,20 +2492,26 @@ export default function Page() {
                         })}
                       </tr>
                       <tr className="bg-slate-900 text-slate-300">
-                        {VENDOR_REPORT_COLUMNS.map((col: string) => (
-                          <th key={col} className="p-3 font-semibold text-center">{col === 'Rank' ? 'Station Rank' : col}</th>
-                        ))}
+                        {VENDOR_REPORT_COLUMNS.map((col: string) => {
+                          const isFiltered = vendorColumnFilters[col] !== undefined;
+                          const selectedCount = vendorColumnFilters[col]?.length ?? (vendorFilterOptions[col]?.length ?? 0);
+                          return (
+                            <th key={col} className="p-2 font-semibold text-center relative">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>{col === 'Rank' ? 'Station Rank' : col}</span>
+                                <button type="button" title={`Filter ${col}`} aria-label={`Filter ${col}`} onClick={(event) => openVendorColumnFilter(col, event)}
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${isFiltered ? 'bg-amber-400 text-slate-900' : 'bg-white/10 text-slate-300'} hover:bg-white/25`}>
+                                  <span className="text-[11px]">▼</span>
+                                </button>
+                              </div>
+                              {isFiltered && <div className="mt-0.5 text-[9px] text-amber-300">{selectedCount} selected</div>}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
-                      {vendorSummary
-                        .filter((v: any) =>
-                          String(v['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          String(v['Aggregator Outlet ID'] || '').includes(searchTerm) ||
-                          String(v['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          String(v['Station Name'] || '').toLowerCase().includes(searchTerm.toLowerCase())
-                        )
-                        .map((row: any, i: number) => (
+                      {filteredVendorSummary.map((row: any, i: number) => (
                           <tr key={`${row['Aggregator Outlet ID']}-${i}`} className="portal-data-row">
                             {VENDOR_REPORT_COLUMNS.map((column: string, j: number) => {
                               const value = row[column];
@@ -2390,6 +2527,17 @@ export default function Page() {
                         ))}
                     </tbody>
                   </table>
+                )}
+                {selectedReport === 'VENDOR_REPORT' && openVendorFilter && (
+                  <VendorHeaderFilter
+                    column={openVendorFilter}
+                    options={vendorFilterOptions[openVendorFilter] || []}
+                    selected={vendorColumnFilters[openVendorFilter]}
+                    position={vendorFilterPosition}
+                    onToggle={(key) => toggleVendorFilterValue(openVendorFilter, key)}
+                    onSelectAll={() => selectAllVendorFilterValues(openVendorFilter)}
+                    onClose={() => setOpenVendorFilter(null)}
+                  />
                 )}
 
                 {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
