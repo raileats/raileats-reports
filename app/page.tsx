@@ -3507,9 +3507,10 @@ export default function Page() {
                             return (
                               <td
                                 key={`${row['Row Labels']}-${dateKey}-${dateIndex}`}
-                                className={`p-3 text-center min-w-[110px] font-extrabold text-[14px] ${
+                                className={`p-3 text-center min-w-[110px] !font-normal !text-xs ${
                                   isZero ? 'text-red-500' : 'text-slate-300'
                                 }`}
+                                style={{ fontWeight: 400, fontSize: '12px', lineHeight: '1.25' }}
                               >
                                 {isZero ? 0 : dateOrderCount.toLocaleString('en-IN')}
                               </td>
