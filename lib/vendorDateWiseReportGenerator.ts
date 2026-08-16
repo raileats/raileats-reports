@@ -314,6 +314,7 @@ export const generateVendorDateWiseData = (
       vendorName: string;
       stnCode: string;
       stationRank: number | string;
+      ordersCount: number;
       dateCounts: Record<string, number>;
       totalDelivered: number;
     }
@@ -348,6 +349,7 @@ export const generateVendorDateWiseData = (
           ord['Station Code'] ||
           '',
         stationRank: resolvedRank,
+        ordersCount: 0,
         dateCounts: {},
         totalDelivered: 0,
       };
@@ -374,6 +376,10 @@ export const generateVendorDateWiseData = (
     outletDataMap[outletId].dateCounts[dateKey] =
       (outletDataMap[outletId].dateCounts[dateKey] || 0) + orderCount;
 
+    // Orders Count is the same delivered-order aggregation used by Vendor RDS.
+    // If an older RDS/master row has no explicit Orders Count, use 1 for the
+    // delivered order, matching vendorRdsGenerator's existing fallback.
+    outletDataMap[outletId].ordersCount += orderCount;
     outletDataMap[outletId].totalDelivered += orderCount;
   });
 
@@ -395,6 +401,7 @@ export const generateVendorDateWiseData = (
       Name: item.vendorName,
       'STN Code': item.stnCode,
       'Station Rank': item.stationRank,
+      'Orders Count': Number(item.ordersCount) || 0,
       'Vendor Payment Type': String(currentMonthInfo.vendorPaymentType || currentMonthInfo['Vendor Payment Type'] || '').trim().toUpperCase(),
       'Discount Applied': String(currentMonthInfo.discountApplied || currentMonthInfo['Discount Applied'] || '').trim(),
     };
@@ -483,6 +490,7 @@ export const generateVendorDateWiseReportWorkbook = (
       Name: row.Name,
       'STN Code': row['STN Code'],
       'Station Rank': row['Station Rank'] ?? '',
+      'Orders Count': Number(row['Orders Count'] ?? 0),
     };
 
     dateKeys.forEach((dateKey) => {
@@ -504,6 +512,7 @@ export const generateVendorDateWiseReportWorkbook = (
     Name: '',
     'STN Code': '',
     'Station Rank': '',
+    'Orders Count': rows.reduce((sum, row) => sum + (Number(row['Orders Count']) || 0), 0),
   };
 
   dateKeys.forEach((dateKey) => {
@@ -573,7 +582,7 @@ export const generateVendorDateWiseReportWorkbook = (
   };
 
   for (let rowIndex = 0; rowIndex < exportRows.length; rowIndex++) {
-    for (let colIndex = 4; colIndex < 4 + dateKeys.length; colIndex++) {
+    for (let colIndex = 5; colIndex < 5 + dateKeys.length; colIndex++) {
       const address = XLSX.utils.encode_cell({ r: rowIndex + 2, c: colIndex });
       const cell = worksheet[address] as any;
       if (cell && Number(cell.v) === 0) {
@@ -609,10 +618,10 @@ export const generateVendorDateWiseReportWorkbook = (
     }
   }
 
-  // Freeze first 4 columns so Outlet ID / Name / STN Code / Station Rank remain visible
+  // Freeze first 5 columns so Outlet ID / Name / STN Code / Station Rank / Orders Count remain visible
   // while horizontally scrolling through dates.
   worksheet['!freeze'] = {
-    xSplit: 4,
+    xSplit: 5,
     ySplit: 2,
   };
 
@@ -622,6 +631,7 @@ export const generateVendorDateWiseReportWorkbook = (
     { wch: 42 },
     { wch: 14 },
     { wch: 12 },
+    { wch: 14 },
     ...dateKeys.map(() => ({ wch: 18 })),
     { wch: 20 },
     { wch: 18 },
