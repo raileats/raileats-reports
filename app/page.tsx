@@ -1903,42 +1903,43 @@ export default function Page() {
     setStationColumnFilters((previous) => { const copy = { ...previous }; delete copy[column]; return copy; });
   };
 
-  // DATE WISE dashboard uses the SAME Date Wise aggregation engine as Excel.
-  // The Station Report derived fields are brought in from the same sources/rules.
+  // DATE WISE dashboard + Excel both use ONLY Master Data dates.
+  // The generator normalizes the source MM/DD/YYYY convention and does not
+  // manufacture empty calendar days. This keeps Dashboard and Excel identical.
   const dateSummary = useMemo(() => {
     const dateWiseRows = generateDateWiseData(data, outletsMasterInfo, irctcRawData);
     const orderMap: Record<string, { totalOrders: number; delivered: number; cancelled: number }> = {};
 
     data.forEach((r: any) => {
-      const dt = r['Delivery Date'] || r['Booking Date'] || 'N/A';
+      const dt = r['Delivery Date'] || r['Booking Date'];
       const key = reportDateKey(dt);
+      if (key === 'UNKNOWN') return;
       if (!orderMap[key]) orderMap[key] = { totalOrders: 0, delivered: 0, cancelled: 0 };
       orderMap[key].totalOrders += 1;
-      if (String(r['Final Status'] || '').trim().toLowerCase() === 'delivered') {
-        orderMap[key].delivered += 1;
-      }
-      if (String(r['Final Status'] || '').trim().toLowerCase() === 'cancelled') {
-        orderMap[key].cancelled += 1;
-      }
+      const status = String(r['Final Status'] || '').trim().toLowerCase();
+      if (status === 'delivered' || status === 'success') orderMap[key].delivered += 1;
+      if (status === 'cancelled') orderMap[key].cancelled += 1;
     });
 
     return dateWiseRows.map((row: any) => {
-      const stats = orderMap[dateWiseEngineDateKey(row['Delivery Date'])] || {
+      // generateDateWiseData returns D/M/YYYY. Use the D/M parser here;
+      // never send it through the MM/DD parser again.
+      const rawDate = dateWiseEngineDateKey(row['Delivery Date']);
+      const masterStats = orderMap[rawDate] || {
         totalOrders: 0,
-        delivered: row['Count of Delivered Orders'] || 0,
+        delivered: Number(row['Count of Delivered Orders'] || 0),
         cancelled: 0,
       };
 
       return {
         date: formatDateWiseEngineDate(row['Delivery Date']),
-        rawDate: dateWiseEngineDateKey(row['Delivery Date']),
-        totalOrders: stats.totalOrders,
-        delivered: stats.delivered,
-        cancelled: stats.cancelled,
+        rawDate,
+        totalOrders: masterStats.totalOrders,
+        delivered: masterStats.delivered,
+        cancelled: masterStats.cancelled,
         sellingPrice: Number(row['Final Selling Price'] || 0),
         vendorPrice: Number(row['Vendor Price'] || 0),
         rfComm: Number(row['Final RF Commission'] || 0),
-
         'Meals': Number(row['Meals'] || 0),
         'Check': row['Check'] ?? '0.00%',
         'Count of Delivered Orders': Number(row['Count of Delivered Orders'] || 0),
