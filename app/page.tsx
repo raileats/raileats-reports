@@ -1828,10 +1828,10 @@ export default function Page() {
       'Name',
       'STN Code',
       'Station Rank',
-      'Orders Count',
-      ...vendorDateWiseSummary.dateKeys,
       'Vendor Payment Type',
       'Discount Applied',
+      'Orders Count',
+      ...vendorDateWiseSummary.dateKeys,
     ];
   }, [vendorDateWiseSummary]);
 
@@ -2869,6 +2869,8 @@ export default function Page() {
                         </th>
                         <th className="p-3 text-base font-extrabold sticky left-[540px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
                         </th>
+                        <th className="p-3 text-center min-w-[150px] text-base font-extrabold"></th>
+                        <th className="p-3 text-center min-w-[140px] text-base font-extrabold"></th>
                         <th className={`p-3 text-center min-w-[130px] text-base font-extrabold ${Number(vendorDateWiseTotals['Orders Count'] ?? 0) === 0 ? 'text-red-700' : 'text-slate-950'}`}>
                           {Number(vendorDateWiseTotals['Orders Count'] ?? 0)}
                         </th>
@@ -2887,8 +2889,6 @@ export default function Page() {
                             </th>
                           );
                         })}
-                        <th className="p-3 text-center min-w-[150px] text-base font-extrabold"></th>
-                        <th className="p-3 text-center min-w-[140px] text-base font-extrabold"></th>
                       </tr>
 
                       {/* HEADER ROW — Excel-style filter on every column */}
@@ -2989,6 +2989,36 @@ export default function Page() {
                           )}
                         </th>
 
+                        {(['Vendor Payment Type', 'Discount Applied'] as const).map((column) => {
+                          const selected = vendorDateWiseColumnFilters[column];
+
+                          return (
+                            <th key={column} className="p-2 font-semibold text-center min-w-[150px] relative">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>{column}</span>
+                                <button
+                                  type="button"
+                                  title={`Filter ${column}`}
+                                  aria-label={`Filter ${column}`}
+                                  onClick={(event) => openVendorDateWiseColumnFilter(column, event)}
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                    selected !== undefined
+                                      ? 'bg-amber-400 text-slate-900'
+                                      : 'bg-white/10 text-slate-300'
+                                  } hover:bg-white/25`}
+                                >
+                                  <span className="text-[11px]">▼</span>
+                                </button>
+                              </div>
+                              {selected !== undefined && (
+                                <div className="mt-0.5 text-[9px] text-amber-300">
+                                  {selected.length} selected
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+
                         <th className="p-2 font-semibold text-center min-w-[130px] relative">
                           <div className="flex items-center justify-center gap-1">
                             <span>Orders Count</span>
@@ -3044,35 +3074,6 @@ export default function Page() {
                           );
                         })}
 
-                        {(['Vendor Payment Type', 'Discount Applied'] as const).map((column) => {
-                          const selected = vendorDateWiseColumnFilters[column];
-
-                          return (
-                            <th key={column} className="p-2 font-semibold text-center min-w-[150px] relative">
-                              <div className="flex items-center justify-center gap-1">
-                                <span>{column}</span>
-                                <button
-                                  type="button"
-                                  title={`Filter ${column}`}
-                                  aria-label={`Filter ${column}`}
-                                  onClick={(event) => openVendorDateWiseColumnFilter(column, event)}
-                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
-                                    selected !== undefined
-                                      ? 'bg-amber-400 text-slate-900'
-                                      : 'bg-white/10 text-slate-300'
-                                  } hover:bg-white/25`}
-                                >
-                                  <span className="text-[11px]">▼</span>
-                                </button>
-                              </div>
-                              {selected !== undefined && (
-                                <div className="mt-0.5 text-[9px] text-amber-300">
-                                  {selected.length} selected
-                                </div>
-                              )}
-                            </th>
-                          );
-                        })}
                       </tr>
                     </thead>
 
@@ -3098,6 +3099,12 @@ export default function Page() {
                             {row['Station Rank'] || '-'}
                           </td>
 
+                          <td className="p-3 text-center min-w-[150px]">
+                            {row['Vendor Payment Type'] || '-'}
+                          </td>
+                          <td className="p-3 text-center min-w-[140px]">
+                            {row['Discount Applied'] || '-'}
+                          </td>
                           {(() => {
                             const orderCount = Number(row['Orders Count'] ?? 0);
                             const isZero = !Number.isFinite(orderCount) || orderCount === 0;
@@ -3108,33 +3115,7 @@ export default function Page() {
                             );
                           })()}
 
-                          {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
-                            const value = row[dateKey];
-                            const isZero =
-                              value === 0 ||
-                              value === '0' ||
-                              value === '' ||
-                              value === undefined ||
-                              value === null;
 
-                            return (
-                              <td
-                                key={`${dateKey}-${dateIndex}`}
-                                className={`p-3 text-center min-w-[110px] ${
-                                  isZero ? 'font-bold text-red-500' : 'font-medium'
-                                }`}
-                              >
-                                {isZero ? 0 : value}
-                              </td>
-                            );
-                          })}
-
-                          <td className="p-3 text-center min-w-[150px]">
-                            {row['Vendor Payment Type'] || '-'}
-                          </td>
-                          <td className="p-3 text-center min-w-[140px]">
-                            {row['Discount Applied'] || '-'}
-                          </td>
                         </tr>
                       ))}
                     </tbody>
