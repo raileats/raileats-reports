@@ -1276,6 +1276,21 @@ export default function Page() {
         setCurrentMonthRecords(currentMonthParsedList);
       }
 
+      const getOutletMasterField = (row: any, names: string[]): any => {
+        if (!row || typeof row !== 'object') return undefined;
+        const keyMap = Object.keys(row).reduce<Record<string, string>>((acc, key) => {
+          acc[key.toLowerCase().replace(/[^a-z0-9]/g, '')] = key;
+          return acc;
+        }, {});
+        for (const name of names) {
+          const actual = keyMap[name.toLowerCase().replace(/[^a-z0-9]/g, '')];
+          if (actual !== undefined && row[actual] !== undefined && row[actual] !== null && String(row[actual]).trim() !== '') {
+            return row[actual];
+          }
+        }
+        return undefined;
+      };
+
       const outletsMap: Record<string, any> = {};
       if (outletsFile) {
         setStatusText('Processing Outlets Report...');
@@ -1311,8 +1326,16 @@ export default function Page() {
               // (column O), never from the short Station Code.
               stationName: getOutletMasterStationName(row),
               stationCode: String(row['Station Code'] || row['Station'] || '').trim(),
+              // Station Rank is the LAST column of Outlet Master and is
+              // stored Outlet-ID wise.  Read it by normalized header name so
+              // Excel/CSV header formatting cannot silently lose the value.
               stationRank: (() => {
-                const rawRank = row['Station Rank'];
+                const rawRank = getOutletMasterField(row, [
+                  'Station Rank',
+                  'stationRank',
+                  'station_rank',
+                  'Rank',
+                ]);
                 if (rawRank === undefined || rawRank === null || String(rawRank).trim() === '') return '';
                 const n = Number(rawRank);
                 return Number.isFinite(n) ? n : String(rawRank).trim();
