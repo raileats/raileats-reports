@@ -7,7 +7,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
+import { generateMainReportWorkbook, buildMainReportDateWiseSheet } from '@/lib/mainReportGenerator';
 import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vendorReportGenerator';
@@ -2345,77 +2345,12 @@ export default function Page() {
       XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     };
 
-    // 1. MAIN REPORT - same date/source metrics used by MainReportMatrix.
-    const mainReportRows: any[] = [];
-    const mainMetricRow = (dateLabel: string, source: string, ftd: any, mtd: any) => {
-      const orders = Number(ftd?.orders || 0);
-      const delivered = Number(ftd?.deliveredOrders || 0);
-      const meals = Number(ftd?.meals || 0);
-      const value = Number(ftd?.value || 0);
-      const prepaid = Number(ftd?.prepaidValue || 0);
-      const discount = Number(ftd?.discount || 0);
-      const revenue = Number(ftd?.revenue || 0);
-      const complaints = Number(ftd?.complaints || 0);
-      const feedback = Number(ftd?.feedback || 0);
-      const undelivered = Number(ftd?.undelivered || 0);
-
-      return {
-        Date: dateLabel,
-        Source: source,
-        'FTD Orders': orders,
-        'MTD Orders': Number(mtd?.orders || 0),
-        'LMTD Orders': 0,
-        ASP: orders > 0 ? Math.round(value / orders) : 0,
-        'Delivered %': orders > 0 ? `${((delivered / orders) * 100).toFixed(0)}%` : '0%',
-        'FTD Meals': meals,
-        'MTD Meals': Number(mtd?.meals || 0),
-        'LMTD Meals': 0,
-        'Meal ASP': meals > 0 ? Math.round(value / meals) : 0,
-        'Meals / Order': orders > 0 ? (meals / orders).toFixed(2) : '0.00',
-        'FTD Selling Amount': Math.round(value),
-        'MTD Selling Amount': Math.round(Number(mtd?.value || 0)),
-        'LMTD Selling Amount': 0,
-        'FTD PPD': Math.round(prepaid),
-        'MTD PPD': Math.round(Number(mtd?.prepaidValue || 0)),
-        'LMTD PPD': 0,
-        'PPD %': value > 0 ? `${((prepaid / value) * 100).toFixed(2)}%` : '0.00%',
-        'FTD Discount': Math.round(discount),
-        'MTD Discount': Math.round(Number(mtd?.discount || 0)),
-        'LMTD Discount': 0,
-        'Discount %': value > 0 ? `${((discount / value) * 100).toFixed(2)}%` : '0.00%',
-        'FTD RF Commission': Math.round(revenue),
-        'MTD RF Commission': Math.round(Number(mtd?.revenue || 0)),
-        'LMTD RF Commission': 0,
-        'RF Commission %': value > 0 ? `${((revenue / value) * 100).toFixed(1)}%` : '0.0%',
-        'FTD Complaints': complaints,
-        'MTD Complaints': Number(mtd?.complaints || 0),
-        'LMTD Complaints': 0,
-        'Complaint %': delivered > 0 ? `${((complaints / delivered) * 100).toFixed(2)}%` : '0.00%',
-        'FTD Feedback': feedback,
-        'MTD Feedback': Number(mtd?.feedback || 0),
-        'LMTD Feedback': 0,
-        'Feedback %': delivered > 0 ? `${((feedback / delivered) * 100).toFixed(2)}%` : '0.00%',
-        'FTD Undelivered': undelivered,
-        'MTD Undelivered': Number(mtd?.undelivered || 0),
-        'LMTD Undelivered': 0,
-        'Undelivered %': orders > 0 ? `${((undelivered / orders) * 100).toFixed(2)}%` : '0.00%',
-        'Delivered Outlets': Number(ftd?.outletsSet?.size || 0),
-      };
-    };
-
-    mainReportBlocks.forEach((block: any) => {
-      mainReportRows.push(mainMetricRow(block.dateLabel, 'TOTAL', block.dayTotal, block.mtdTotal));
-      SOURCES.forEach((source) => {
-        mainReportRows.push(mainMetricRow(
-          block.dateLabel,
-          source,
-          block.dayStats?.[source] || createEmptyStats(),
-          block.mtdBySource?.[source] || createEmptyStats()
-        ));
-      });
-    });
-
-    appendJsonSheet('Main Report', mainReportRows);
+    // 1. MAIN REPORT - use the EXACT same Date Matrix worksheet builder as the
+    // standalone Main Report Excel export. This keeps All Reports Sheet 1
+    // identical to the working Main Report layout (date banner, grouped
+    // headers, FTD/MTD/LMTD, source rows, totals, merges and widths).
+    const mainReportWorksheet = buildMainReportDateWiseSheet(data, feedbackRawData);
+    XLSX.utils.book_append_sheet(workbook, mainReportWorksheet, 'Main Report');
 
     // 2. DATE WISE SUMMARY - exact Date Wise engine output used by the dashboard.
     const dateWiseRows = generateDateWiseData(data, outletsMasterInfo, irctcRawData);
