@@ -745,6 +745,41 @@ const parseReportDate = (dateVal: any): Date | null => {
 // SOURCE FILE DATE CONVENTION: MM/DD/YYYY.
 // VENDOR DATE WISE CURRENT REPORT: 1-Aug-2026 through 10-Aug-2026.
 // SOURCE FILE DATE CONVENTION: MM/DD/YYYY (not DD/MM/YYYY).
+// Date Wise generator returns normalized dates as D/M/YYYY.
+// Keep the raw master-data parser (MM/DD/YYYY) separate; otherwise 10/8/2026
+// gets interpreted as October 8 instead of 10 August.
+const parseDateWiseEngineDate = (dateVal: any): Date | null => {
+  if (dateVal === null || dateVal === undefined || String(dateVal).trim() === '') return null;
+
+  if (dateVal instanceof Date) {
+    return isNaN(dateVal.getTime()) ? null : new Date(dateVal.getFullYear(), dateVal.getMonth(), dateVal.getDate());
+  }
+
+  const raw = String(dateVal).trim();
+  const m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    const year = Number(m[3]);
+    const d = new Date(year, month - 1, day);
+    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) return d;
+  }
+
+  return null;
+};
+
+const dateWiseEngineDateKey = (dateVal: any): string => {
+  const d = parseDateWiseEngineDate(dateVal);
+  if (!d) return 'UNKNOWN';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const formatDateWiseEngineDate = (dateVal: any): string => {
+  const d = parseDateWiseEngineDate(dateVal);
+  if (!d) return String(dateVal || 'Unknown Date');
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+};
+
 const reportDateKey = (dateVal: any): string => {
   const d = parseReportDate(dateVal);
   if (!d) return 'UNKNOWN';
@@ -1888,15 +1923,15 @@ export default function Page() {
     });
 
     return dateWiseRows.map((row: any) => {
-      const stats = orderMap[reportDateKey(row['Delivery Date'])] || {
+      const stats = orderMap[dateWiseEngineDateKey(row['Delivery Date'])] || {
         totalOrders: 0,
         delivered: row['Count of Delivered Orders'] || 0,
         cancelled: 0,
       };
 
       return {
-        date: formatFullDisplayDate(row['Delivery Date']),
-        rawDate: reportDateKey(row['Delivery Date']),
+        date: formatDateWiseEngineDate(row['Delivery Date']),
+        rawDate: dateWiseEngineDateKey(row['Delivery Date']),
         totalOrders: stats.totalOrders,
         delivered: stats.delivered,
         cancelled: stats.cancelled,
