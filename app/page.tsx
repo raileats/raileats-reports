@@ -2092,7 +2092,7 @@ export default function Page() {
   // identical in Dashboard and Excel.
   const vendorDateWiseSummary = useMemo(() => {
     return generateVendorDateWiseData(data, outletsMasterInfo, currentMonthRecords);
-  }, [data, outletsMasterInfo]);
+  }, [data, outletsMasterInfo, currentMonthRecords]);
 
   // Exact column model shared by Dashboard filters and the Excel header.
   // The first four columns are Outlet ID / Outlet Name / Station Code / Station Rank.
@@ -3496,6 +3496,25 @@ export default function Page() {
                             );
                           })()}
 
+                          {/* DATE-WISE ORDER COUNTS
+                              Keep these cells in the same order as dateKeys.
+                              The old version rendered the date headers + total row,
+                              but accidentally omitted the per-outlet date cells. */}
+                          {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
+                            const dateOrderCount = Number(row[dateKey] ?? 0);
+                            const isZero = !Number.isFinite(dateOrderCount) || dateOrderCount === 0;
+
+                            return (
+                              <td
+                                key={`${row['Row Labels']}-${dateKey}-${dateIndex}`}
+                                className={`p-3 text-center min-w-[110px] font-extrabold text-[14px] ${
+                                  isZero ? 'text-red-500' : 'text-slate-300'
+                                }`}
+                              >
+                                {isZero ? 0 : dateOrderCount.toLocaleString('en-IN')}
+                              </td>
+                            );
+                          })}
 
                         </tr>
                       ))}
