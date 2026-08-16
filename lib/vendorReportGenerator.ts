@@ -94,19 +94,37 @@ export const generateVendorWiseData = (
     let vendorName = '';
     let stationCode = '';
     let stationName = '';
+    let stationRank: number | '' = '';
 
     // Metadata from Outlet Master if available
     const outMaster = outletsMasterInfo[outletId];
     if (outMaster) {
       vendorName = outMaster.outletName || '';
-      stationCode = outMaster.station || '';
-      stationName = outMaster.station || '';
+      // Station Code remains the short code from Outlet Master.
+      stationCode = (outMaster as any).stationCode || outMaster.station || '';
+      // IMPORTANT: Station Name comes from Outlet Master `Station Name`
+      // (column O in the uploaded Outlet Master report), never from Station Code.
+      stationName =
+        (outMaster as any).stationName ||
+        (outMaster as any)['Station Name'] ||
+        '';
+      const rawStationRank = (outMaster as any).stationRank ?? (outMaster as any)['Station Rank'];
+      if (rawStationRank !== undefined && rawStationRank !== null && String(rawStationRank).trim() !== '') {
+        const parsedRank = Number(rawStationRank);
+        stationRank = Number.isFinite(parsedRank) ? parsedRank : String(rawStationRank).trim() as any;
+      }
     }
 
     orders.forEach((ord) => {
       if (!vendorName && ord['Vendor Name']) vendorName = ord['Vendor Name'];
       if (!stationCode && ord['Station Code']) stationCode = ord['Station Code'];
-      if (!stationName) stationName = stationCode;
+      // Only use order-level station text as a last-resort display name.
+      if (!stationName) {
+        stationName =
+          String((ord as any)['Station Name'] || '').trim() ||
+          String((ord as any)['Delivery Station Name'] || '').trim() ||
+          stationCode;
+      }
 
       const finalStatus = String(ord['Final Status'] || '').trim().toLowerCase();
       const irctcStatus = String(ord['IRCTC Status'] || '').trim().toLowerCase();
@@ -183,6 +201,7 @@ export const generateVendorWiseData = (
     rawOutletList.push({
       outletId,
       stationCode: stationCode || '',
+      stationRank,
       stationName: stationName || stationCode || '',
       vendorName: vendorName || `Outlet ${outletId}`,
       vendorPrice,
@@ -212,14 +231,24 @@ export const generateVendorWiseData = (
     });
   });
 
-  // Sort by Final Base Price (Highest to Lowest)
-  rawOutletList.sort((a, b) => b.finalBasePrice - a.finalBasePrice);
+  // BUSINESS ORDER:
+  // 1) Station Rank ascending, keeping all outlets of the same station together.
+  // 2) Within the same Station Rank, Final Base Price highest -> lowest.
+  rawOutletList.sort((a, b) => {
+    const rankA = typeof a.stationRank === 'number' ? a.stationRank : Number.POSITIVE_INFINITY;
+    const rankB = typeof b.stationRank === 'number' ? b.stationRank : Number.POSITIVE_INFINITY;
+    if (rankA !== rankB) return rankA - rankB;
+    const baseDiff = b.finalBasePrice - a.finalBasePrice;
+    if (baseDiff !== 0) return baseDiff;
+    return String(a.outletId).localeCompare(String(b.outletId), undefined, { numeric: true });
+  });
 
-  // Map into exact columns matching image structure
-  return rawOutletList.map((row, idx) => ({
+  // Map into exact columns matching the report structure.
+  // `Rank` is the Station Rank, not a global outlet row number.
+  return rawOutletList.map((row) => ({
     'Aggregator Outlet ID': row.outletId,
     'Station Code': row.stationCode,
-    'Rank': idx + 1,
+    'Rank': row.stationRank,
     'Station Name': row.stationName,
     'Vendor Name': row.vendorName,
     'Vendor Price': row.vendorPrice,
@@ -270,7 +299,74 @@ export const generateVendorReportWorkbook = (
     return;
   }
 
-  const worksheet = XLSX.utils.json_to_sheet(vendorData);
+  const columns = Object.keys(vendorData[0]) as (keyof VendorReportRow)[];
+  const moneyColumns = new Set<keyof VendorReportRow>([
+    'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission',
+    'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount',
+    'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges',
+    'Final Selling Price', 'Final Order Total', 'Discounted Base Price', 'PPD', 'COD'
+  ]);
+  const totalColumns = new Set<keyof VendorReportRow>([
+    ...moneyColumns,
+    'Meals',
+    'Count of Delivered Orders',
+    'Count of Not_Delivered As per IRCTC Status'
+  ]);
+
+  const totals: Record<string, any> = {};
+  columns.forEach((column) => {
+    totals[column as string] = '';
+  });
+  totals['Aggregator Outlet ID'] = 'TOTAL';
+  totals['Rank'] = '';
+  totals['Station Code'] = '';
+  totals['Station Name'] = '';
+  totals['Vendor Name'] = '';
+
+  totalColumns.forEach((column) => {
+    totals[column as string] = Number(
+      vendorData.reduce((sum, row) => sum + (Number((row as any)[column]) || 0), 0).toFixed(2)
+    );
+  });
+
+  const totalVendorPrice = Number(totals['Vendor Price'] || 0);
+  const totalBasePrice = Number(totals['Final Base Price'] || 0);
+  const totalSellingPrice = Number(totals['Final Selling Price'] || 0);
+  const totalDelivered = Number(totals['Count of Delivered Orders'] || 0);
+  const totalNotDelivered = Number(totals['Count of Not_Delivered As per IRCTC Status'] || 0);
+  totals['Check'] =
+    totalVendorPrice > 0
+      ? `${((Number(totals['Final Total Commission'] || 0) / totalVendorPrice) * 100).toFixed(2)}%`
+      : '#DIV/0!';
+  totals['Not_Delivered %'] =
+    totalDelivered > 0
+      ? `${((totalNotDelivered / totalDelivered) * 100).toFixed(2)}%`
+      : totalNotDelivered > 0
+        ? '100.00%'
+        : '#DIV/0!';
+  totals['Prepaid %'] =
+    totalSellingPrice > 0
+      ? `${((Number(totals['PPD'] || 0) / totalSellingPrice) * 100).toFixed(2)}%`
+      : '#DIV/0!';
+  totals['Vendor Payment Type'] = '';
+  totals['Discount Applied'] = '';
+
+  const headerRow = columns.map((column) => column === 'Rank' ? 'Station Rank' : String(column));
+  const totalRow = columns.map((column) => totals[column as string] ?? '');
+  const bodyRows = vendorData.map((row) => columns.map((column) => (row as any)[column]));
+
+  // Excel layout: TOTAL row first, then header, then data.
+  const worksheet = XLSX.utils.aoa_to_sheet([totalRow, headerRow, ...bodyRows]);
+
+  worksheet['!cols'] = columns.map((column) => {
+    if (column === 'Vendor Name') return { wch: 38 };
+    if (column === 'Station Name') return { wch: 28 };
+    if (column === 'Aggregator Outlet ID') return { wch: 18 };
+    if (column === 'Vendor Payment Type') return { wch: 20 };
+    if (column === 'Discount Applied') return { wch: 18 };
+    return { wch: 16 };
+  });
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendor Report');
 
