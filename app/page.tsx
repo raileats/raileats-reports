@@ -11,7 +11,7 @@ import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
 import { generateVendorRDSWorkbook, generateVendorRdsData } from '@/lib/vendorRdsGenerator';
 import { generateStationReportWorkbook, generateStationWiseData } from '@/lib/stationReportGenerator';
 import { generateVendorReportWorkbook, generateVendorWiseData } from '@/lib/vendorReportGenerator';
-import { generateDateWiseReportWorkbook } from '@/lib/dateWiseReportGenerator';
+import { generateDateWiseReportWorkbook, generateDateWiseData } from '@/lib/dateWiseReportGenerator';
 import { generateVendorDateWiseReportWorkbook, generateVendorDateWiseData } from '@/lib/vendorDateWiseReportGenerator';
 import { generateLastDayStationReportWorkbook, generateLastDayStationWiseData } from '@/lib/lastDayStationReportGenerator';
 import MainReportMatrix from '@/components/MainReportMatrix';
@@ -1868,41 +1868,187 @@ export default function Page() {
     setStationColumnFilters((previous) => { const copy = { ...previous }; delete copy[column]; return copy; });
   };
 
+  // DATE WISE dashboard uses the SAME Date Wise aggregation engine as Excel.
+  // The Station Report derived fields are brought in from the same sources/rules.
   const dateSummary = useMemo(() => {
-    const map: Record<string, any> = {};
+    const dateWiseRows = generateDateWiseData(data, outletsMasterInfo, irctcRawData);
+    const orderMap: Record<string, { totalOrders: number; delivered: number; cancelled: number }> = {};
 
-    data.forEach((r) => {
+    data.forEach((r: any) => {
       const dt = r['Delivery Date'] || r['Booking Date'] || 'N/A';
       const key = reportDateKey(dt);
-      const formatted = formatFullDisplayDate(dt);
-
-      if (!map[key]) {
-        map[key] = {
-          date: formatted,
-          rawDate: key,
-          totalOrders: 0,
-          delivered: 0,
-          cancelled: 0,
-          sellingPrice: 0,
-          vendorPrice: 0,
-          rfComm: 0,
-        };
+      if (!orderMap[key]) orderMap[key] = { totalOrders: 0, delivered: 0, cancelled: 0 };
+      orderMap[key].totalOrders += 1;
+      if (String(r['Final Status'] || '').trim().toLowerCase() === 'delivered') {
+        orderMap[key].delivered += 1;
       }
-
-      map[key].totalOrders += 1;
-      if (r['Final Status'] === 'Delivered') map[key].delivered += 1;
-      if (r['Final Status'] === 'Cancelled') map[key].cancelled += 1;
-      map[key].sellingPrice += Number(r['Final Selling Price'] || 0) || 0;
-      map[key].vendorPrice += Number(r['Final Vendor Price'] || 0) || 0;
-      map[key].rfComm += Number(r['Final RF Commission'] || 0) || 0;
+      if (String(r['Final Status'] || '').trim().toLowerCase() === 'cancelled') {
+        orderMap[key].cancelled += 1;
+      }
     });
 
-    return Object.values(map).sort((a: any, b: any) => {
-      if (a.rawDate === 'UNKNOWN') return 1;
-      if (b.rawDate === 'UNKNOWN') return -1;
-      return a.rawDate.localeCompare(b.rawDate);
+    return dateWiseRows.map((row: any) => {
+      const stats = orderMap[reportDateKey(row['Delivery Date'])] || {
+        totalOrders: 0,
+        delivered: row['Count of Delivered Orders'] || 0,
+        cancelled: 0,
+      };
+
+      return {
+        date: formatFullDisplayDate(row['Delivery Date']),
+        rawDate: reportDateKey(row['Delivery Date']),
+        totalOrders: stats.totalOrders,
+        delivered: stats.delivered,
+        cancelled: stats.cancelled,
+        sellingPrice: Number(row['Final Selling Price'] || 0),
+        vendorPrice: Number(row['Vendor Price'] || 0),
+        rfComm: Number(row['Final RF Commission'] || 0),
+
+        'Meals': Number(row['Meals'] || 0),
+        'Check': row['Check'] ?? '0.00%',
+        'Count of Delivered Orders': Number(row['Count of Delivered Orders'] || 0),
+        'Not Delivered Order': Number(row['Not Delivered Order'] || 0),
+        'Not Delivered %': row['Not Delivered %'] ?? '0.00%',
+        'PPD % of Final Selling Price': row['PPD % of Final Selling Price'] ?? '0.00%',
+        'Feedback Good': Number(row['Feedback Good'] || 0),
+        'Feedback Bad': Number(row['Feedback Bad'] || 0),
+        'Count of Delivered Outlets': Number(row['Count of Delivered Outlets'] || 0),
+        'Total Station Vendors': Number(row['Total Station Vendors'] || 0),
+      };
     });
-  }, [data]);
+  }, [data, outletsMasterInfo, irctcRawData]);
+
+  const dateWiseColumns = useMemo(() => [
+    'Date','Total Orders','Delivered','Cancelled','Total Selling Amount','Vendor Price','RF Commission',
+    'Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %',
+    'PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+  ], []);
+
+  const [dateWiseColumnFilters, setDateWiseColumnFilters] = useState<Record<string, string[] | undefined>>({});
+  const [openDateWiseFilter, setOpenDateWiseFilter] = useState<string | null>(null);
+  const [dateWiseFilterPosition, setDateWiseFilterPosition] = useState({ top: 0, left: 0, width: 320 });
+
+  const dateWiseFilterOptions = useMemo(() => {
+    const result: Record<string, { key: string; label: string }[]> = {};
+    dateWiseColumns.forEach((column) => {
+      const seen = new Map<string, string>();
+      dateSummary.forEach((row: any) => {
+        const value =
+          column === 'Date' ? row.date :
+          column === 'Total Selling Amount' ? row.sellingPrice :
+          column === 'Vendor Price' ? row.vendorPrice :
+          column === 'RF Commission' ? row.rfComm :
+          row[column];
+        const key = value === null || value === undefined || String(value).trim() === '' ? '__BLANK__' : String(value);
+        if (!seen.has(key)) {
+          seen.set(
+            key,
+            key === '__BLANK__'
+              ? '(Blanks)'
+              : typeof value === 'number'
+                ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                : key
+          );
+        }
+      });
+      result[column] = Array.from(seen.entries())
+        .map(([key, label]) => ({ key, label }))
+        .sort((a, b) => {
+          if (a.key === '__BLANK__') return 1;
+          if (b.key === '__BLANK__') return -1;
+          return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    });
+    return result;
+  }, [dateSummary, dateWiseColumns]);
+
+  const filteredDateSummary = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return dateSummary.filter((row: any) => {
+      const matchesSearch = !q || dateWiseColumns.some((column) => {
+        const value =
+          column === 'Date' ? row.date :
+          column === 'Total Selling Amount' ? row.sellingPrice :
+          column === 'Vendor Price' ? row.vendorPrice :
+          column === 'RF Commission' ? row.rfComm :
+          row[column];
+        return String(value ?? '').toLowerCase().includes(q);
+      });
+      if (!matchesSearch) return false;
+
+      return dateWiseColumns.every((column) => {
+        const selected = dateWiseColumnFilters[column];
+        if (selected === undefined) return true;
+        const value =
+          column === 'Date' ? row.date :
+          column === 'Total Selling Amount' ? row.sellingPrice :
+          column === 'Vendor Price' ? row.vendorPrice :
+          column === 'RF Commission' ? row.rfComm :
+          row[column];
+        const key = value === null || value === undefined || String(value).trim() === '' ? '__BLANK__' : String(value);
+        return selected.includes(key);
+      });
+    });
+  }, [dateSummary, dateWiseColumns, dateWiseColumnFilters, searchTerm]);
+
+  const dateWiseTotals = useMemo(() => {
+    const totals: Record<string, any> = {};
+    dateWiseColumns.forEach((column) => { totals[column] = ''; });
+    totals['Date'] = 'TOTAL';
+
+    const numericColumns = dateWiseColumns.filter((column) => ![
+      'Date','Check','Not Delivered %','PPD % of Final Selling Price'
+    ].includes(column));
+
+    numericColumns.forEach((column) => {
+      totals[column] = dateSummary.reduce((sum: number, row: any) => {
+        const value =
+          column === 'Total Selling Amount' ? row.sellingPrice :
+          column === 'Vendor Price' ? row.vendorPrice :
+          column === 'RF Commission' ? row.rfComm :
+          row[column];
+        return sum + (Number(value) || 0);
+      }, 0);
+    });
+    return totals;
+  }, [dateSummary, dateWiseColumns]);
+
+  const openDateWiseColumnFilter = (column: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDateWiseFilterPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(300, Math.min(380, rect.width + 180)),
+    });
+    setOpenDateWiseFilter(column);
+  };
+
+  const toggleDateWiseFilterValue = (column: string, key: string) => {
+    setDateWiseColumnFilters((previous) => {
+      const allKeys = (dateWiseFilterOptions[column] || []).map((option) => option.key);
+      const current = previous[column];
+      if (current === undefined) {
+        return { ...previous, [column]: allKeys.filter((value) => value !== key) };
+      }
+      const next = current.includes(key)
+        ? current.filter((value) => value !== key)
+        : [...current, key];
+      if (next.length === allKeys.length) {
+        const copy = { ...previous };
+        delete copy[column];
+        return copy;
+      }
+      return { ...previous, [column]: next };
+    });
+  };
+
+  const selectAllDateWiseFilterValues = (column: string) => {
+    setDateWiseColumnFilters((previous) => {
+      const copy = { ...previous };
+      delete copy[column];
+      return copy;
+    });
+  };
 
   // Vendor Date Wise dashboard MUST use the exact same data engine/order as
   // the Vendor Date Wise Excel export. This keeps:
@@ -2158,7 +2304,7 @@ export default function Page() {
         generateVendorReportWorkbook(data, outletsMasterInfo, penaltySummary, currentMonthRecords);
         break;
       case 'DATE_WISE':
-        generateDateWiseReportWorkbook(data);
+        generateDateWiseReportWorkbook(data, outletsMasterInfo, irctcRawData);
         break;
       case 'VENDOR_DATE_WISE':
         generateVendorDateWiseReportWorkbook(data, outletsMasterInfo, currentMonthRecords);
@@ -2374,7 +2520,24 @@ export default function Page() {
         if (typeof value === 'number') return Number(value).toFixed(2);
         return value ?? '-';
       }));
-    } else if (selectedReport === 'DATE_WISE' || selectedReport === 'VENDOR_DATE_WISE') {
+    } else if (selectedReport === 'DATE_WISE') {
+      head = [[
+        'Date','Total Orders','Delivered','Cancelled','Total Selling Amount','Vendor Price','RF Commission',
+        'Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %',
+        'PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
+      ]];
+      body = dateSummary.map((d: any) => [
+        d.date,d.totalOrders,d.delivered,d.cancelled,
+        `₹${Number(d.sellingPrice || 0).toFixed(2)}`,
+        `₹${Number(d.vendorPrice || 0).toFixed(2)}`,
+        `₹${Number(d.rfComm || 0).toFixed(2)}`,
+        d['Meals'] ?? 0,d['Check'] ?? '0.00%',d['Count of Delivered Orders'] ?? 0,
+        d['Not Delivered Order'] ?? 0,d['Not Delivered %'] ?? '0.00%',
+        d['PPD % of Final Selling Price'] ?? '0.00%',
+        d['Feedback Good'] ?? 0,d['Feedback Bad'] ?? 0,
+        d['Count of Delivered Outlets'] ?? 0,d['Total Station Vendors'] ?? 0
+      ]);
+    } else if (selectedReport === 'VENDOR_DATE_WISE') {
       head = [['Date', 'Total Orders', 'Delivered', 'Cancelled', 'Selling Amount', 'Vendor Price', 'RF Commission']];
       body = dateSummary.map((d) => [d.date,d.totalOrders,d.delivered,d.cancelled,`₹${d.sellingPrice.toFixed(2)}`,`₹${d.vendorPrice.toFixed(2)}`,`₹${d.rfComm.toFixed(2)}`]);
     } else if (selectedReport === 'OUTLETS_MASTER') {
@@ -2940,36 +3103,100 @@ export default function Page() {
                   </table>
                 )}
 
-                {/* 4. DATE WISE VIEW */}
+                {/* 4. DATE WISE VIEW - TOTAL ROW + HEADER FILTERS */}
                 {selectedReport === 'DATE_WISE' && (
-                  <table className="portal-report-table portal-table-date w-full min-w-[1100px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
-                      <tr>
-                        <th className="p-3 font-semibold sticky left-0 bg-slate-900 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.5)]">Date</th>
-                        <th className="p-3 font-semibold text-center">Total Orders</th>
-                        <th className="p-3 font-semibold text-center text-emerald-400">Delivered</th>
-                        <th className="p-3 font-semibold text-center text-rose-400">Cancelled</th>
-                        <th className="p-3 font-semibold text-right">Total Selling Amount</th>
-                        <th className="p-3 font-semibold text-right">Vendor Price</th>
-                        <th className="p-3 font-semibold text-right text-emerald-400">RF Commission</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {dateSummary
-                        .filter((d) => d.date.toLowerCase().includes(searchTerm.toLowerCase()))
-                        .map((row, i) => (
+                  <>
+                    <table className="portal-report-table portal-table-date w-full min-w-[2600px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
+                      <thead className="sticky top-0 z-20 text-slate-700">
+                        {/* TOTAL ROW — FIRST ROW */}
+                        <tr className="bg-slate-300 font-extrabold text-slate-950">
+                          {dateWiseColumns.map((column) => {
+                            const value = dateWiseTotals[column];
+                            return (
+                              <th key={`date-total-${column}`} className="p-2 border-b border-slate-400 text-center">
+                                {column === 'Date'
+                                  ? 'TOTAL'
+                                  : ['Check','Not Delivered %','PPD % of Final Selling Price'].includes(column)
+                                    ? ''
+                                    : typeof value === 'number'
+                                      ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                                      : value ?? ''}
+                              </th>
+                            );
+                          })}
+                        </tr>
+
+                        {/* HEADER ROW — FILTER ON EVERY COLUMN */}
+                        <tr className="bg-slate-100">
+                          {dateWiseColumns.map((column) => {
+                            const isFiltered = dateWiseColumnFilters[column] !== undefined;
+                            const selectedCount = dateWiseColumnFilters[column]?.length ?? (dateWiseFilterOptions[column]?.length ?? 0);
+                            return (
+                              <th key={column} className="p-2 font-semibold text-center relative border-b border-slate-300">
+                                <div className="flex items-center justify-center gap-1">
+                                  <span>{column}</span>
+                                  <button
+                                    type="button"
+                                    title={`Filter ${column}`}
+                                    aria-label={`Filter ${column}`}
+                                    onClick={(event) => openDateWiseColumnFilter(column, event)}
+                                    className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                      isFiltered
+                                        ? 'bg-amber-400 text-slate-900'
+                                        : 'bg-white text-slate-500 border border-slate-300'
+                                    } hover:bg-amber-100`}
+                                  >
+                                    ▼
+                                  </button>
+                                </div>
+                                {isFiltered && (
+                                  <div className="mt-0.5 text-[9px] text-amber-600">
+                                    {selectedCount} selected
+                                  </div>
+                                )}
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+
+                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                        {filteredDateSummary.map((row: any, i: number) => (
                           <tr key={i} className="portal-data-row hover:bg-slate-50">
-                            <td className="p-3 font-bold text-white sticky left-0 bg-slate-900/95 shadow-[2px_0_5px_rgba(0,0,0,0.4)]">{row.date}</td>
-                            <td className="p-3 text-center">{row.totalOrders}</td>
-                            <td className="p-3 text-center text-emerald-400 font-bold">{row.delivered}</td>
-                            <td className="p-3 text-center text-rose-400">{row.cancelled}</td>
-                            <td className="p-3 text-right font-bold text-amber-400">₹{row.sellingPrice.toFixed(2)}</td>
-                            <td className="p-3 text-right">₹{row.vendorPrice.toFixed(2)}</td>
-                            <td className="p-3 text-right font-bold text-emerald-400">₹{row.rfComm.toFixed(2)}</td>
+                            <td className="p-2 font-bold sticky left-0 bg-slate-900/95">{row.date}</td>
+                            <td className="p-2 text-center">{row.totalOrders}</td>
+                            <td className="p-2 text-center text-emerald-400 font-bold">{row.delivered}</td>
+                            <td className="p-2 text-center text-rose-400">{row.cancelled}</td>
+                            <td className="p-2 text-right font-bold text-amber-400">₹{Number(row.sellingPrice || 0).toFixed(2)}</td>
+                            <td className="p-2 text-right">₹{Number(row.vendorPrice || 0).toFixed(2)}</td>
+                            <td className="p-2 text-right font-bold text-emerald-400">₹{Number(row.rfComm || 0).toFixed(2)}</td>
+                            <td className="p-2 text-right">{row['Meals'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Check'] ?? '0.00%'}</td>
+                            <td className="p-2 text-right">{row['Count of Delivered Orders'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Not Delivered Order'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Not Delivered %'] ?? '0.00%'}</td>
+                            <td className="p-2 text-right">{row['PPD % of Final Selling Price'] ?? '0.00%'}</td>
+                            <td className="p-2 text-right">{row['Feedback Good'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Feedback Bad'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Count of Delivered Outlets'] ?? 0}</td>
+                            <td className="p-2 text-right">{row['Total Station Vendors'] ?? 0}</td>
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+
+                    {openDateWiseFilter && (
+                      <VendorHeaderFilter
+                        column={openDateWiseFilter}
+                        options={dateWiseFilterOptions[openDateWiseFilter] || []}
+                        selected={dateWiseColumnFilters[openDateWiseFilter]}
+                        position={dateWiseFilterPosition}
+                        onToggle={(key) => toggleDateWiseFilterValue(openDateWiseFilter, key)}
+                        onSelectAll={() => selectAllDateWiseFilterValues(openDateWiseFilter)}
+                        onClose={() => setOpenDateWiseFilter(null)}
+                      />
+                    )}
+                  </>
                 )}
 
                 {/* 4B. VENDOR DATE WISE VIEW - EXACT EXCEL DATA LAYOUT */}
