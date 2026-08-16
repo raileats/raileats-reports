@@ -2917,7 +2917,9 @@ export default function Page() {
     // identical to the working Main Report layout (date banner, grouped
     // headers, FTD/MTD/LMTD, source rows, totals, merges and widths).
     const mainReportWorksheet = buildMainReportDateWiseSheetLocal(data, feedbackRawData);
-    XLSX.utils.book_append_sheet(workbook, mainReportWorksheet, 'Main Report');
+    if (mainReportWorksheet) {
+      XLSX.utils.book_append_sheet(workbook, mainReportWorksheet, 'Main Report');
+    }
 
     // 2. DATE WISE SUMMARY - exact Date Wise engine output used by the dashboard.
     const dateWiseRows = generateDateWiseData(data, outletsMasterInfo, irctcRawData);
