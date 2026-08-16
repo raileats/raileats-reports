@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { MasterOrderRow } from './vendorRdsGenerator';
+import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
 export interface DateWiseReportRow {
   'Delivery Date': string;
@@ -21,9 +21,13 @@ export interface DateWiseReportRow {
   'Meals': number;
   'Check': string;
   'Count of Delivered Orders': number;
-  'Count of Not_Delivered As per IRCTC Status': number;
-  'Not_Delivered %': string;
-  'Prepaid %': string;
+  'Not Delivered Order': number;
+  'Not Delivered %': string;
+  'PPD % of Final Selling Price': string;
+  'Feedback Good': number;
+  'Feedback Bad': number;
+  'Count of Delivered Outlets': number;
+  'Total Station Vendors': number;
 }
 
 /**
@@ -80,8 +84,19 @@ export const normalizeToDayMonthYear = (rawDate: any): string | null => {
 /**
  * Generates Date Wise Summary Data
  */
-export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseReportRow[] => {
-  const dateOrdersMap: Record<string, { delivered: MasterOrderRow[]; notDeliveredCount: number }> = {};
+export const generateDateWiseData = (
+  masterOrders: MasterOrderRow[],
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  irctcOrders: any[] = []
+): DateWiseReportRow[] => {
+  const dateOrdersMap: Record<string, {
+    delivered: MasterOrderRow[];
+    notDeliveredCount: number;
+    deliveredOutlets: Set<string>;
+    feedbackGood: number;
+    feedbackBad: number;
+    stationCodes: Set<string>;
+  }> = {};
   const allUniqueDates = new Set<string>();
 
   // Determine detected month & year for proper calendar sorting
@@ -109,12 +124,40 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
     }
 
     if (!dateOrdersMap[normalizedDate]) {
-      dateOrdersMap[normalizedDate] = { delivered: [], notDeliveredCount: 0 };
+      dateOrdersMap[normalizedDate] = {
+        delivered: [],
+        notDeliveredCount: 0,
+        deliveredOutlets: new Set<string>(),
+        feedbackGood: 0,
+        feedbackBad: 0,
+        stationCodes: new Set<string>(),
+      };
     }
 
     const finalStatus = String(row['Final Status'] || '').trim().toLowerCase();
     const irctcStatus = String(row['IRCTC Status'] || '').trim().toLowerCase();
     const rfStatus = String(row['RF Status'] || '').trim().toLowerCase();
+
+    const outletId = String(
+      (row as any)['Outlet ID'] || (row as any)['OutletId'] || (row as any)['outlet_id'] || ''
+    ).trim();
+    const rawStation = String(
+      (row as any)['Station Code'] ||
+      (row as any)['Delivery Station'] ||
+      (row as any)['DeliveryStation'] ||
+      (row as any)['Station Name'] ||
+      (row as any)['Station'] ||
+      ''
+    ).trim();
+    const cleanStation = rawStation
+      .toUpperCase()
+      .split('-')[0]
+      .split('(')[0]
+      .split('/')[0]
+      .trim()
+      .replace(/[^A-Z0-9]/g, '');
+
+    if (cleanStation) dateOrdersMap[normalizedDate].stationCodes.add(cleanStation);
 
     // Check Not Delivered / Cancelled status
     if (
@@ -132,6 +175,31 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
     // Match delivered status (handles 'delivered', 'DELIVERED', 'delivered ', 'success')
     if (finalStatus === 'delivered' || finalStatus === 'success' || (!finalStatus && irctcStatus.includes('deliver'))) {
       dateOrdersMap[normalizedDate].delivered.push(row);
+      if (outletId) dateOrdersMap[normalizedDate].deliveredOutlets.add(outletId);
+    }
+  });
+
+  // Feedback uses the exact Station Report rule:
+  // only Feedback Type = FEEDBACK / COMPLAIN is counted.
+  const feedbackSource = Array.isArray(irctcOrders) && irctcOrders.length > 0 ? irctcOrders : masterOrders;
+  feedbackSource.forEach((row: any) => {
+    const rawDate =
+      row['Delivery Date'] ||
+      row['Delivery date'] ||
+      row['DELIVERY DATE'] ||
+      row['Order Date'] ||
+      row['Date'];
+    const normalizedDate = normalizeToDayMonthYear(rawDate);
+    if (!normalizedDate || !dateOrdersMap[normalizedDate]) return;
+
+    const typeVal = String(
+      row['Feedback Type'] || row['FeedbackType'] || row['FEEDBACK TYPE'] || ''
+    ).trim().toUpperCase();
+
+    if (typeVal === 'FEEDBACK') {
+      dateOrdersMap[normalizedDate].feedbackGood += 1;
+    } else if (typeVal === 'COMPLAIN') {
+      dateOrdersMap[normalizedDate].feedbackBad += 1;
     }
   });
 
@@ -151,7 +219,14 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
   const reportRows: DateWiseReportRow[] = [];
 
   sortedDateList.forEach((dateKey) => {
-    const bucket = dateOrdersMap[dateKey] || { delivered: [], notDeliveredCount: 0 };
+    const bucket = dateOrdersMap[dateKey] || {
+      delivered: [],
+      notDeliveredCount: 0,
+      deliveredOutlets: new Set<string>(),
+      feedbackGood: 0,
+      feedbackBad: 0,
+      stationCodes: new Set<string>(),
+    };
     const deliveredOrders = bucket.delivered;
 
     let vendorPriceSum = 0;
@@ -210,7 +285,7 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
     const notDeliveredOrdersCount = bucket.notDeliveredCount;
 
     // Check %: (Total Commission / Vendor Price) %
-    const checkPct = vendorPrice > 0 ? `${((totalCommission / vendorPrice) * 100).toFixed(2)}%` : '#DIV/0!';
+    const checkPct = finalBasePrice > 0 ? `${((totalCommission / finalBasePrice) * 100).toFixed(2)}%` : '0.00%';
 
     // Not Delivered %
     const notDeliveredPct =
@@ -220,8 +295,27 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
         ? '100.00%'
         : '#DIV/0!';
 
-    // Prepaid %
-    const prepaidPct = sellingPrice > 0 ? `${((ppd / sellingPrice) * 100).toFixed(2)}%` : '#DIV/0!';
+    // PPD % of Final Selling Price (same as Station Report)
+    const ppdPct = sellingPrice > 0 ? `${((ppd / sellingPrice) * 100).toFixed(2)}%` : '0.00%';
+
+    // Total Station Vendors: same Outlet Master source/rule as Station Report,
+    // summed once per station for the stations represented on that date.
+    const totalStationVendorsMap: Record<string, Set<string>> = {};
+    Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+      const rawSt = out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '';
+      const cleanSt = String(rawSt).trim().toUpperCase()
+        .split('-')[0].split('(')[0].split('/')[0].trim()
+        .replace(/[^A-Z0-9]/g, '');
+      const outId = String(out?.outletId || out?.restaurantId || out?.outlet_id || '').trim();
+      if (cleanSt && outId) {
+        if (!totalStationVendorsMap[cleanSt]) totalStationVendorsMap[cleanSt] = new Set<string>();
+        totalStationVendorsMap[cleanSt].add(outId);
+      }
+    });
+    const totalStationVendors = Array.from(bucket.stationCodes).reduce(
+      (sum, stationCode) => sum + (totalStationVendorsMap[stationCode]?.size || 0),
+      0
+    );
 
     reportRows.push({
       'Delivery Date': dateKey,
@@ -243,9 +337,13 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
       'Meals': mealsSum,
       'Check': checkPct,
       'Count of Delivered Orders': deliveredOrdersCount,
-      'Count of Not_Delivered As per IRCTC Status': notDeliveredOrdersCount,
-      'Not_Delivered %': notDeliveredPct,
-      'Prepaid %': prepaidPct,
+      'Not Delivered Order': notDeliveredOrdersCount,
+      'Not Delivered %': notDeliveredPct,
+      'PPD % of Final Selling Price': ppdPct,
+      'Feedback Good': bucket.feedbackGood,
+      'Feedback Bad': bucket.feedbackBad,
+      'Count of Delivered Outlets': bucket.deliveredOutlets.size,
+      'Total Station Vendors': totalStationVendors,
     });
   });
 
@@ -257,16 +355,53 @@ export const generateDateWiseData = (masterOrders: MasterOrderRow[]): DateWiseRe
  */
 export const generateDateWiseReportWorkbook = (
   masterOrders: MasterOrderRow[],
+  outletsMasterInfo: Record<string, OutletMasterInfo> = {},
+  irctcOrders: any[] = [],
   fileNamePrefix: string = 'DATE_WISE_SUMMARY_REPORT'
 ) => {
-  const dateWiseData = generateDateWiseData(masterOrders);
+  const dateWiseData = generateDateWiseData(masterOrders, outletsMasterInfo, irctcOrders);
 
   if (!dateWiseData || dateWiseData.length === 0) {
     alert('Date wise report export karne ke liye koi data available nahi hai.');
     return;
   }
 
-  const worksheet = XLSX.utils.json_to_sheet(dateWiseData);
+  const columns = [
+    'Delivery Date','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm',
+    'Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount',
+    'Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD',
+    'Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %',
+    'PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets',
+    'Total Station Vendors'
+  ];
+
+  const totalRow: Record<string, any> = {};
+  columns.forEach((column) => { totalRow[column] = ''; });
+  totalRow['Delivery Date'] = 'TOTAL';
+
+  const numericColumns = columns.filter((column) => ![
+    'Delivery Date','Check','Not Delivered %','PPD % of Final Selling Price'
+  ].includes(column));
+
+  numericColumns.forEach((column) => {
+    totalRow[column] = dateWiseData.reduce(
+      (sum, row) => sum + (Number((row as any)[column]) || 0),
+      0
+    );
+  });
+
+  // Keep percentage/check columns blank in TOTAL, matching the Station Report pattern.
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    columns.map((column) => totalRow[column]),
+    columns,
+    ...dateWiseData.map((row) => columns.map((column) => (row as any)[column]))
+  ]);
+
+  // Excel AutoFilter is on the second row (the actual header row), exactly as requested.
+  worksheet['!autofilter'] = {
+    ref: `A2:${XLSX.utils.encode_col(columns.length - 1)}${dateWiseData.length + 2}`
+  };
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Date Wise Summary');
 
