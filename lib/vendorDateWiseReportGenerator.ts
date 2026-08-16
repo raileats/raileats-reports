@@ -224,6 +224,47 @@ const formatDateHeader = (dStr: string): string => {
   });
 };
 
+
+/**
+ * Read a value from Outlet Master without depending on the exact object key
+ * casing/spaces.  The uploaded Outlet Master contains the literal
+ * `Station Rank` column, while older saved master objects may contain
+ * `stationRank`.
+ */
+const getMasterValue = (row: any, keys: string[]): any => {
+  if (!row || typeof row !== 'object') return undefined;
+  const normalized = Object.keys(row).reduce<Record<string, string>>((acc, key) => {
+    acc[key.toLowerCase().replace(/[^a-z0-9]/g, '')] = key;
+    return acc;
+  }, {});
+
+  for (const key of keys) {
+    const actual = normalized[key.toLowerCase().replace(/[^a-z0-9]/g, '')];
+    if (actual !== undefined && row[actual] !== undefined && row[actual] !== null && String(row[actual]).trim() !== '') {
+      return row[actual];
+    }
+  }
+  return undefined;
+};
+
+const normalizeOutletId = (value: any): string =>
+  String(value ?? '').trim().replace(/\.0$/, '');
+
+const normalizeStationCode = (value: any): string => {
+  let s = String(value ?? '').trim().toUpperCase();
+  if (!s) return '';
+  if (s.includes('-')) s = s.split('-')[0].trim();
+  if (s.includes('(')) s = s.split('(')[0].trim();
+  if (s.includes('/')) s = s.split('/')[0].trim();
+  return s.replace(/[^A-Z0-9]/g, '');
+};
+
+const normalizeRank = (value: any): number | string => {
+  if (value === undefined || value === null || String(value).trim() === '') return '';
+  const n = Number(value);
+  return Number.isFinite(n) ? n : String(value).trim();
+};
+
 export const generateVendorDateWiseData = (
   masterOrders: MasterOrderRow[],
   outletsMasterInfo: Record<string, OutletMasterInfo> = {},
@@ -232,8 +273,38 @@ export const generateVendorDateWiseData = (
   const uniqueDatesSet = new Set<string>();
   const currentMonthMap: Record<string, any> = {};
   (currentMonthRecords || []).forEach((c: any) => {
-    const oid = String(c?.outletId || c?.['Outlet Id'] || c?.['Outlet ID'] || '').trim().replace(/\.0$/, '');
+    const oid = normalizeOutletId(c?.outletId || c?.['Outlet Id'] || c?.['Outlet ID']);
     if (oid) currentMonthMap[oid] = c;
+  });
+
+  // Station Rank comes from the uploaded Outlet Master, by Outlet ID.
+  // Build an Outlet-ID map first.  A Station-Code fallback is also built so
+  // older persisted master records can still resolve the same station rank.
+  const outletRankMap: Record<string, number | string> = {};
+  const stationRankMap: Record<string, number | string> = {};
+
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const oid = normalizeOutletId(
+      getMasterValue(out, ['outletId', 'Outlet Id', 'Outlet ID', 'Aggregator Outlet ID'])
+    );
+    const station = normalizeStationCode(
+      getMasterValue(out, ['station', 'stationCode', 'Station Code', 'Station'])
+    );
+    const rank = normalizeRank(
+      getMasterValue(out, ['stationRank', 'Station Rank', 'station_rank', 'Rank'])
+    );
+
+    if (rank === '') return;
+
+    if (oid && outletRankMap[oid] === undefined) {
+      outletRankMap[oid] = rank;
+    }
+
+    if (station && typeof rank === 'number') {
+      const existing = stationRankMap[station];
+      stationRankMap[station] =
+        typeof existing === 'number' ? Math.min(existing, rank) : rank;
+    }
   });
 
   const outletDataMap: Record<
@@ -242,6 +313,7 @@ export const generateVendorDateWiseData = (
       outletId: string;
       vendorName: string;
       stnCode: string;
+      stationRank: number | string;
       dateCounts: Record<string, number>;
       totalDelivered: number;
     }
@@ -256,15 +328,26 @@ export const generateVendorDateWiseData = (
     if (!outletId) return;
 
     if (!outletDataMap[outletId]) {
-      const outMaster = outletsMasterInfo[outletId];
+      const outMaster = outletsMasterInfo[outletId] as any;
+      const masterStation = normalizeStationCode(
+        getMasterValue(outMaster, ['station', 'stationCode', 'Station Code', 'Station']) || ord['Station Code'] || ''
+      );
+      const resolvedRank =
+        outletRankMap[outletId] !== undefined
+          ? outletRankMap[outletId]
+          : (stationRankMap[masterStation] ?? '');
 
       outletDataMap[outletId] = {
         outletId,
         vendorName:
-          outMaster?.outletName ||
+          getMasterValue(outMaster, ['outletName', 'Outlet Name']) ||
           ord['Vendor Name'] ||
           `Outlet ${outletId}`,
-        stnCode: outMaster?.station || ord['Station Code'] || '',
+        stnCode:
+          getMasterValue(outMaster, ['station', 'stationCode', 'Station Code', 'Station']) ||
+          ord['Station Code'] ||
+          '',
+        stationRank: resolvedRank,
         dateCounts: {},
         totalDelivered: 0,
       };
@@ -311,6 +394,7 @@ export const generateVendorDateWiseData = (
       'Row Labels': Number(item.outletId) || item.outletId,
       Name: item.vendorName,
       'STN Code': item.stnCode,
+      'Station Rank': item.stationRank,
       'Vendor Payment Type': String(currentMonthInfo.vendorPaymentType || currentMonthInfo['Vendor Payment Type'] || '').trim().toUpperCase(),
       'Discount Applied': String(currentMonthInfo.discountApplied || currentMonthInfo['Discount Applied'] || '').trim(),
     };
@@ -325,9 +409,21 @@ export const generateVendorDateWiseData = (
     return rowObj;
   });
 
-  // Sort by Station Code first (as requested), then Outlet ID, then Name.
-  // This keeps Dashboard and Excel in exactly the same station-wise order.
+  // REQUIRED ORDER:
+  //   1) Station Rank ascending
+  //   2) Station Code
+  //   3) Outlet ID
+  //   4) Outlet Name
+  // This makes all Rank-1 outlets appear together, then Rank-2, etc.
   rows.sort((a, b) => {
+    const ar = Number(a['Station Rank']);
+    const br = Number(b['Station Rank']);
+    const aHasRank = Number.isFinite(ar);
+    const bHasRank = Number.isFinite(br);
+
+    if (aHasRank && bHasRank && ar !== br) return ar - br;
+    if (aHasRank !== bHasRank) return aHasRank ? -1 : 1;
+
     const stationCompare = String(a['STN Code'] ?? '').localeCompare(
       String(b['STN Code'] ?? ''),
       undefined,
@@ -337,17 +433,7 @@ export const generateVendorDateWiseData = (
 
     const aa = Number(a['Row Labels']);
     const bb = Number(b['Row Labels']);
-
-    if (Number.isFinite(aa) && Number.isFinite(bb)) {
-      return aa - bb;
-    }
-
-    const outletCompare = String(a['Row Labels']).localeCompare(
-      String(b['Row Labels']),
-      undefined,
-      { numeric: true }
-    );
-    if (outletCompare !== 0) return outletCompare;
+    if (Number.isFinite(aa) && Number.isFinite(bb) && aa !== bb) return aa - bb;
 
     return String(a.Name ?? '').localeCompare(String(b.Name ?? ''), undefined, { sensitivity: 'base' });
   });
@@ -396,6 +482,7 @@ export const generateVendorDateWiseReportWorkbook = (
       'Row Labels': row['Row Labels'],
       Name: row.Name,
       'STN Code': row['STN Code'],
+      'Station Rank': row['Station Rank'] ?? '',
     };
 
     dateKeys.forEach((dateKey) => {
@@ -416,6 +503,7 @@ export const generateVendorDateWiseReportWorkbook = (
     'Row Labels': 'Total',
     Name: '',
     'STN Code': '',
+    'Station Rank': '',
   };
 
   dateKeys.forEach((dateKey) => {
@@ -485,7 +573,7 @@ export const generateVendorDateWiseReportWorkbook = (
   };
 
   for (let rowIndex = 0; rowIndex < exportRows.length; rowIndex++) {
-    for (let colIndex = 3; colIndex < 3 + dateKeys.length; colIndex++) {
+    for (let colIndex = 4; colIndex < 4 + dateKeys.length; colIndex++) {
       const address = XLSX.utils.encode_cell({ r: rowIndex + 2, c: colIndex });
       const cell = worksheet[address] as any;
       if (cell && Number(cell.v) === 0) {
@@ -521,10 +609,10 @@ export const generateVendorDateWiseReportWorkbook = (
     }
   }
 
-  // Freeze first 3 columns so Outlet ID / Name / STN Code remain visible
+  // Freeze first 4 columns so Outlet ID / Name / STN Code / Station Rank remain visible
   // while horizontally scrolling through dates.
   worksheet['!freeze'] = {
-    xSplit: 3,
+    xSplit: 4,
     ySplit: 2,
   };
 
@@ -533,6 +621,7 @@ export const generateVendorDateWiseReportWorkbook = (
     { wch: 14 },
     { wch: 42 },
     { wch: 14 },
+    { wch: 12 },
     ...dateKeys.map(() => ({ wch: 18 })),
     { wch: 20 },
     { wch: 18 },
