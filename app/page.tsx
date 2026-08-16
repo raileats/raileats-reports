@@ -1828,6 +1828,7 @@ export default function Page() {
       'Name',
       'STN Code',
       'Station Rank',
+      'Orders Count',
       ...vendorDateWiseSummary.dateKeys,
       'Vendor Payment Type',
       'Discount Applied',
@@ -1840,6 +1841,7 @@ export default function Page() {
       Name: 'Outlet Name',
       'STN Code': 'Station Code',
       'Station Rank': 'Station Rank',
+      'Orders Count': 'Orders Count',
       'Vendor Payment Type': 'Vendor Payment Type',
       'Discount Applied': 'Discount Applied',
     };
@@ -1981,6 +1983,11 @@ export default function Page() {
         return sum + (Number.isFinite(value) ? value : 0);
       }, 0);
     });
+
+    totals['Orders Count'] = vendorDateWiseSummary.rows.reduce((sum: number, row: any) => {
+      const value = Number(row['Orders Count'] ?? 0);
+      return sum + (Number.isFinite(value) ? value : 0);
+    }, 0);
 
     return totals;
   }, [vendorDateWiseSummary]);
@@ -2862,6 +2869,9 @@ export default function Page() {
                         </th>
                         <th className="p-3 text-base font-extrabold sticky left-[540px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
                         </th>
+                        <th className={`p-3 text-center min-w-[130px] text-base font-extrabold ${Number(vendorDateWiseTotals['Orders Count'] ?? 0) === 0 ? 'text-red-700' : 'text-slate-950'}`}>
+                          {Number(vendorDateWiseTotals['Orders Count'] ?? 0)}
+                        </th>
                         {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
                           const totalValue = Number(vendorDateWiseTotals[dateKey] ?? 0);
                           const totalIsZero = totalValue === 0;
@@ -2979,6 +2989,30 @@ export default function Page() {
                           )}
                         </th>
 
+                        <th className="p-2 font-semibold text-center min-w-[130px] relative">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Orders Count</span>
+                            <button
+                              type="button"
+                              title="Filter Orders Count"
+                              aria-label="Filter Orders Count"
+                              onClick={(event) => openVendorDateWiseColumnFilter('Orders Count', event)}
+                              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                vendorDateWiseColumnFilters['Orders Count'] !== undefined
+                                  ? 'bg-amber-400 text-slate-900'
+                                  : 'bg-white/10 text-slate-300'
+                              } hover:bg-white/25`}
+                            >
+                              <span className="text-[11px]">▼</span>
+                            </button>
+                          </div>
+                          {vendorDateWiseColumnFilters['Orders Count'] !== undefined && (
+                            <div className="mt-0.5 text-center text-[9px] text-amber-300">
+                              {vendorDateWiseColumnFilters['Orders Count']?.length || 0} selected
+                            </div>
+                          )}
+                        </th>
+
                         {vendorDateWiseSummary.dateColumns.map((dateLabel: string, index: number) => {
                           const dateKey = vendorDateWiseSummary.dateKeys[index];
                           const selected = vendorDateWiseColumnFilters[dateKey];
@@ -3063,6 +3097,16 @@ export default function Page() {
                           <td className="p-3 text-violet-300 font-bold text-center sticky left-[540px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
                             {row['Station Rank'] || '-'}
                           </td>
+
+                          {(() => {
+                            const orderCount = Number(row['Orders Count'] ?? 0);
+                            const isZero = !Number.isFinite(orderCount) || orderCount === 0;
+                            return (
+                              <td className={`p-3 text-center min-w-[130px] font-extrabold text-[14px] ${isZero ? 'text-red-500' : 'text-slate-300'}`}>
+                                {isZero ? 0 : orderCount.toLocaleString('en-IN')}
+                              </td>
+                            );
+                          })()}
 
                           {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
                             const value = row[dateKey];
