@@ -959,13 +959,14 @@ const formatVendorRdsCell = (key: string, value: any): string => {
 };
 
 // Excel-style multi-select filter used by the Vendor Report dashboard header.
-function VendorHeaderFilter({ column, options, selected, position, onToggle, onSelectAll, onClose }: {
+function VendorHeaderFilter({ column, options, selected, position, onToggle, onSelectAll, onClearAll, onClose }: {
   column: string;
   options: { key: string; label: string }[];
   selected?: string[];
   position: { top: number; left: number; width: number };
   onToggle: (key: string) => void;
   onSelectAll: () => void;
+  onClearAll: () => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -998,9 +999,19 @@ function VendorHeaderFilter({ column, options, selected, position, onToggle, onS
           className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500" />
       </div>
       <div className="max-h-[330px] overflow-y-auto p-2">
-        <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 font-semibold hover:bg-slate-100">
-          <input type="checkbox" checked={allSelected} onChange={onSelectAll} /><span>(Select All)</span>
-        </label>
+        <div className="flex items-center gap-2 rounded px-2 py-1.5">
+          <label className="flex flex-1 cursor-pointer items-center gap-2 font-semibold hover:bg-slate-100">
+            <input type="checkbox" checked={allSelected} onChange={onSelectAll} /><span>(Select All)</span>
+          </label>
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+            title="Unselect all values"
+          >
+            Unselect All
+          </button>
+        </div>
         <div className="my-1 border-t border-slate-200" />
         {filteredOptions.length === 0 ? <div className="px-2 py-3 text-sm text-slate-500">No values found</div> : filteredOptions.map((option) => (
           <label key={option.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-100">
@@ -1048,6 +1059,11 @@ export default function Page() {
   const [stationColumnFilters, setStationColumnFilters] = useState<Record<string, string[] | undefined>>({});
   const [openStationFilter, setOpenStationFilter] = useState<string | null>(null);
   const [stationFilterPosition, setStationFilterPosition] = useState({ top: 0, left: 0, width: 320 });
+
+  // Vendor RDS Summary: Excel-style filters for every column.
+  const [vendorRdsColumnFilters, setVendorRdsColumnFilters] = useState<Record<string, string[] | undefined>>({});
+  const [openVendorRdsFilter, setOpenVendorRdsFilter] = useState<string | null>(null);
+  const [vendorRdsFilterPosition, setVendorRdsFilterPosition] = useState({ top: 0, left: 0, width: 320 });
 
   const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
 
@@ -2294,9 +2310,9 @@ export default function Page() {
   ]);
 
   // Vendor RDS screen must use the EXACT same 41-column aggregation engine
-  // as the Vendor RDS Excel export. This prevents the webpage from showing
-  // the old 9-column Vendor Summary while Excel contains 41 columns.
-  const vendorRdsRows = useMemo(() => {
+  // as the Vendor RDS Excel export. The source rows remain untouched; the
+  // dashboard applies only its display sort + filters on top of this data.
+  const vendorRdsSourceRows = useMemo(() => {
     if (selectedReport !== 'VENDOR_RDS') return [];
 
     return generateVendorRdsData(
@@ -2312,6 +2328,138 @@ export default function Page() {
     currentMonthRecords,
     outletsMasterInfo,
   ]);
+
+  const vendorRdsFilterOptions = useMemo(() => {
+    const result: Record<string, { key: string; label: string }[]> = {};
+    VENDOR_RDS_COLUMNS.forEach((column) => {
+      const seen = new Map<string, string>();
+      vendorRdsSourceRows.forEach((row: any) => {
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        if (!seen.has(key)) {
+          const label = key === '__BLANK__'
+            ? '(Blanks)'
+            : typeof raw === 'number'
+              ? raw.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+              : key;
+          seen.set(key, label);
+        }
+      });
+      result[column] = Array.from(seen.entries())
+        .map(([key, label]) => ({ key, label }))
+        .sort((a, b) => {
+          if (a.key === '__BLANK__') return 1;
+          if (b.key === '__BLANK__') return -1;
+          return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    });
+    return result;
+  }, [vendorRdsSourceRows]);
+
+  const filteredVendorRdsRows = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+
+    const rows = vendorRdsSourceRows.filter((row: any) => {
+      const matchesSearch = !q || VENDOR_RDS_COLUMNS.some((column) =>
+        String(row[column] ?? '').toLowerCase().includes(q)
+      );
+      if (!matchesSearch) return false;
+
+      return VENDOR_RDS_COLUMNS.every((column) => {
+        const selected = vendorRdsColumnFilters[column];
+        if (selected === undefined) return true;
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        return selected.includes(key);
+      });
+    });
+
+    // Requested display order: Net Payment low-to-high (A-to-Z equivalent
+    // for this numeric column). Ties stay deterministic by Vendor Name.
+    return rows.sort((a: any, b: any) => {
+      const netA = Number(a['Net Payment'] ?? 0);
+      const netB = Number(b['Net Payment'] ?? 0);
+      if (netA !== netB) return netA - netB;
+      return String(a['Vendor Name'] ?? '').localeCompare(String(b['Vendor Name'] ?? ''), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    });
+  }, [vendorRdsSourceRows, vendorRdsColumnFilters, searchTerm]);
+
+  const vendorRdsTotals = useMemo(() => {
+    const totals: Record<string, any> = {};
+    VENDOR_RDS_COLUMNS.forEach((column) => { totals[column] = ''; });
+    totals['Outlet ID'] = 'TOTAL';
+
+    const numericColumns = new Set([
+      'Final Vendor Price', 'Final Base Price', 'Final RF Commission',
+      'Final IRCTC Commission', 'Final GST', 'Final Order Total',
+      'Final Total Commission', 'Penalty', 'Gross Commission', 'IGST',
+      'CGST', 'SGST', 'IGST+CGST+SGST', 'Total This Month',
+      'Paid to Vendors By Relfood', 'Delivery Charges', 'Previouse Balance',
+      'Final Selling Price', 'Final Total Discount', 'Final Vendor Discount',
+      'Payment Received from Vendor to Relfood', 'Credit Note to Vendor by Relfood',
+      'Final RF Discount', 'PPD', 'COD', 'ADD', 'Less', 'Net Payment',
+      'As per Reverse', 'Diff', 'Orders Count', 'Meals', 'Discounted Base Price',
+      'Margin %',
+    ]);
+
+    VENDOR_RDS_COLUMNS.forEach((column) => {
+      if (!numericColumns.has(column)) return;
+      totals[column] = vendorRdsSourceRows.reduce((sum: number, row: any) => {
+        const n = Number(row[column] ?? 0);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+    });
+
+    return totals;
+  }, [vendorRdsSourceRows]);
+
+  const openVendorRdsColumnFilter = (column: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setVendorRdsFilterPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(300, Math.min(380, rect.width + 180)),
+    });
+    setOpenVendorRdsFilter(column);
+  };
+
+  const toggleVendorRdsFilterValue = (column: string, key: string) => {
+    setVendorRdsColumnFilters((previous) => {
+      const allKeys = (vendorRdsFilterOptions[column] || []).map((option) => option.key);
+      const current = previous[column];
+
+      if (current === undefined) {
+        return { ...previous, [column]: allKeys.filter((value) => value !== key) };
+      }
+
+      const next = current.includes(key)
+        ? current.filter((value) => value !== key)
+        : [...current, key];
+
+      if (next.length === allKeys.length) {
+        const copy = { ...previous };
+        delete copy[column];
+        return copy;
+      }
+
+      return { ...previous, [column]: next };
+    });
+  };
+
+  const selectAllVendorRdsFilterValues = (column: string) => {
+    setVendorRdsColumnFilters((previous) => {
+      const copy = { ...previous };
+      delete copy[column];
+      return copy;
+    });
+  };
+
+  const clearAllVendorRdsFilterValues = (column: string) => {
+    setVendorRdsColumnFilters((previous) => ({ ...previous, [column]: [] }));
+  };
 
   // --- Exports ---
   // ---------------------------------------------------------------------------
@@ -2677,7 +2825,7 @@ export default function Page() {
       }));
     } else if (selectedReport === 'VENDOR_RDS') {
       head = [VENDOR_RDS_COLUMNS.map((column) => column === 'Outlet ID' ? 'Outlet ID' : column)];
-      body = vendorRdsRows.map((r: any) => VENDOR_RDS_COLUMNS.map((column) => {
+      body = vendorRdsSourceRows.map((r: any) => VENDOR_RDS_COLUMNS.map((column) => {
         const value = r[column];
         if (typeof value === 'number') return Number(value).toFixed(2);
         return value ?? '-';
@@ -3104,6 +3252,7 @@ export default function Page() {
                           position={stationFilterPosition}
                           onToggle={(key) => toggleStationFilterValue(openStationFilter, key)}
                           onSelectAll={() => selectAllStationFilterValues(openStationFilter)}
+                          onClearAll={() => setStationColumnFilters((previous) => ({ ...previous, [openStationFilter]: [] }))}
                           onClose={() => setOpenStationFilter(null)}
                         />
                       )}
@@ -3173,6 +3322,7 @@ export default function Page() {
                     position={vendorFilterPosition}
                     onToggle={(key) => toggleVendorFilterValue(openVendorFilter, key)}
                     onSelectAll={() => selectAllVendorFilterValues(openVendorFilter)}
+                    onClearAll={() => setVendorColumnFilters((previous) => ({ ...previous, [openVendorFilter]: [] }))}
                     onClose={() => setOpenVendorFilter(null)}
                   />
                 )}
@@ -3185,54 +3335,94 @@ export default function Page() {
                     position={vendorDateWiseFilterPosition}
                     onToggle={(key) => toggleVendorDateWiseFilterValue(openVendorDateWiseFilter, key)}
                     onSelectAll={() => selectAllVendorDateWiseFilterValues(openVendorDateWiseFilter)}
+                    onClearAll={() => setVendorDateWiseColumnFilters((previous) => ({ ...previous, [openVendorDateWiseFilter]: [] }))}
                     onClose={() => setOpenVendorDateWiseFilter(null)}
                   />
                 )}
 
-                {/* 3B. VENDOR RDS VIEW - EXACT 41 COLUMNS AS EXCEL */}
+                {/* 3B. VENDOR RDS VIEW - TOTAL ROW + HEADER FILTERS + NET PAYMENT SORT */}
                 {selectedReport === 'VENDOR_RDS' && (
-                  <table className="portal-report-table portal-table-rds w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
-                    <thead className="sticky top-0 bg-slate-900 z-10 text-slate-400">
-                      <tr>
-                        {VENDOR_RDS_COLUMNS.map((column, index) => {
-                          const sticky = index === 0
-                            ? 'sticky left-0 z-40'
-                            : index === 1
-                              ? 'sticky left-[100px] z-40'
-                              : index === 2
-                                ? 'sticky left-[450px] z-40'
-                                : '';
-                          const width = index === 0
-                            ? 'w-[100px] min-w-[100px] max-w-[100px]'
-                            : index === 1
-                              ? 'w-[350px] min-w-[350px] max-w-[350px]'
-                              : index === 2
-                                ? 'w-[140px] min-w-[140px] max-w-[140px]'
-                                : '';
-                          return (
-                            <th
-                              key={column}
-                              className={`p-3 font-semibold border-b border-slate-800 bg-slate-900 ${sticky} ${width} ${index >= 6 ? 'text-right' : ''}`}
-                            >
-                              {column}
-                            </th>
-                          );
-                        })}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {vendorRdsRows
-                        .filter((row: any) => {
-                          const q = searchTerm.toLowerCase();
-                          return (
-                            String(row['Outlet ID'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Vendor Name'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Station Code'] ?? '').toLowerCase().includes(q) ||
-                            String(row['GST Number'] ?? '').toLowerCase().includes(q) ||
-                            String(row['Invoice Number'] ?? '').toLowerCase().includes(q)
-                          );
-                        })
-                        .map((row: any) => (
+                  <>
+                    <table className={`portal-report-table portal-table-rds w-full min-w-[5200px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap ${themeMode === 'night' ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <thead className="sticky top-0 z-20">
+                        {/* TOTAL ROW — FIRST ROW */}
+                        <tr className="bg-slate-300 font-bold text-slate-950">
+                          {VENDOR_RDS_COLUMNS.map((column, index) => {
+                            const value = vendorRdsTotals[column];
+                            return (
+                              <th
+                                key={`rds-total-${column}`}
+                                className={`p-2 text-sm border-b border-slate-400 text-center ${
+                                  index >= 6 ? 'text-right' : ''
+                                }`}
+                              >
+                                {column === 'Outlet ID'
+                                  ? 'TOTAL'
+                                  : typeof value === 'number'
+                                    ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                                    : value ?? ''}
+                              </th>
+                            );
+                          })}
+                        </tr>
+
+                        {/* HEADER ROW — FILTER ON EVERY COLUMN */}
+                        <tr className={themeMode === 'night' ? 'bg-slate-900 text-slate-300' : 'bg-slate-100 text-slate-700'}>
+                          {VENDOR_RDS_COLUMNS.map((column, index) => {
+                            const isFiltered = vendorRdsColumnFilters[column] !== undefined;
+                            const selectedCount = vendorRdsColumnFilters[column]?.length ?? (vendorRdsFilterOptions[column]?.length ?? 0);
+                            const sticky = index === 0
+                              ? 'sticky left-0 z-40'
+                              : index === 1
+                                ? 'sticky left-[100px] z-40'
+                                : index === 2
+                                  ? 'sticky left-[450px] z-40'
+                                  : '';
+                            const width = index === 0
+                              ? 'w-[100px] min-w-[100px] max-w-[100px]'
+                              : index === 1
+                                ? 'w-[350px] min-w-[350px] max-w-[350px]'
+                                : index === 2
+                                  ? 'w-[140px] min-w-[140px] max-w-[140px]'
+                                  : '';
+                            return (
+                              <th
+                                key={column}
+                                className={`p-2 font-semibold text-xs border-b border-slate-300 text-center relative ${sticky} ${width} ${
+                                  themeMode === 'night' ? 'bg-slate-900' : 'bg-slate-100'
+                                }`}
+                              >
+                                <div className="flex items-center justify-center gap-1">
+                                  <span>{column}</span>
+                                  <button
+                                    type="button"
+                                    title={`Filter ${column}`}
+                                    aria-label={`Filter ${column}`}
+                                    onClick={(event) => openVendorRdsColumnFilter(column, event)}
+                                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded ${
+                                      isFiltered
+                                        ? 'bg-amber-400 text-slate-900'
+                                        : themeMode === 'night'
+                                          ? 'bg-white/10 text-slate-300'
+                                          : 'bg-white text-slate-500 border border-slate-300'
+                                    } hover:bg-amber-100`}
+                                  >
+                                    <span className="text-[10px]">▼</span>
+                                  </button>
+                                </div>
+                                {isFiltered && (
+                                  <div className={`mt-0.5 text-[9px] ${themeMode === 'night' ? 'text-amber-300' : 'text-amber-600'}`}>
+                                    {selectedCount} selected
+                                  </div>
+                                )}
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+
+                      <tbody className={`divide-y ${themeMode === 'night' ? 'divide-slate-800/60' : 'divide-slate-200'}`}>
+                        {filteredVendorRdsRows.map((row: any) => (
                           <tr key={`${row['Outlet ID']}-${row['Invoice Number']}`} className="portal-data-row">
                             {VENDOR_RDS_COLUMNS.map((column, index) => {
                               const sticky = index === 0
@@ -3252,16 +3442,15 @@ export default function Page() {
                               const align = index >= 6 ? 'text-right' : index === 0 ? 'font-mono' : '';
                               const value = formatVendorRdsCell(column, row[column]);
                               const color = index === 0
-                                ? 'font-bold text-indigo-300'
-                                : index === 1
-                                  ? 'font-medium text-white'
-                                  : index === 2
-                                    ? 'text-cyan-300 font-mono'
-                                    : '';
+                                ? 'text-indigo-500'
+                                : index === 2
+                                  ? 'text-cyan-500 font-mono'
+                                  : '';
+                              const bg = themeMode === 'night' ? 'bg-slate-900/95' : 'bg-white/95';
                               return (
                                 <td
                                   key={column}
-                                  className={`p-3 bg-slate-900/95 ${sticky} ${width} ${align} ${color}`}
+                                  className={`p-2 text-xs font-normal ${bg} ${sticky} ${width} ${align} ${color}`}
                                 >
                                   {value}
                                 </td>
@@ -3269,8 +3458,22 @@ export default function Page() {
                             })}
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+
+                    {openVendorRdsFilter && (
+                      <VendorHeaderFilter
+                        column={openVendorRdsFilter}
+                        options={vendorRdsFilterOptions[openVendorRdsFilter] || []}
+                        selected={vendorRdsColumnFilters[openVendorRdsFilter]}
+                        position={vendorRdsFilterPosition}
+                        onToggle={(key) => toggleVendorRdsFilterValue(openVendorRdsFilter, key)}
+                        onSelectAll={() => selectAllVendorRdsFilterValues(openVendorRdsFilter)}
+                        onClearAll={() => clearAllVendorRdsFilterValues(openVendorRdsFilter)}
+                        onClose={() => setOpenVendorRdsFilter(null)}
+                      />
+                    )}
+                  </>
                 )}
 
                 {/* 4. DATE WISE VIEW - TOTAL ROW + HEADER FILTERS */}
@@ -3363,6 +3566,7 @@ export default function Page() {
                         position={dateWiseFilterPosition}
                         onToggle={(key) => toggleDateWiseFilterValue(openDateWiseFilter, key)}
                         onSelectAll={() => selectAllDateWiseFilterValues(openDateWiseFilter)}
+                        onClearAll={() => setDateWiseColumnFilters((previous) => ({ ...previous, [openDateWiseFilter]: [] }))}
                         onClose={() => setOpenDateWiseFilter(null)}
                       />
                     )}
