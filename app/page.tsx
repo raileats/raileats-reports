@@ -1002,6 +1002,11 @@ export default function Page() {
   const [openVendorFilter, setOpenVendorFilter] = useState<string | null>(null);
   const [vendorFilterPosition, setVendorFilterPosition] = useState({ top: 0, left: 0, width: 320 });
 
+  // Station Report: Excel-style multi-select filters for every header column.
+  const [stationColumnFilters, setStationColumnFilters] = useState<Record<string, string[] | undefined>>({});
+  const [openStationFilter, setOpenStationFilter] = useState<string | null>(null);
+  const [stationFilterPosition, setStationFilterPosition] = useState({ top: 0, left: 0, width: 320 });
+
   // Vendor Date Wise: Excel-style multi-select filters for every header column.
   const [vendorDateWiseColumnFilters, setVendorDateWiseColumnFilters] =
     useState<Record<string, string[] | undefined>>({});
@@ -1630,38 +1635,105 @@ export default function Page() {
     return generateStationWiseData(data, outletsMasterInfo, irctcRawData);
   }, [data, outletsMasterInfo, irctcRawData]);
 
-  // Station Report business-position helper.  Station Rank comes from Outlet
-  // Master, while business position is calculated from Final Base Price high
-  // to low.  The same rule is mirrored in the Station Report Excel export.
-  const stationBusinessRankMap = useMemo(() => {
-    const result: Record<string, number> = {};
-    [...stationSummary]
-      .filter((row: any) => Number(row['Final Base Price'] || 0) > 0)
-      .sort((a: any, b: any) => {
-        const diff = Number(b['Final Base Price'] || 0) - Number(a['Final Base Price'] || 0);
-        return diff !== 0
-          ? diff
-          : String(a['Station Code'] || '').localeCompare(String(b['Station Code'] || ''));
-      })
-      .forEach((row: any, index: number) => {
-        result[String(row['Station Code'] || '')] = index + 1;
+  const stationFilterOptions = useMemo(() => {
+    const result: Record<string, { key: string; label: string }[]> = {};
+    const columns = stationSummary.length > 0 ? Object.keys(stationSummary[0]) : [];
+    columns.forEach((column) => {
+      const seen = new Map<string, string>();
+      stationSummary.forEach((row: any) => {
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        if (!seen.has(key)) {
+          const label = key === '__BLANK__'
+            ? '(Blanks)'
+            : typeof raw === 'number'
+              ? raw.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+              : key;
+          seen.set(key, label);
+        }
       });
+      result[column] = Array.from(seen.entries())
+        .map(([key, label]) => ({ key, label }))
+        .sort((a, b) => {
+          if (a.key === '__BLANK__') return 1;
+          if (b.key === '__BLANK__') return -1;
+          return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    });
     return result;
   }, [stationSummary]);
 
-  const getStationReportTextColor = (row: any, isLastDay: boolean): string | undefined => {
-    if (isLastDay) return undefined;
+  const filteredStationSummary = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return stationSummary.filter((row: any) => {
+      const matchesSearch =
+        !q ||
+        String(row['Station Code'] ?? '').toLowerCase().includes(q) ||
+        String(row['Station Name'] ?? '').toLowerCase().includes(q);
+      if (!matchesSearch) return false;
 
-    // Base Price missing/zero: entire row text red.
-    if (Number(row['Final Base Price'] || 0) <= 0) return '#DC2626';
+      return Object.keys(stationFilterOptions).every((column) => {
+        const selected = stationColumnFilters[column];
+        if (selected === undefined) return true;
+        const raw = row[column];
+        const key = raw === null || raw === undefined || String(raw).trim() === '' ? '__BLANK__' : String(raw);
+        return selected.includes(key);
+      });
+    });
+  }, [stationSummary, stationFilterOptions, stationColumnFilters, searchTerm]);
 
+  const stationReportTotals = useMemo(() => {
+    const numericColumns = [
+      'Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission',
+      'Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges',
+      'Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals',
+      'Count of Delivered Orders','Not Delivered Order','Feedback Good','Feedback Bad',
+      'Count of Delivered Outlets','Total Station Vendors'
+    ];
+    const totals: Record<string, any> = {};
+    numericColumns.forEach((column) => {
+      totals[column] = Number(stationSummary.reduce((sum: number, row: any) => sum + (Number(row[column]) || 0), 0).toFixed(2));
+    });
+    return totals;
+  }, [stationSummary]);
+
+  const getStationRowTextClass = (row: any) => {
+    if (Number(row['Final Base Price'] || 0) <= 0) return 'text-red-600';
+    const businessRank = Number(row['Rank']);
     const stationRank = Number(row['Station Rank']);
-    const businessRank = stationBusinessRankMap[String(row['Station Code'] || '')];
+    if (Number.isFinite(businessRank) && Number.isFinite(stationRank)) {
+      return businessRank <= stationRank ? 'text-[#166534]' : 'text-[#78350F]';
+    }
+    return 'text-slate-700';
+  };
 
-    // Correct station position for its business = dark green; otherwise dark brown.
-    return Number.isFinite(stationRank) && businessRank !== undefined && stationRank === businessRank
-      ? '#166534'
-      : '#6B3E26';
+  const openStationColumnFilter = (column: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setStationFilterPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(300, Math.min(380, rect.width + 180)) });
+    setOpenStationFilter(column);
+  };
+
+  const toggleStationFilterValue = (column: string, key: string) => {
+    setStationColumnFilters((previous) => {
+      const allKeys = (stationFilterOptions[column] || []).map((option) => option.key);
+      const current = previous[column];
+      if (current === undefined) return { ...previous, [column]: allKeys.filter((value) => value !== key) };
+      const next = current.includes(key) ? current.filter((value) => value !== key) : [...current, key];
+      if (next.length === allKeys.length) {
+        const copy = { ...previous };
+        delete copy[column];
+        return copy;
+      }
+      return { ...previous, [column]: next };
+    });
+  };
+
+  const selectAllStationFilterValues = (column: string) => {
+    setStationColumnFilters((previous) => {
+      const copy = { ...previous };
+      delete copy[column];
+      return copy;
+    });
   };
 
   // LAST_DAY_STATION dashboard MUST use the exact same data engine/order as its Excel export.
@@ -2652,7 +2724,8 @@ export default function Page() {
                 {(selectedReport === 'STATION_REPORT' || selectedReport === 'LAST_DAY_STATION') && (() => {
                   const isLastDay = selectedReport === 'LAST_DAY_STATION';
 
-                  // LAST_DAY_STATION columns are intentionally identical to the Excel generator.
+                  // Station Report: Outlet Master supplies the complete station list;
+                  // delivered Master Data supplies the business numbers.
                   const columns = isLastDay
                     ? [
                         'Station Code','Rank','Delivery Date','Station Rank','Station Name','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
@@ -2661,33 +2734,56 @@ export default function Page() {
                         'Station Code','Rank','Station Name','Station Rank','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
                       ];
 
-                  const rows = (isLastDay ? lastDayStationSummary : stationSummary)
-                    .filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()));
+                  const rows = isLastDay
+                    ? lastDayStationSummary.filter((s: any) => String(s['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()))
+                    : filteredStationSummary;
 
                   return (
                     <table className="portal-report-table portal-table-station w-full min-w-[3000px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                       <thead className="sticky top-0 z-10 text-slate-700">
-                        <tr>
-                          {columns.map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
+                        {!isLastDay && (
+                          <tr className="bg-slate-300 font-extrabold text-slate-950">
+                            {columns.map((column: string, j: number) => {
+                              const value = j === 0 ? 'TOTAL' : stationReportTotals[column];
+                              return (
+                                <th key={`station-total-${j}`} className={`p-3 border-b border-slate-400 text-center ${typeof value === 'number' ? 'text-right' : ''}`}>
+                                  {typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '')}
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        )}
+                        <tr className="bg-slate-900 text-slate-300">
+                          {columns.map((col: string, j: number) => {
+                            const isFiltered = !isLastDay && stationColumnFilters[col] !== undefined;
+                            const selectedCount = stationColumnFilters[col]?.length ?? (stationFilterOptions[col]?.length ?? 0);
+                            return (
+                              <th key={col} className="p-2 font-semibold text-center relative">
+                                <div className="flex items-center justify-center gap-1">
+                                  <span>{col}</span>
+                                  {!isLastDay && (
+                                    <button type="button" title={`Filter ${col}`} aria-label={`Filter ${col}`}
+                                      onClick={(event) => openStationColumnFilter(col, event)}
+                                      className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${isFiltered ? 'bg-amber-400 text-slate-900' : 'bg-white/10 text-slate-300'} hover:bg-white/25`}>
+                                      <span className="text-[11px]">▼</span>
+                                    </button>
+                                  )}
+                                </div>
+                                {isFiltered && <div className="mt-0.5 text-[9px] text-amber-300">{selectedCount} selected</div>}
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody>
                         {rows.map((row: any, i: number) => {
-                          const rowTextColor = getStationReportTextColor(row, isLastDay);
+                          const rowTextClass = !isLastDay ? getStationRowTextClass(row) : 'text-slate-700';
                           return (
-                            <tr
-                              key={`${row['Station Code']}-${i}`}
-                              className="portal-data-row"
-                              style={rowTextColor ? { color: rowTextColor } : undefined}
-                            >
+                            <tr key={`${row['Station Code']}-${i}`} className={`portal-data-row ${rowTextClass}`}>
                               {columns.map((column: string, j: number) => {
                                 const value = row[column];
                                 return (
-                                  <td
-                                    key={column}
-                                    className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= (isLastDay ? 4 : 3) && typeof value === 'number' ? 'text-right' : ''}`}
-                                    style={rowTextColor ? { color: rowTextColor } : undefined}
-                                  >
+                                  <td key={column} className={`p-3 ${j === 0 ? 'font-bold' : ''} ${j >= (isLastDay ? 4 : 3) && typeof value === 'number' ? 'text-right' : ''}`}>
                                     {typeof value === 'number'
                                       ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
                                       : (value ?? '-')}
@@ -2701,6 +2797,17 @@ export default function Page() {
                     </table>
                   );
                 })()}
+                {selectedReport === 'STATION_REPORT' && openStationFilter && (
+                  <VendorHeaderFilter
+                    column={openStationFilter}
+                    options={stationFilterOptions[openStationFilter] || []}
+                    selected={stationColumnFilters[openStationFilter]}
+                    position={stationFilterPosition}
+                    onToggle={(key) => toggleStationFilterValue(openStationFilter, key)}
+                    onSelectAll={() => selectAllStationFilterValues(openStationFilter)}
+                    onClose={() => setOpenStationFilter(null)}
+                  />
+                )}
 
                 {/* 3A. VENDOR REPORT VIEW - STATION RANK + BUSINESS ORDER */}
                 {selectedReport === 'VENDOR_REPORT' && (
