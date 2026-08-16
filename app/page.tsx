@@ -2860,14 +2860,14 @@ export default function Page() {
                     <thead className="sticky top-0 bg-slate-900 z-10 border-b border-slate-800 text-slate-400">
                       {/* TOTAL ROW IS THE FIRST ROW — ABOVE THE HEADER */}
                       <tr className="bg-slate-300 font-extrabold text-slate-950">
-                        <th className="p-3 text-base font-extrabold sticky left-0 bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[110px] w-[110px]">
+                        <th className="p-3 text-base font-extrabold sticky left-0 bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[90px] w-[90px]">
                           Total
                         </th>
-                        <th className="p-3 text-base font-extrabold sticky left-[110px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px]">
+                        <th className="p-3 text-base font-extrabold sticky left-[90px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[280px] w-[280px]">
                         </th>
-                        <th className="p-3 text-base font-extrabold sticky left-[420px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                        <th className="p-3 text-base font-extrabold sticky left-[370px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                         </th>
-                        <th className="p-3 text-base font-extrabold sticky left-[540px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
+                        <th className="p-3 text-base font-extrabold sticky left-[490px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
                         </th>
                         <th className="p-3 text-center min-w-[150px] text-base font-extrabold"></th>
                         <th className="p-3 text-center min-w-[140px] text-base font-extrabold"></th>
@@ -2917,7 +2917,7 @@ export default function Page() {
                           )}
                         </th>
 
-                        <th className="p-2 font-semibold sticky left-[110px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[310px] w-[310px] relative">
+                        <th className="p-2 font-semibold sticky left-[90px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[310px] w-[310px] relative">
                           <div className="flex items-center justify-center gap-1">
                             <span>Outlet Name</span>
                             <button
@@ -2941,7 +2941,7 @@ export default function Page() {
                           )}
                         </th>
 
-                        <th className="p-2 font-semibold sticky left-[420px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[120px] w-[120px] relative">
+                        <th className="p-2 font-semibold sticky left-[370px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.35)] min-w-[120px] w-[120px] relative">
                           <div className="flex items-center justify-center gap-1">
                             <span>Station Code</span>
                             <button
@@ -2965,7 +2965,7 @@ export default function Page() {
                           )}
                         </th>
 
-                        <th className="p-2 font-semibold sticky left-[540px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[110px] w-[110px] relative">
+                        <th className="p-2 font-semibold sticky left-[490px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[110px] w-[110px] relative">
                           <div className="flex items-center justify-center gap-1">
                             <span>Station Rank</span>
                             <button
@@ -3087,15 +3087,15 @@ export default function Page() {
                             {row['Row Labels']}
                           </td>
 
-                          <td className="p-3 font-medium text-white sticky left-[110px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px] max-w-[310px] truncate">
+                          <td className="p-3 font-medium text-white sticky left-[90px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[310px] w-[310px] max-w-[310px] truncate">
                             {row.Name || '-'}
                           </td>
 
-                          <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
+                          <td className="p-3 text-cyan-300 font-mono sticky left-[370px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                             {row['STN Code'] || '-'}
                           </td>
 
-                          <td className="p-3 text-violet-300 font-bold text-center sticky left-[540px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
+                          <td className="p-3 text-violet-300 font-bold text-center sticky left-[490px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
                             {row['Station Rank'] || '-'}
                           </td>
 
@@ -3329,7 +3329,7 @@ export default function Page() {
         .portal-table-station { --portal-c1: 150px; --portal-c2: 180px; --portal-c3: 120px; }
         .portal-table-vendor { --portal-c1: 350px; --portal-c2: 120px; --portal-c3: 180px; }
         .portal-table-rds { --portal-c1: 100px; --portal-c2: 350px; --portal-c3: 140px; }
-        .portal-table-date { --portal-c1: 230px; --portal-c2: 130px; --portal-c3: 130px; }
+        .portal-table-date { --portal-c1: 90px; --portal-c2: 280px; --portal-c3: 120px; }
         .portal-table-outlets { --portal-c1: 130px; --portal-c2: 300px; --portal-c3: 160px; }
         .portal-table-feedback { --portal-c1: 100px; --portal-c2: 300px; --portal-c3: 140px; }
         .portal-table-penalties { --portal-c1: 130px; --portal-c2: 170px; --portal-c3: 180px; }
