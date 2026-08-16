@@ -119,6 +119,16 @@ const getOutletIdFromRow = (row: any): string => {
   return '';
 };
 
+const getOutletMasterStationName = (row: any): string => {
+  if (!row) return '';
+  // Outlet Master keeps the full Station Name under column O.
+  const named = String(row['Station Name'] ?? '').trim();
+  if (named) return named;
+  const keys = Object.keys(row);
+  const columnOKey = keys[14];
+  return columnOKey ? String(row[columnOKey] ?? '').trim() : '';
+};
+
 // ---------------------------------------------------------------------------
 // Feedback Report Engine
 // Feedback source: Order ID + Type (Feedback / Complaint)
@@ -1214,7 +1224,12 @@ export default function Page() {
               gst: gstVal,
               irctcStatus: String(row['Status'] || row['STATUS'] || '').trim(),
               outletName: String(row['Outlet Name'] || '').trim(),
-              station: String(row['Station'] || row['Station Name'] || '').trim(),
+              // Short station code used by existing reports.
+              station: String(row['Station'] || row['Station Code'] || '').trim(),
+              // Full station name must come from Outlet Master `Station Name`
+              // (column O), never from the short Station Code.
+              stationName: getOutletMasterStationName(row),
+              stationCode: String(row['Station Code'] || row['Station'] || '').trim(),
               stationRank: (() => {
                 const rawRank = row['Station Rank'];
                 if (rawRank === undefined || rawRank === null || String(rawRank).trim() === '') return '';
@@ -1528,7 +1543,40 @@ export default function Page() {
 
   const vendorSummary = useMemo(() => {
     return generateVendorWiseData(data, outletsMasterInfo, penaltySummary, currentMonthRecords);
-  }, [data, outletsMasterInfo, penaltySummary]);
+  }, [data, outletsMasterInfo, penaltySummary, currentMonthRecords]);
+
+  // Total row stays above the header and is based on the complete report,
+  // not on the current search filter.
+  const vendorReportTotals = useMemo(() => {
+    const numericColumns = [
+      'Vendor Price', 'Net Payment', 'Final Base Price', 'Final Total Commission',
+      'Final IRCTC Comm', 'Final RF Commission', 'Final GST', 'Final Discount',
+      'Final Vendor Discount', 'Final RF Discount', 'Delivery Charges',
+      'Final Selling Price', 'Final Order Total', 'Discounted Base Price',
+      'PPD', 'COD', 'Meals', 'Count of Delivered Orders',
+      'Count of Not_Delivered As per IRCTC Status',
+    ];
+    const totals: Record<string, any> = {};
+    numericColumns.forEach((column) => {
+      totals[column] = Number(
+        vendorSummary.reduce((sum: number, row: any) => sum + (Number(row[column]) || 0), 0).toFixed(2)
+      );
+    });
+    const vendorPrice = Number(totals['Vendor Price'] || 0);
+    const sellingPrice = Number(totals['Final Selling Price'] || 0);
+    const delivered = Number(totals['Count of Delivered Orders'] || 0);
+    const notDelivered = Number(totals['Count of Not_Delivered As per IRCTC Status'] || 0);
+    totals['Check'] = vendorPrice > 0
+      ? `${((Number(totals['Final Total Commission'] || 0) / vendorPrice) * 100).toFixed(2)}%`
+      : '#DIV/0!';
+    totals['Not_Delivered %'] = delivered > 0
+      ? `${((notDelivered / delivered) * 100).toFixed(2)}%`
+      : notDelivered > 0 ? '100.00%' : '#DIV/0!';
+    totals['Prepaid %'] = sellingPrice > 0
+      ? `${((Number(totals['PPD'] || 0) / sellingPrice) * 100).toFixed(2)}%`
+      : '#DIV/0!';
+    return totals;
+  }, [vendorSummary]);
 
   const dateSummary = useMemo(() => {
     const map: Record<string, any> = {};
@@ -2247,24 +2295,83 @@ export default function Page() {
                   );
                 })()}
 
-                {/* 3A. VENDOR REPORT VIEW - EXACT EXCEL DATA ORDER */}
+                {/* 3A. VENDOR REPORT VIEW - STATION RANK + BUSINESS ORDER */}
                 {selectedReport === 'VENDOR_REPORT' && (
                   <table className="portal-report-table portal-table-vendor w-full min-w-[2500px] text-left border-separate border-spacing-0 text-xs whitespace-nowrap">
                     <thead className="sticky top-0 z-10 text-slate-700">
-                      <tr>
+                      {/* TOTAL IS INTENTIONALLY ABOVE THE COLUMN HEADER */}
+                      <tr className="bg-slate-300 font-extrabold text-slate-950">
                         {[
-                          'Aggregator Outlet ID','Station Code','Rank','Station Name','Vendor Name','Vendor Price','Net Payment','Final Base Price','Final Total Commission','Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check','Count of Delivered Orders','Count of Not_Delivered As per IRCTC Status','Not_Delivered %','Prepaid %','Vendor Payment Type','Discount Applied'
-                        ].map((col) => <th key={col} className="p-3 font-semibold text-center">{col}</th>)}
+                          'TOTAL', '', '', '', '',
+                          vendorReportTotals['Vendor Price'],
+                          vendorReportTotals['Net Payment'],
+                          vendorReportTotals['Final Base Price'],
+                          vendorReportTotals['Final Total Commission'],
+                          vendorReportTotals['Final IRCTC Comm'],
+                          vendorReportTotals['Final RF Commission'],
+                          vendorReportTotals['Final GST'],
+                          vendorReportTotals['Final Discount'],
+                          vendorReportTotals['Final Vendor Discount'],
+                          vendorReportTotals['Final RF Discount'],
+                          vendorReportTotals['Delivery Charges'],
+                          vendorReportTotals['Final Selling Price'],
+                          vendorReportTotals['Final Order Total'],
+                          vendorReportTotals['Discounted Base Price'],
+                          vendorReportTotals['PPD'],
+                          vendorReportTotals['COD'],
+                          vendorReportTotals['Meals'],
+                          vendorReportTotals['Check'],
+                          vendorReportTotals['Count of Delivered Orders'],
+                          vendorReportTotals['Count of Not_Delivered As per IRCTC Status'],
+                          vendorReportTotals['Not_Delivered %'],
+                          vendorReportTotals['Prepaid %'],
+                          '', ''
+                        ].map((value: any, j: number) => (
+                          <th key={`vendor-total-${j}`} className={`p-3 border-b border-slate-400 text-center ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>
+                            {typeof value === 'number'
+                              ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                              : (value ?? '')}
+                          </th>
+                        ))}
+                      </tr>
+                      <tr className="bg-slate-900 text-slate-300">
+                        {[
+                          'Aggregator Outlet ID','Station Code','Station Rank','Station Name','Vendor Name',
+                          'Vendor Price','Net Payment','Final Base Price','Final Total Commission','Final IRCTC Comm',
+                          'Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount',
+                          'Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD',
+                          'Meals','Check','Count of Delivered Orders','Count of Not_Delivered As per IRCTC Status',
+                          'Not_Delivered %','Prepaid %','Vendor Payment Type','Discount Applied'
+                        ].map((col) => (
+                          <th key={col} className="p-3 font-semibold text-center">{col}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {vendorSummary
-                        .filter((v: any) => String(v['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) || String(v['Aggregator Outlet ID'] || '').includes(searchTerm))
+                        .filter((v: any) =>
+                          String(v['Vendor Name'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v['Aggregator Outlet ID'] || '').includes(searchTerm) ||
+                          String(v['Station Code'] || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v['Station Name'] || '').toLowerCase().includes(searchTerm.toLowerCase())
+                        )
                         .map((row: any, i: number) => (
                           <tr key={`${row['Aggregator Outlet ID']}-${i}`} className="portal-data-row">
                             {[
-                              row['Aggregator Outlet ID'], row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Name'], row['Vendor Price'], row['Net Payment'], row['Final Base Price'], row['Final Total Commission'], row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'], row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'], row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'], row['Count of Delivered Orders'], row['Count of Not_Delivered As per IRCTC Status'], row['Not_Delivered %'], row['Prepaid %'], row['Vendor Payment Type'], row['Discount Applied']
-                            ].map((value: any, j: number) => <td key={j} className={`p-3 ${j < 5 ? 'font-medium' : ''} ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>{typeof value === 'number' ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (value ?? '-')}</td>)}
+                              row['Aggregator Outlet ID'], row['Station Code'], row['Rank'], row['Station Name'], row['Vendor Name'],
+                              row['Vendor Price'], row['Net Payment'], row['Final Base Price'], row['Final Total Commission'],
+                              row['Final IRCTC Comm'], row['Final RF Commission'], row['Final GST'], row['Final Discount'],
+                              row['Final Vendor Discount'], row['Final RF Discount'], row['Delivery Charges'], row['Final Selling Price'],
+                              row['Final Order Total'], row['Discounted Base Price'], row['PPD'], row['COD'], row['Meals'], row['Check'],
+                              row['Count of Delivered Orders'], row['Count of Not_Delivered As per IRCTC Status'],
+                              row['Not_Delivered %'], row['Prepaid %'], row['Vendor Payment Type'], row['Discount Applied']
+                            ].map((value: any, j: number) => (
+                              <td key={j} className={`p-3 ${j < 5 ? 'font-medium' : ''} ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>
+                                {typeof value === 'number'
+                                  ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
+                                  : (value ?? '-')}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                     </tbody>
