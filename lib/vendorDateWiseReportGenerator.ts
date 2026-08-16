@@ -467,6 +467,15 @@ export const generateVendorDateWiseReportWorkbook = (
     e: { r: range.e.r + 1, c: range.e.c },
   });
 
+  // Excel filter belongs to the actual header row (row 2), while the
+  // TOTAL row stays above it (row 1). This gives the same layout as the
+  // dashboard: Total first, then the complete filterable header.
+  const lastColumn = XLSX.utils.encode_col(range.e.c);
+  const lastExcelRow = excelRows.length + 2;
+  worksheet['!autofilter'] = {
+    ref: `A2:${lastColumn}${lastExcelRow}`,
+  };
+
   const exportRows = [totalRow, ...excelRows];
 
   // SheetJS cell styles: zero cells are bold + red, matching the dashboard.
