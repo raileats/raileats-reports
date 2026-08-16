@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
 export interface StationReportRow {
@@ -93,13 +93,25 @@ export const generateStationWiseData = (
   // Convert it to a Station Code -> Rank map so station reports can use one
   // stable station-level rank even when multiple outlets belong to a station.
   const stationRankMap: Record<string, number> = {};
+  const stationNameMap: Record<string, string> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const cleanSt = getCleanStationCode(out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '');
+    const cleanSt = getCleanStationCode(
+      out?.stationCode || out?.station || out?.stn_code || out?.deliveryStation || ''
+    );
     const rank = Number(out?.stationRank ?? out?.['Station Rank']);
     if (cleanSt && Number.isFinite(rank)) {
       stationRankMap[cleanSt] = Number.isFinite(stationRankMap[cleanSt])
         ? Math.min(stationRankMap[cleanSt], rank)
         : rank;
+    }
+
+    // IMPORTANT: Station Name must come from Outlet Master `Station Name`,
+    // never fall back to the short Station Code when the full name exists.
+    const masterStationName = String(
+      out?.stationName || out?.['Station Name'] || ''
+    ).trim();
+    if (cleanSt && masterStationName && getCleanStationCode(masterStationName) !== cleanSt) {
+      stationNameMap[cleanSt] = masterStationName;
     }
   });
 
@@ -161,7 +173,10 @@ export const generateStationWiseData = (
     if (!stationCode) return;
 
     const stationName = String(
-      getVal(row, ['Station Name', 'Delivery Station Name', 'Delivery Station', 'Station']) || rawStation || stationCode
+      stationNameMap[stationCode] ||
+      getVal(row, ['Station Name', 'Delivery Station Name']) ||
+      rawStation ||
+      stationCode
     ).trim();
 
     if (!stationMap[stationCode]) {
@@ -319,9 +334,82 @@ export const generateStationReportWorkbook = (
   }
 
   const worksheet = XLSX.utils.json_to_sheet(stationData);
+
+  // Readable Excel widths: keep Station Code/Rank compact and give Station Name
+  // enough room for the actual full station name from Outlet Master.
+  const headers = Object.keys(stationData[0] || {});
+  worksheet['!cols'] = headers.map((header) => {
+    if (header === 'Station Code') return { wch: 14 };
+    if (header === 'Rank' || header === 'Station Rank') return { wch: 12 };
+    if (header === 'Station Name') return { wch: 34 };
+    return { wch: 18 };
+  });
+
+  // Business rank = descending Final Base Price.  Station Rank is the master
+  // rank.  This lets Excel and Dashboard use exactly the same traffic-light
+  // meaning: missing/zero Base Price = red, rank mismatch = dark brown,
+  // correct business position = dark green.
+  const businessRankByStation: Record<string, number> = {};
+  [...stationData]
+    .filter((row) => Number(row['Final Base Price'] || 0) > 0)
+    .sort((a, b) => {
+      const diff = Number(b['Final Base Price'] || 0) - Number(a['Final Base Price'] || 0);
+      return diff !== 0
+        ? diff
+        : String(a['Station Code']).localeCompare(String(b['Station Code']));
+    })
+    .forEach((row, index) => {
+      businessRankByStation[String(row['Station Code'])] = index + 1;
+    });
+
+  const RED = 'FFFF0000';
+  const DARK_BROWN = 'FF6B3E26';
+  const DARK_GREEN = 'FF166534';
+
+  stationData.forEach((row, rowIndex) => {
+    const basePrice = Number(row['Final Base Price'] || 0);
+    const stationRank = Number(row['Station Rank']);
+    const businessRank = businessRankByStation[String(row['Station Code'])];
+    const fontColor = basePrice <= 0
+      ? RED
+      : businessRank !== undefined && Number.isFinite(stationRank) && stationRank === businessRank
+        ? DARK_GREEN
+        : DARK_BROWN;
+
+    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
+      const cell: any = worksheet[address];
+      if (!cell) continue;
+      cell.s = {
+        ...(cell.s || {}),
+        font: {
+          ...(cell.s?.font || {}),
+          color: { rgb: fontColor },
+          bold: true,
+        },
+      };
+    }
+  });
+
+  // Header styling.
+  headers.forEach((header, colIndex) => {
+    const address = XLSX.utils.encode_cell({ r: 0, c: colIndex });
+    const cell: any = worksheet[address];
+    if (!cell) return;
+    cell.s = {
+      font: { bold: true, color: { rgb: 'FFFFFFFF' } },
+      fill: { fgColor: { rgb: 'FF334155' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+    };
+  });
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Station Wise Summary');
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`);
+  XLSX.writeFile(
+    workbook,
+    `${fileNamePrefix}_${todayStr}.xlsx`,
+    { cellStyles: true } as any
+  );
 };
