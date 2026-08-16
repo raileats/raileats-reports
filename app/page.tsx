@@ -1002,15 +1002,12 @@ export default function Page() {
   const [openVendorFilter, setOpenVendorFilter] = useState<string | null>(null);
   const [vendorFilterPosition, setVendorFilterPosition] = useState({ top: 0, left: 0, width: 320 });
 
-  // Vendor Date Wise gets the same Excel-style multi-select header filters.
-  // Filters work on Outlet ID, Outlet Name, STN Code, every date column,
-  // Vendor Payment Type and Discount Applied.
+  // Vendor Date Wise: Excel-style multi-select filters for every header column.
   const [vendorDateWiseColumnFilters, setVendorDateWiseColumnFilters] =
     useState<Record<string, string[] | undefined>>({});
   const [openVendorDateWiseFilter, setOpenVendorDateWiseFilter] = useState<string | null>(null);
   const [vendorDateWiseFilterPosition, setVendorDateWiseFilterPosition] =
     useState({ top: 0, left: 0, width: 320 });
-
   const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
 
   useEffect(() => {
@@ -1798,15 +1795,16 @@ export default function Page() {
   // identical in Dashboard and Excel.
   const vendorDateWiseSummary = useMemo(() => {
     return generateVendorDateWiseData(data, outletsMasterInfo, currentMonthRecords);
-  }, [data, outletsMasterInfo, currentMonthRecords]);
+  }, [data, outletsMasterInfo]);
 
   // Exact column model shared by Dashboard filters and the Excel header.
-  // The first three columns are Outlet ID / Outlet Name / STN Code.
+  // The first four columns are Outlet ID / Outlet Name / Station Code / Station Rank.
   const vendorDateWiseFilterColumns = useMemo(() => {
     return [
       'Row Labels',
       'Name',
       'STN Code',
+      'Station Rank',
       ...vendorDateWiseSummary.dateKeys,
       'Vendor Payment Type',
       'Discount Applied',
@@ -1818,6 +1816,7 @@ export default function Page() {
       'Row Labels': 'Outlet ID',
       Name: 'Outlet Name',
       'STN Code': 'Station Code',
+      'Station Rank': 'Station Rank',
       'Vendor Payment Type': 'Vendor Payment Type',
       'Discount Applied': 'Discount Applied',
     };
@@ -2838,6 +2837,8 @@ export default function Page() {
                         </th>
                         <th className="p-3 text-base font-extrabold sticky left-[420px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                         </th>
+                        <th className="p-3 text-base font-extrabold sticky left-[540px] bg-slate-300 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
+                        </th>
                         {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
                           const totalValue = Number(vendorDateWiseTotals[dateKey] ?? 0);
                           const totalIsZero = totalValue === 0;
@@ -2931,6 +2932,30 @@ export default function Page() {
                           )}
                         </th>
 
+                        <th className="p-2 font-semibold sticky left-[540px] bg-slate-900 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[110px] w-[110px] relative">
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Station Rank</span>
+                            <button
+                              type="button"
+                              title="Filter Station Rank"
+                              aria-label="Filter Station Rank"
+                              onClick={(event) => openVendorDateWiseColumnFilter('Station Rank', event)}
+                              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+                                vendorDateWiseColumnFilters['Station Rank'] !== undefined
+                                  ? 'bg-amber-400 text-slate-900'
+                                  : 'bg-white/10 text-slate-300'
+                              } hover:bg-white/25`}
+                            >
+                              <span className="text-[11px]">▼</span>
+                            </button>
+                          </div>
+                          {vendorDateWiseColumnFilters['Station Rank'] !== undefined && (
+                            <div className="mt-0.5 text-center text-[9px] text-amber-300">
+                              {vendorDateWiseColumnFilters['Station Rank']?.length || 0} selected
+                            </div>
+                          )}
+                        </th>
+
                         {vendorDateWiseSummary.dateColumns.map((dateLabel: string, index: number) => {
                           const dateKey = vendorDateWiseSummary.dateKeys[index];
                           const selected = vendorDateWiseColumnFilters[dateKey];
@@ -3010,6 +3035,10 @@ export default function Page() {
 
                           <td className="p-3 text-cyan-300 font-mono sticky left-[420px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.25)] min-w-[120px] w-[120px]">
                             {row['STN Code'] || '-'}
+                          </td>
+
+                          <td className="p-3 text-violet-300 font-bold text-center sticky left-[540px] bg-slate-900/95 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.2)] min-w-[110px] w-[110px]">
+                            {row['Station Rank'] || '-'}
                           </td>
 
                           {vendorDateWiseSummary.dateKeys.map((dateKey: string, dateIndex: number) => {
