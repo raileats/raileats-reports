@@ -93,25 +93,13 @@ export const generateStationWiseData = (
   // Convert it to a Station Code -> Rank map so station reports can use one
   // stable station-level rank even when multiple outlets belong to a station.
   const stationRankMap: Record<string, number> = {};
-  const stationNameMap: Record<string, string> = {};
   Object.values(outletsMasterInfo || {}).forEach((out: any) => {
-    const cleanSt = getCleanStationCode(
-      out?.stationCode || out?.station || out?.stn_code || out?.deliveryStation || ''
-    );
+    const cleanSt = getCleanStationCode(out?.station || out?.stationCode || out?.stn_code || out?.deliveryStation || out?.stationName || '');
     const rank = Number(out?.stationRank ?? out?.['Station Rank']);
     if (cleanSt && Number.isFinite(rank)) {
       stationRankMap[cleanSt] = Number.isFinite(stationRankMap[cleanSt])
         ? Math.min(stationRankMap[cleanSt], rank)
         : rank;
-    }
-
-    // IMPORTANT: Station Name must come from Outlet Master `Station Name`,
-    // never fall back to the short Station Code when the full name exists.
-    const masterStationName = String(
-      out?.stationName || out?.['Station Name'] || ''
-    ).trim();
-    if (cleanSt && masterStationName && getCleanStationCode(masterStationName) !== cleanSt) {
-      stationNameMap[cleanSt] = masterStationName;
     }
   });
 
@@ -156,9 +144,48 @@ export const generateStationWiseData = (
     }
   });
 
-  // C. STEP 2: Master Orders Processing (Financials & Orders)
+  // C. STEP 2: Build the COMPLETE station list from Outlet Master first.
+  // Business/financial numbers are intentionally still calculated ONLY from
+  // delivered Master Data rows below. This keeps zero-business stations visible.
   const stationMap: Record<string, any> = {};
 
+  Object.values(outletsMasterInfo || {}).forEach((out: any) => {
+    const rawStationCode = out?.stationCode || out?.station || out?.stn_code || out?.station_code || out?.deliveryStation || '';
+    const stationCode = getCleanStationCode(rawStationCode);
+    if (!stationCode) return;
+
+    const masterStationName = String(out?.stationName || '').trim();
+    if (!stationMap[stationCode]) {
+      stationMap[stationCode] = {
+        stationCode,
+        stationName: masterStationName || stationCode,
+        stationRank: stationRankMap[stationCode] ?? '',
+        vendorPrice: 0,
+        finalBasePrice: 0,
+        totalComm: 0,
+        irctcComm: 0,
+        rfComm: 0,
+        gst: 0,
+        totalDiscount: 0,
+        vendorDiscount: 0,
+        rfDiscount: 0,
+        deliveryCharges: 0,
+        sellingPrice: 0,
+        orderTotal: 0,
+        discountedBase: 0,
+        ppd: 0,
+        cod: 0,
+        meals: 0,
+        deliveredOrdersCount: 0,
+        notDeliveredOrdersCount: 0,
+        deliveredOutlets: new Set<string>(),
+      };
+    } else if (masterStationName && stationMap[stationCode].stationName === stationCode) {
+      stationMap[stationCode].stationName = masterStationName;
+    }
+  });
+
+  // Delivered Master Data is the ONLY source for station business.
   (masterOrders || []).forEach((row: any) => {
     const rawStation = getVal(row, [
       'Station Code',
@@ -172,17 +199,16 @@ export const generateStationWiseData = (
     const stationCode = getCleanStationCode(rawStation);
     if (!stationCode) return;
 
-    const stationName = String(
-      stationNameMap[stationCode] ||
-      getVal(row, ['Station Name', 'Delivery Station Name']) ||
-      rawStation ||
-      stationCode
+    const masterRowStationName = String(
+      getVal(row, ['Station Name', 'Delivery Station Name']) || ''
     ).trim();
 
+    // Outlet Master remains authoritative for Station Name. Master Data is
+    // only used for the station-code-wise delivered business calculation.
     if (!stationMap[stationCode]) {
       stationMap[stationCode] = {
         stationCode,
-        stationName,
+        stationName: masterRowStationName || stationCode,
         stationRank: stationRankMap[stationCode] ?? '',
         vendorPrice: 0,
         finalBasePrice: 0,
@@ -207,6 +233,9 @@ export const generateStationWiseData = (
     }
 
     const st = stationMap[stationCode];
+    if ((!st.stationName || st.stationName === stationCode) && masterRowStationName) {
+      st.stationName = masterRowStationName;
+    }
 
     const finalStatus = String(getVal(row, ['Final Status', 'Delivery Status', 'Status']) || '').trim().toLowerCase();
     const irctcStatus = String(getVal(row, ['IRCTC Status', 'Order Status']) || '').trim().toLowerCase();
@@ -252,16 +281,30 @@ export const generateStationWiseData = (
     }
   });
 
-  // D. Sort primarily by Station Rank (ascending), then by Final Base Price.
+  // D. Business Rank = rank by delivered Final Base Price (highest first).
+  // The visible list itself remains ordered by Station Rank from Outlet Master.
+  const businessRankMap: Record<string, number> = {};
+  const businessRankedStations = Object.values(stationMap).sort((a: any, b: any) => {
+    const bp = Number(b.finalBasePrice || 0) - Number(a.finalBasePrice || 0);
+    if (bp !== 0) return bp;
+    const ar = Number.isFinite(Number(a.stationRank)) ? Number(a.stationRank) : Number.MAX_SAFE_INTEGER;
+    const br = Number.isFinite(Number(b.stationRank)) ? Number(b.stationRank) : Number.MAX_SAFE_INTEGER;
+    return ar - br;
+  });
+  businessRankedStations.forEach((st: any, index: number) => {
+    businessRankMap[st.stationCode] = index + 1;
+  });
+
+  // E. Station list order comes from Outlet Master Station Rank.
   const sortedStations = Object.values(stationMap).sort((a: any, b: any) => {
     const ar = Number.isFinite(Number(a.stationRank)) ? Number(a.stationRank) : Number.MAX_SAFE_INTEGER;
     const br = Number.isFinite(Number(b.stationRank)) ? Number(b.stationRank) : Number.MAX_SAFE_INTEGER;
     if (ar !== br) return ar - br;
-    return b.finalBasePrice - a.finalBasePrice;
+    return String(a.stationCode).localeCompare(String(b.stationCode));
   });
 
-  // E. Final Mapping with Feedback Data
-  return sortedStations.map((st: any, idx: number): StationReportRow => {
+  // F. Final Mapping with Feedback Data.
+  return sortedStations.map((st: any): StationReportRow => {
     const vPrice = Number(st.vendorPrice.toFixed(2));
     const bPrice = Number(st.finalBasePrice.toFixed(2));
     const tComm = Number(st.totalComm.toFixed(2));
@@ -279,15 +322,14 @@ export const generateStationWiseData = (
 
     const totalVendors = totalStationVendorsMap[st.stationCode]
       ? totalStationVendorsMap[st.stationCode].size
-      : Math.max(st.deliveredOutlets.size, 1);
+      : 0;
 
-    // Direct fetch from IRCTC Map
     const irctcFeedback = irctcFeedbackMap[st.stationCode] || { good: 0, bad: 0 };
 
     return {
       'Station Code': st.stationCode,
-      'Rank': idx + 1,
-      'Station Name': st.stationName,
+      'Rank': businessRankMap[st.stationCode] ?? sortedStations.length,
+      'Station Name': st.stationName || st.stationCode,
       'Station Rank': st.stationRank ?? '',
       'Vendor Price': vPrice,
       'Final Base Price': bPrice,
@@ -333,83 +375,86 @@ export const generateStationReportWorkbook = (
     return;
   }
 
+  const headers = Object.keys(stationData[0] || {});
   const worksheet = XLSX.utils.json_to_sheet(stationData);
 
-  // Readable Excel widths: keep Station Code/Rank compact and give Station Name
-  // enough room for the actual full station name from Outlet Master.
-  const headers = Object.keys(stationData[0] || {});
-  worksheet['!cols'] = headers.map((header) => {
-    if (header === 'Station Code') return { wch: 14 };
-    if (header === 'Rank' || header === 'Station Rank') return { wch: 12 };
-    if (header === 'Station Name') return { wch: 34 };
-    return { wch: 18 };
+  // Excel layout: Row 1 = Total, Row 2 = Header, Row 3+ = Station List.
+  const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+  for (let r = range.e.r; r >= 1; r--) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const from = XLSX.utils.encode_cell({ r, c });
+      const to = XLSX.utils.encode_cell({ r: r + 1, c });
+      if (worksheet[from]) worksheet[to] = worksheet[from];
+      else delete worksheet[to];
+    }
+  }
+
+  headers.forEach((header, c) => {
+    worksheet[XLSX.utils.encode_cell({ r: 1, c })] = { t: 's', v: header };
   });
 
-  // Business rank = descending Final Base Price.  Station Rank is the master
-  // rank.  This lets Excel and Dashboard use exactly the same traffic-light
-  // meaning: missing/zero Base Price = red, rank mismatch = dark brown,
-  // correct business position = dark green.
-  const businessRankByStation: Record<string, number> = {};
-  [...stationData]
-    .filter((row) => Number(row['Final Base Price'] || 0) > 0)
-    .sort((a, b) => {
-      const diff = Number(b['Final Base Price'] || 0) - Number(a['Final Base Price'] || 0);
-      return diff !== 0
-        ? diff
-        : String(a['Station Code']).localeCompare(String(b['Station Code']));
-    })
-    .forEach((row, index) => {
-      businessRankByStation[String(row['Station Code'])] = index + 1;
-    });
+  const numericColumns = new Set([
+    'Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm',
+    'Final RF Commission','Final GST','Final Discount','Final Vendor Discount',
+    'Final RF Discount','Delivery Charges','Final Selling Price','Final Order Total',
+    'Discounted Base Price','PPD','COD','Meals','Count of Delivered Orders',
+    'Not Delivered Order','Feedback Good','Feedback Bad','Count of Delivered Outlets',
+    'Total Station Vendors'
+  ]);
 
-  const RED = 'FFFF0000';
-  const DARK_BROWN = 'FF6B3E26';
-  const DARK_GREEN = 'FF166534';
+  const totalRow: Record<string, any> = {};
+  headers.forEach((header, index) => {
+    if (index === 0) totalRow[header] = 'TOTAL';
+    else if (numericColumns.has(header)) {
+      totalRow[header] = Number(stationData.reduce((sum, row) => sum + (Number(row[header]) || 0), 0).toFixed(2));
+    } else totalRow[header] = '';
+  });
+  headers.forEach((header, c) => {
+    const cell = XLSX.utils.encode_cell({ r: 0, c });
+    worksheet[cell] = { t: typeof totalRow[header] === 'number' ? 'n' : 's', v: totalRow[header] };
+  });
+
+  worksheet['!ref'] = XLSX.utils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: range.e.r + 1, c: range.e.c },
+  });
+  worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({
+    s: { r: 1, c: 0 }, e: { r: range.e.r + 1, c: range.e.c }
+  }) };
+  worksheet['!freeze'] = { xSplit: 4, ySplit: 2 };
+
+  const darkGreen = 'FF166534';
+  const darkBrown = 'FF78350F';
+  const red = 'FFDC2626';
+  const headerStyle = { font: { bold: true, color: { rgb: 'FFFFFFFF' } }, fill: { fgColor: { rgb: 'FF0F172A' } }, alignment: { horizontal: 'center' } };
+  const totalStyle = { font: { bold: true, color: { rgb: 'FF0F172A' } }, fill: { fgColor: { rgb: 'FFE2E8F0' } }, alignment: { horizontal: 'center' } };
+
+  headers.forEach((_, c) => {
+    const totalCell = worksheet[XLSX.utils.encode_cell({ r: 0, c })];
+    if (totalCell) totalCell.s = totalStyle;
+    const headerCell = worksheet[XLSX.utils.encode_cell({ r: 1, c })];
+    if (headerCell) headerCell.s = headerStyle;
+  });
 
   stationData.forEach((row, rowIndex) => {
-    const basePrice = Number(row['Final Base Price'] || 0);
+    const excelRow = rowIndex + 2;
+    const baseBlank = Number(row['Final Base Price'] || 0) <= 0;
     const stationRank = Number(row['Station Rank']);
-    const businessRank = businessRankByStation[String(row['Station Code'])];
-    const fontColor = basePrice <= 0
-      ? RED
-      : businessRank !== undefined && Number.isFinite(stationRank) && stationRank === businessRank
-        ? DARK_GREEN
-        : DARK_BROWN;
-
-    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
-      const cell: any = worksheet[address];
-      if (!cell) continue;
-      cell.s = {
-        ...(cell.s || {}),
-        font: {
-          ...(cell.s?.font || {}),
-          color: { rgb: fontColor },
-          bold: true,
-        },
-      };
-    }
+    const businessRank = Number(row['Rank']);
+    const rowColor = baseBlank ? red : (Number.isFinite(stationRank) && Number.isFinite(businessRank) && businessRank <= stationRank ? darkGreen : darkBrown);
+    headers.forEach((_, c) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: excelRow, c })];
+      if (cell) cell.s = { font: { color: { rgb: rowColor } } };
+    });
   });
 
-  // Header styling.
-  headers.forEach((header, colIndex) => {
-    const address = XLSX.utils.encode_cell({ r: 0, c: colIndex });
-    const cell: any = worksheet[address];
-    if (!cell) return;
-    cell.s = {
-      font: { bold: true, color: { rgb: 'FFFFFFFF' } },
-      fill: { fgColor: { rgb: 'FF334155' } },
-      alignment: { horizontal: 'center', vertical: 'center' },
-    };
-  });
+  worksheet['!cols'] = headers.map((header) => ({
+    wch: header === 'Station Name' ? 30 : header === 'Station Code' ? 14 : header === 'Station Rank' || header === 'Rank' ? 12 : 18
+  }));
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Station Wise Summary');
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(
-    workbook,
-    `${fileNamePrefix}_${todayStr}.xlsx`,
-    { cellStyles: true } as any
-  );
+  XLSX.writeFile(workbook, `${fileNamePrefix}_${todayStr}.xlsx`, { cellStyles: true } as any);
 };
