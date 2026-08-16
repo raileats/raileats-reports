@@ -3,6 +3,9 @@ import { MasterOrderRow, OutletMasterInfo } from './vendorRdsGenerator';
 
 export interface DateWiseReportRow {
   'Delivery Date': string;
+  'Total Orders': number;
+  'Delivered': number;
+  'Cancelled': number;
   'Vendor Price': number;
   'Final Base Price': number;
   'Final Total Commission': number;
@@ -37,19 +40,27 @@ export interface DateWiseReportRow {
 export const normalizeToDayMonthYear = (rawDate: any): string | null => {
   if (rawDate === undefined || rawDate === null || rawDate === '') return null;
 
-  // 1. If date is an Excel Serial Number (e.g. 45505)
+  const valid = (year: number, month: number, day: number): Date | null => {
+    const d = new Date(year, month - 1, day);
+    return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day ? d : null;
+  };
+
+  // Excel serial.
   if (typeof rawDate === 'number' || (!isNaN(Number(rawDate)) && !String(rawDate).includes('-') && !String(rawDate).includes('/'))) {
     const num = Number(rawDate);
     if (num > 20000 && num < 60000) {
-      const utcDays = num - 25569;
-      const dateObj = new Date(utcDays * 86400 * 1000);
-      return `${dateObj.getUTCDate()}/${dateObj.getUTCMonth() + 1}/${dateObj.getUTCFullYear()}`;
+      const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(num) * 86400000);
+      // XLSX may have converted 08/01/2026 -> Jan 8 2026, etc.
+      if (d.getFullYear() === 2026 && d.getUTCDate() === 8 && d.getUTCMonth() >= 0 && d.getUTCMonth() <= 9) {
+        return `${d.getUTCMonth() + 1}/8/2026`
+          .replace(/^(\d+)\/8\/2026$/, (_, m) => `${m}/8/2026`);
+      }
+      return `${d.getUTCDate()}/${d.getUTCMonth() + 1}/${d.getUTCFullYear()}`;
     }
   }
 
-  // 2. XLSX can already have misread source MM/DD/YYYY values as JS Date objects.
-  // For this report 08/01/2026..08/10/2026 may arrive as Jan-8..Oct-8.
-  // Convert that exact corrupted pattern back to 1-Aug..10-Aug.
+  // XLSX Date corruption repair for the August-2026 source: Jan 8 -> Aug 1,
+  // Feb 8 -> Aug 2, ... Oct 8 -> Aug 10.
   if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
     const year = rawDate.getFullYear();
     const monthIndex = rawDate.getMonth();
@@ -61,32 +72,42 @@ export const normalizeToDayMonthYear = (rawDate: any): string | null => {
   }
 
   const str = String(rawDate).trim();
+  const datePart = str.split(/[T ]/)[0];
 
-  // 3. Match YYYY-MM-DD or YYYY/MM/DD
-  const ymdMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (ymdMatch) {
-    const year = parseInt(ymdMatch[1], 10);
-    const month = parseInt(ymdMatch[2], 10);
-    const day = parseInt(ymdMatch[3], 10);
-    return `${day}/${month}/${year}`;
+  // ISO YYYY-MM-DD / YYYY/MM/DD.
+  const ymd = datePart.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    return valid(year, month, day) ? `${day}/${month}/${year}` : null;
   }
 
-  // 4. SOURCE FILE CONVENTION: MM/DD/YYYY or MM-DD-YYYY.
-  // Example: 08/01/2026 = 1 August 2026, 08/10/2026 = 10 August 2026.
-  // Keep the normalized result internally as D/M/YYYY.
-  const mdyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-  if (mdyMatch) {
-    const month = parseInt(mdyMatch[1], 10);
-    const day = parseInt(mdyMatch[2], 10);
-    const year = parseInt(mdyMatch[3], 10);
-    const d = new Date(year, month - 1, day);
-    if (d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day) {
-      return `${day}/${month}/${year}`;
+  // IMPORTANT: Master Data/source convention is MM/DD/YYYY.
+  // Example: 08/01/2026 = 1 August 2026. Never let JS Date decide this.
+  const slash = datePart.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (slash) {
+    const first = Number(slash[1]);
+    const second = Number(slash[2]);
+    const year = Number(slash[3]);
+
+    if (first >= 1 && first <= 12) {
+      const month = first;
+      const day = second;
+      const d = valid(year, month, day);
+      return d ? `${day}/${month}/${year}` : null;
+    }
+
+    // Only use DD/MM fallback when the first part cannot be a month.
+    if (second >= 1 && second <= 12) {
+      const day = first;
+      const month = second;
+      const d = valid(year, month, day);
+      return d ? `${day}/${month}/${year}` : null;
     }
     return null;
   }
 
-  // 5. Fallback Date parsing
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
     return `${parsed.getDate()}/${parsed.getMonth() + 1}/${parsed.getFullYear()}`;
@@ -105,6 +126,8 @@ export const generateDateWiseData = (
 ): DateWiseReportRow[] => {
   const dateOrdersMap: Record<string, {
     delivered: MasterOrderRow[];
+    totalOrders: number;
+    cancelledCount: number;
     notDeliveredCount: number;
     deliveredOutlets: Set<string>;
     feedbackGood: number;
@@ -113,9 +136,6 @@ export const generateDateWiseData = (
   }> = {};
   const allUniqueDates = new Set<string>();
 
-  // Determine detected month & year for proper calendar sorting
-  let sampleYear = 2026;
-  let sampleMonth = 8;
 
   masterOrders.forEach((row) => {
     // Check multiple potential date field keys
@@ -131,15 +151,12 @@ export const generateDateWiseData = (
 
     allUniqueDates.add(normalizedDate);
 
-    const parts = normalizedDate.split('/');
-    if (parts.length === 3) {
-      sampleMonth = parseInt(parts[1], 10);
-      sampleYear = parseInt(parts[2], 10);
-    }
 
     if (!dateOrdersMap[normalizedDate]) {
       dateOrdersMap[normalizedDate] = {
         delivered: [],
+        totalOrders: 0,
+        cancelledCount: 0,
         notDeliveredCount: 0,
         deliveredOutlets: new Set<string>(),
         feedbackGood: 0,
@@ -173,7 +190,13 @@ export const generateDateWiseData = (
 
     if (cleanStation) dateOrdersMap[normalizedDate].stationCodes.add(cleanStation);
 
+    dateOrdersMap[normalizedDate].totalOrders += 1;
+
     // Check Not Delivered / Cancelled status
+    if (finalStatus === 'cancelled') {
+      dateOrdersMap[normalizedDate].cancelledCount += 1;
+    }
+
     if (
       finalStatus === 'not delivered' ||
       finalStatus === 'cancelled' ||
@@ -217,12 +240,14 @@ export const generateDateWiseData = (
     }
   });
 
-  // Show only dates that actually exist in the uploaded report.
-  // Do not generate artificial zero-value dates for the rest of the month.
-  const sortedDateList: string[] = Array.from(allUniqueDates).sort((a, b) => {
-    const [ad, am, ay] = a.split('/').map(Number);
-    const [bd, bm, by] = b.split('/').map(Number);
-    return new Date(ay, am - 1, ad).getTime() - new Date(by, bm - 1, bd).getTime();
+  // IMPORTANT: Do NOT manufacture calendar days.
+  // Date Wise must contain ONLY dates actually present in Master Data.
+  const sortedDateList = Array.from(allUniqueDates).sort((a, b) => {
+    const toTs = (key: string) => {
+      const [day, month, year] = key.split('/').map(Number);
+      return new Date(year, month - 1, day).getTime();
+    };
+    return toTs(a) - toTs(b);
   });
 
   const reportRows: DateWiseReportRow[] = [];
@@ -230,6 +255,8 @@ export const generateDateWiseData = (
   sortedDateList.forEach((dateKey) => {
     const bucket = dateOrdersMap[dateKey] || {
       delivered: [],
+      totalOrders: 0,
+      cancelledCount: 0,
       notDeliveredCount: 0,
       deliveredOutlets: new Set<string>(),
       feedbackGood: 0,
@@ -292,6 +319,9 @@ export const generateDateWiseData = (
     const ppd = Number(ppdSum.toFixed(2));
     const cod = Number(codSum.toFixed(2));
     const notDeliveredOrdersCount = bucket.notDeliveredCount;
+    const totalOrdersCount = dateOrdersMap[dateKey]?.totalOrders ?? 0;
+    const deliveredCount = deliveredOrdersCount;
+    const cancelledCount = dateOrdersMap[dateKey]?.cancelledCount ?? 0;
 
     // Check %: (Total Commission / Vendor Price) %
     const checkPct = finalBasePrice > 0 ? `${((totalCommission / finalBasePrice) * 100).toFixed(2)}%` : '0.00%';
@@ -328,6 +358,9 @@ export const generateDateWiseData = (
 
     reportRows.push({
       'Delivery Date': dateKey,
+      'Total Orders': totalOrdersCount,
+      'Delivered': deliveredCount,
+      'Cancelled': cancelledCount,
       'Vendor Price': vendorPrice,
       'Final Base Price': finalBasePrice,
       'Final Total Commission': totalCommission,
@@ -376,12 +409,11 @@ export const generateDateWiseReportWorkbook = (
   }
 
   const columns = [
-    'Delivery Date','Vendor Price','Final Base Price','Final Total Commission','Final IRCTC Comm',
-    'Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount',
-    'Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD',
-    'Meals','Check','Count of Delivered Orders','Not Delivered Order','Not Delivered %',
-    'PPD % of Final Selling Price','Feedback Good','Feedback Bad','Count of Delivered Outlets',
-    'Total Station Vendors'
+    'Delivery Date','Total Orders','Delivered','Cancelled','Vendor Price','Final Base Price','Final Total Commission',
+    'Final IRCTC Comm','Final RF Commission','Final GST','Final Discount','Final Vendor Discount','Final RF Discount',
+    'Delivery Charges','Final Selling Price','Final Order Total','Discounted Base Price','PPD','COD','Meals','Check',
+    'Count of Delivered Orders','Not Delivered Order','Not Delivered %','PPD % of Final Selling Price',
+    'Feedback Good','Feedback Bad','Count of Delivered Outlets','Total Station Vendors'
   ];
 
   const totalRow: Record<string, any> = {};
