@@ -1566,6 +1566,30 @@ export default function Page() {
     const sellingPrice = Number(totals['Final Selling Price'] || 0);
     const delivered = Number(totals['Count of Delivered Orders'] || 0);
     const notDelivered = Number(totals['Count of Not_Delivered As per IRCTC Status'] || 0);
+
+    // Business outlets for the payment/discount summary: only outlets with
+    // actual business in both Vendor Price and Final Base Price. This matches
+    // the requested Excel summary (e.g. PPD 85 / COD 221 and No 99 / Yes 207)
+    // and excludes rows where the calculated Base Price exists but Vendor
+    // business itself is zero.
+    const businessOutlets = vendorSummary.filter((row: any) =>
+      Number(row['Vendor Price'] || 0) > 0 && Number(row['Final Base Price'] || 0) > 0
+    );
+    const ppdBusinessCount = businessOutlets.filter(
+      (row: any) => String(row['Vendor Payment Type'] || '').trim().toUpperCase() === 'PPD'
+    ).length;
+    const codBusinessCount = businessOutlets.filter(
+      (row: any) => String(row['Vendor Payment Type'] || '').trim().toUpperCase() === 'COD'
+    ).length;
+    const discountNoBusinessCount = businessOutlets.filter(
+      (row: any) => String(row['Discount Applied'] || '').trim().toUpperCase() === 'NO'
+    ).length;
+    const discountYesBusinessCount = businessOutlets.filter(
+      (row: any) => String(row['Discount Applied'] || '').trim().toUpperCase() === 'YES'
+    ).length;
+
+    totals['Vendor Payment Type'] = `PPD ${ppdBusinessCount} COD ${codBusinessCount}`;
+    totals['Discount Applied'] = `No ${discountNoBusinessCount} Yes ${discountYesBusinessCount}`;
     totals['Check'] = vendorPrice > 0
       ? `${((Number(totals['Final Total Commission'] || 0) / vendorPrice) * 100).toFixed(2)}%`
       : '#DIV/0!';
@@ -2325,7 +2349,8 @@ export default function Page() {
                           vendorReportTotals['Count of Not_Delivered As per IRCTC Status'],
                           vendorReportTotals['Not_Delivered %'],
                           vendorReportTotals['Prepaid %'],
-                          '', ''
+                          vendorReportTotals['Vendor Payment Type'],
+                          vendorReportTotals['Discount Applied']
                         ].map((value: any, j: number) => (
                           <th key={`vendor-total-${j}`} className={`p-3 border-b border-slate-400 text-center ${j >= 5 && typeof value === 'number' ? 'text-right' : ''}`}>
                             {typeof value === 'number'
