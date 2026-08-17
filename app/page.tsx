@@ -147,8 +147,10 @@ const buildMainReportDateWiseSheetLocal = (() => {
     const feedbackByDateSource: Record<string, Record<string, { complaint: number; feedback: number }>> = {};
 
     masterData.forEach((row) => {
-      const rawDate = row['Delivery Date'] || row['Booking Date'] || 'Unknown Date';
-      const dateKey = String(rawDate).split(' ')[0].split('T')[0];
+      const rawDate = row['Delivery Date'] || row['Booking Date'] || '';
+      // Use the same August-2026-safe date engine as the dashboard/date-wise reports.
+      // This prevents 08/01/2026 from becoming Jan 8 and keeps 13/08/2026 as Aug 13.
+      const dateKey = reportDateKey(rawDate);
       const src = getOrderSource(row);
 
       if (!dateGroups[dateKey]) {
