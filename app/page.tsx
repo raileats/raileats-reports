@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateMainReportWorkbook } from '@/lib/mainReportGenerator';
@@ -429,6 +429,139 @@ const buildMainReportDateWiseSheetLocal = (() => {
       { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 9 },
       { wch: 10 },
     ];
+
+    // -----------------------------------------------------------------------
+    // EXACT SAME EXCEL STYLING AS THE STANDALONE MAIN REPORT
+    // -----------------------------------------------------------------------
+    const fill = (rgb: string) => ({ patternType: 'solid', fgColor: { rgb } });
+    const border = {
+      top: { style: 'thin', color: { rgb: '222222' } },
+      bottom: { style: 'thin', color: { rgb: '222222' } },
+      left: { style: 'thin', color: { rgb: '222222' } },
+      right: { style: 'thin', color: { rgb: '222222' } },
+    };
+    const base = {
+      font: { name: 'Arial', sz: 9, color: { rgb: '000000' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: false },
+      border,
+    };
+    const groupColors: Record<number, string> = {
+      1: '72B9D2', 6: 'B5D37B', 11: 'F3B37E', 14: '8DC5DE', 18: 'D99397',
+      22: '999999', 26: '5B91C8', 30: '87C34F', 34: '555555', 38: 'F2A900',
+    };
+    const subColors: Record<number, string> = {
+      1: 'B9DCE8', 6: 'D2E7BF', 11: 'F8D8C0', 14: 'C4E0EC', 18: 'EFC7CA',
+      22: 'CFCFCF', 26: 'C4D9EF', 30: 'D4E8C5', 34: '666666', 38: 'F2A900',
+    };
+    const bodyColors: Record<number, string> = {
+      1: 'CCE5EE', 6: 'D9E8C8', 11: 'F8DFCA', 14: 'D6EAF2', 18: 'F0D6D9',
+      22: 'D0D0D0', 26: 'C8DDF0', 30: 'D9EACB', 34: '666666', 38: 'FFF200',
+    };
+    const groupRanges: Array<[number, number]> = [
+      [1,5],[6,10],[11,13],[14,17],[18,21],
+      [22,25],[26,29],[30,33],[34,37],[38,38]
+    ];
+
+    let excelRow = 0;
+    while (excelRow < excelRows.length) {
+      const row = excelRows[excelRow] || [];
+      if (row[0] && excelRow + 2 < excelRows.length) {
+        // Date banner — identical to standalone Main Report.
+        for (let c = 0; c < 39; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: excelRow, c })];
+          if (cell) {
+            cell.s = {
+              ...base,
+              font: { name: 'Arial', sz: 14, bold: true, color: { rgb: 'FFFFFF' } },
+              fill: fill('FF0000'),
+            };
+          }
+        }
+
+        // Group header.
+        for (let c = 0; c < 39; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: excelRow + 1, c })];
+          if (!cell) continue;
+          let color = c === 0 ? '000000' : 'DCE7EC';
+          let white = c === 0;
+          for (const [a,b] of groupRanges) {
+            if (c >= a && c <= b) {
+              color = groupColors[a] || color;
+              white = a === 34;
+              break;
+            }
+          }
+          cell.s = {
+            ...base,
+            font: { name: 'Arial', sz: 9, bold: true, color: { rgb: white ? 'FFFFFF' : '000000' } },
+            fill: fill(color),
+          };
+        }
+
+        // Sub-header.
+        for (let c = 0; c < 39; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: excelRow + 2, c })];
+          if (!cell) continue;
+          let color = 'DCE7EC';
+          let white = false;
+          for (const [a,b] of groupRanges) {
+            if (c >= a && c <= b) {
+              color = subColors[a] || color;
+              white = a === 34;
+              break;
+            }
+          }
+          cell.s = {
+            ...base,
+            font: { name: 'Arial', sz: 8, bold: true, color: { rgb: white ? 'FFFFFF' : '000000' } },
+            fill: fill(color),
+          };
+        }
+
+        // Five data rows.
+        for (let r = excelRow + 3; r <= excelRow + 7; r++) {
+          for (let c = 0; c < 39; c++) {
+            const cell = ws[XLSX.utils.encode_cell({ r, c })];
+            if (!cell) continue;
+            let color = c === 0 ? (r === excelRow + 3 ? '000000' : 'EF0000') : 'EDF4F7';
+            let white = c === 0 || (c >= 34 && c <= 37);
+            for (const [a,b] of groupRanges) {
+              if (c >= a && c <= b) {
+                color = bodyColors[a] || color;
+                white = a === 34;
+                break;
+              }
+            }
+            if (c === 38) {
+              color = 'FFF200';
+              white = false;
+            }
+            const fontColor =
+              white ? 'FFFFFF' :
+              (c >= 22 && c <= 25 ? '008C69' :
+              (c >= 34 && c <= 37 ? 'FF3030' : '000000'));
+
+            cell.s = {
+              ...base,
+              font: {
+                name: 'Arial',
+                sz: 9,
+                bold: r === excelRow + 3 || c === 0 || c === 22 || c === 23 || c === 34 || c === 35,
+                color: { rgb: fontColor },
+              },
+              fill: fill(color),
+            };
+          }
+        }
+        excelRow += 8;
+      } else {
+        excelRow += 1;
+      }
+    }
+
+    ws['!rows'] = excelRows.map((_, i) => ({
+      hpt: i % 8 === 0 ? 24 : (i % 8 === 1 ? 18 : 15),
+    }));
 
     return ws;
   };
