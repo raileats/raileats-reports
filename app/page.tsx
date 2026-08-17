@@ -148,9 +148,11 @@ const buildMainReportDateWiseSheetLocal = (() => {
 
     masterData.forEach((row) => {
       const rawDate = row['Delivery Date'] || row['Booking Date'] || '';
-      // Use the same August-2026-safe date engine as the dashboard/date-wise reports.
-      // This prevents 08/01/2026 from becoming Jan 8 and keeps 13/08/2026 as Aug 13.
-      const dateKey = reportDateKey(rawDate);
+      // IMPORTANT: use the exact same date key as the working single Main Report.
+      // Do not run a second date parser here; the master-data value is already
+      // normalized by the upload pipeline. This keeps All Reports Sheet 1
+      // identical to the standalone Main Report (including Aug 1-16).
+      const dateKey = String(rawDate).split(' ')[0].split('T')[0];
       const src = getOrderSource(row);
 
       if (!dateGroups[dateKey]) {
@@ -1179,7 +1181,7 @@ const parseReportDate = (dateVal: any): Date | null => {
   if (dateVal === null || dateVal === undefined || dateVal === '') return null;
 
   // IMPORTANT:
-  // The actual report is the 1-Aug-2026 to 10-Aug-2026 report.
+  // The actual report is the 1-Aug-2026 to 16-Aug-2026 report.
   // In the uploaded Excel, these dates can arrive through XLSX as Date/serial
   // values that have already been interpreted as:
   //   Jan 8 2026 -> source 08/01/2026 -> 1 Aug 2026
